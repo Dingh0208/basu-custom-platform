@@ -1,4 +1,4 @@
-import type { ChatRecord, CustomerTimelineEntry, ImportRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { ChatRecord, CustomerProfile, CustomerTimelineEntry, ImportRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -66,6 +66,35 @@ export async function updateChatParticipants(id: string, participants: Array<{ n
     method: 'PATCH',
     body: JSON.stringify({ participants }),
   });
+}
+
+export async function fetchCustomers(): Promise<CustomerProfile[] | null> {
+  return fetchJson<CustomerProfile[]>('/api/customers', undefined, 5000);
+}
+
+export async function updateCustomer(name: string, data: Partial<CustomerProfile> & { tags?: string[] }): Promise<CustomerProfile | null> {
+  return fetchJson<CustomerProfile>(`/api/customers/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createCustomer(data: Partial<CustomerProfile> & { name: string }): Promise<CustomerProfile | null> {
+  return fetchJson<CustomerProfile>('/api/customers', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function mergeCustomers(source: string, target: string): Promise<CustomerProfile | null> {
+  return fetchJson<CustomerProfile>('/api/customers/merge', {
+    method: 'POST',
+    body: JSON.stringify({ source, target }),
+  });
+}
+
+export async function deleteCustomer(name: string): Promise<{ deleted: string; records: number } | null> {
+  return fetchJson(`/api/customers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 export async function fetchCustomerTimeline(customer: string): Promise<{ customer: string; records: CustomerTimelineEntry[] } | null> {

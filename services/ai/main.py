@@ -189,6 +189,20 @@ def init_db() -> None:
                 ended_at TEXT,
                 attachments_json TEXT DEFAULT '[]'
             );
+            CREATE TABLE IF NOT EXISTS customers (
+                name TEXT PRIMARY KEY,
+                company TEXT DEFAULT '—',
+                position TEXT DEFAULT '',
+                phone TEXT DEFAULT '',
+                wechat TEXT DEFAULT '',
+                email TEXT DEFAULT '',
+                tags_json TEXT DEFAULT '[]',
+                source_channel TEXT DEFAULT '',
+                owner TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT
+            );
             """
         )
         # Lightweight migration for databases created before attachment indexing.
@@ -585,6 +599,171 @@ def row_to_chat(row: sqlite3.Row) -> dict:
     }
 
 
+def _customer_default_company(name: str) -> str:
+    return "某某科技有限公司" if name == "张三" else "—"
+
+
+def _customer_row(row: sqlite3.Row, *, record_count: int = 0, last_at: str = "", project: str = "—") -> dict:
+    return {
+        "name": row["name"],
+        "company": row["company"] or "—",
+        "position": row["position"] or "",
+        "phone": row["phone"] or "",
+        "wechat": row["wechat"] or "",
+        "email": row["email"] or "",
+        "tags": json.loads(row["tags_json"] or "[]"),
+        "sourceChannel": row["source_channel"] or "",
+        "owner": row["owner"] or "",
+        "notes": row["notes"] or "",
+        "recordCount": int(record_count),
+        "lastAt": last_at,
+        "project": project,
+    }
+
+
+def _ensure_customer(conn: sqlite3.Connection, name: str, *, company: str = "", owner: str = "王总") -> None:
+    if not name or name == "待归档":
+        return
+    existing = conn.execute("SELECT name FROM customers WHERE name=?", (name,)).fetchone()
+    if existing:
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT INTO customers (name,company,position,phone,wechat,email,tags_json,source_channel,owner,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (name, company or _customer_default_company(name), "", "", "", "", "[]", "", owner, "", now, now),
+    )
+
+
+def list_customers() -> list[dict]:
+    with db() as conn:
+        profiles = {row["name"]: row for row in conn.execute("SELECT * FROM customers").fetchall()}
+        stats = {
+            row["customer"]: row
+            for row in conn.execute(
+                "SELECT customer, COUNT(*) AS record_count, MAX(imported_at) AS last_at FROM imports WHERE customer NOT IN ('待归档','') GROUP BY customer"
+            ).fetchall()
+        }
+        names = set(profiles) | set(stats)
+        result = []
+        for name in names:
+            profile = profiles.get(name)
+            if profile is None:
+                now = datetime.now().isoformat(timespec="seconds")
+                conn.execute(
+                    "INSERT INTO customers (name,company,position,phone,wechat,email,tags_json,source_channel,owner,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (name, _customer_default_company(name), "", "", "", "", "[]", "", "王总", "", now, now),
+                )
+                profile = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
+            stat = stats.get(name)
+            project = "—"
+            last_at = str(stat["last_at"]) if stat and stat["last_at"] else ""
+            if stat:
+                latest = conn.execute(
+                    "SELECT project FROM imports WHERE customer=? ORDER BY imported_at DESC, rowid DESC LIMIT 1",
+                    (name,),
+                ).fetchone()
+                project = str(latest["project"] if latest and latest["project"] else "—")
+            result.append(_customer_row(profile, record_count=int(stat["record_count"]) if stat else 0, last_at=last_at, project=project))
+    result.sort(key=lambda item: (-item["recordCount"], item["name"]))
+    return result
+
+
+def get_customer(name: str) -> dict | None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
+        if row is None:
+            return None
+        stat = conn.execute("SELECT COUNT(*) AS n, MAX(imported_at) AS last_at FROM imports WHERE customer=?", (name,)).fetchone()
+        latest = conn.execute("SELECT project FROM imports WHERE customer=? ORDER BY imported_at DESC, rowid DESC LIMIT 1", (name,)).fetchone()
+        return _customer_row(row, record_count=int(stat["n"] or 0), last_at=str(stat["last_at"] or ""), project=str(latest["project"] if latest and latest["project"] else "—"))
+
+
+def update_customer(name: str, data: dict) -> dict | None:
+    with db() as conn:
+        existing = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
+        if existing is None:
+            _ensure_customer(conn, name)
+            existing = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
+        new_name = str(data.get("name") or name).strip()
+        if not new_name:
+            raise ValueError("客户姓名不能为空")
+        if new_name != name:
+            conflict = conn.execute("SELECT name FROM customers WHERE name=?", (new_name,)).fetchone()
+            if conflict:
+                raise ValueError("目标客户姓名已存在")
+            conn.execute("UPDATE imports SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE chats SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE customers SET name=? WHERE name=?", (new_name, name))
+            name = new_name
+        fields = {
+            "company": data.get("company", existing["company"]),
+            "position": data.get("position", existing["position"]),
+            "phone": data.get("phone", existing["phone"]),
+            "wechat": data.get("wechat", existing["wechat"]),
+            "email": data.get("email", existing["email"]),
+            "source_channel": data.get("sourceChannel", existing["source_channel"]),
+            "owner": data.get("owner", existing["owner"]),
+            "notes": data.get("notes", existing["notes"]),
+        }
+        tags = data.get("tags")
+        tags_json = json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else (existing["tags_json"] or "[]")
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE customers SET company=?, position=?, phone=?, wechat=?, email=?, tags_json=?, source_channel=?, owner=?, notes=?, updated_at=? WHERE name=?",
+            (
+                str(fields["company"] or "—"), str(fields["position"] or ""), str(fields["phone"] or ""),
+                str(fields["wechat"] or ""), str(fields["email"] or ""), tags_json,
+                str(fields["source_channel"] or ""), str(fields["owner"] or ""), str(fields["notes"] or ""), now, name,
+            ),
+        )
+        row = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
+    return get_customer(row["name"]) if row else None
+
+
+def merge_customers(source: str, target: str) -> dict:
+    source = source.strip()
+    target = target.strip()
+    if not source or not target or source == target:
+        raise ValueError("源客户和目标客户不能相同")
+    with db() as conn:
+        source_row = conn.execute("SELECT * FROM customers WHERE name=?", (source,)).fetchone()
+        target_row = conn.execute("SELECT * FROM customers WHERE name=?", (target,)).fetchone()
+        if source_row is None:
+            raise ValueError("源客户不存在")
+        if target_row is None:
+            _ensure_customer(conn, target, owner="王总")
+            target_row = conn.execute("SELECT * FROM customers WHERE name=?", (target,)).fetchone()
+        conn.execute("UPDATE imports SET customer=? WHERE customer=?", (target, source))
+        conn.execute("UPDATE chats SET customer=? WHERE customer=?", (target, source))
+        conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (target, source))
+        # Fill target profile gaps from source, preserving explicit target values.
+        for column in ("company", "position", "phone", "wechat", "email", "source_channel", "owner", "notes"):
+            current = str(target_row[column] or "").strip()
+            incoming = str(source_row[column] or "").strip()
+            if (not current or current == "—") and incoming:
+                conn.execute(f"UPDATE customers SET {column}=? WHERE name=?", (incoming, target))
+        source_tags = json.loads(source_row["tags_json"] or "[]")
+        target_tags = json.loads(target_row["tags_json"] or "[]")
+        merged_tags = list(dict.fromkeys([*target_tags, *source_tags]))
+        conn.execute("UPDATE customers SET tags_json=? WHERE name=?", (json.dumps(merged_tags, ensure_ascii=False), target))
+        conn.execute("DELETE FROM customers WHERE name=?", (source,))
+    return get_customer(target) or {"name": target}
+
+
+def delete_customer(name: str) -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT name FROM customers WHERE name=?", (name,)).fetchone()
+        if row is None:
+            raise ValueError("客户不存在")
+        import_count = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE customer=?", (name,)).fetchone()["n"]
+        conn.execute("DELETE FROM imports WHERE customer=?", (name,))
+        conn.execute("DELETE FROM chats WHERE customer=?", (name,))
+        conn.execute("DELETE FROM transcripts WHERE customer=?", (name,))
+        conn.execute("DELETE FROM customers WHERE name=?", (name,))
+    return {"deleted": name, "records": int(import_count)}
+
+
 def customer_timeline(customer_name: str) -> dict:
     with db() as conn:
         imports = conn.execute(
@@ -918,7 +1097,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, payload: dict | list, status: int = 200) -> None:
@@ -1025,10 +1204,21 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(row_to_chat(row))
             return
+        if path == "/api/customers":
+            self._json(list_customers())
+            return
         if path.startswith("/api/customers/") and path.endswith("/timeline"):
             parts = [part for part in path.split("/") if part]
             customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
             self._json(customer_timeline(customer_name))
+            return
+        if path.startswith("/api/customers/") and not path.endswith("/timeline"):
+            customer_name = unquote(path.split("/")[-1])
+            customer = get_customer(customer_name)
+            if customer is None:
+                self._json({"error": "customer_not_found"}, 404)
+            else:
+                self._json(customer)
             return
         if path.startswith("/api/files/"):
             name = Path(unquote(path.split("/")[-1])).name
@@ -1050,6 +1240,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         data = self._read_json()
+
+        if path == "/api/customers":
+            name = str(data.get("name") or "").strip()
+            if not name:
+                self._json({"error": "name_required"}, 400)
+                return
+            try:
+                customer = update_customer(name, data)
+                self._json(customer, 201)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/customers/merge":
+            try:
+                self._json(merge_customers(str(data.get("source") or ""), str(data.get("target") or "")))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
 
         if path == "/api/imports":
             file_name = str(data.get("fileName") or "").strip()
@@ -1259,6 +1468,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "invalid_participants"}, 400)
             else:
                 self._json(updated)
+            return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
+            customer_name = unquote(parts[2])
+            try:
+                updated = update_customer(customer_name, data)
+                if updated is None:
+                    self._json({"error": "customer_not_found"}, 404)
+                else:
+                    self._json(updated)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        self._json({"error": "not_found"}, 404)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
+            try:
+                self._json(delete_customer(unquote(parts[2])))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
             return
         self._json({"error": "not_found"}, 404)
 

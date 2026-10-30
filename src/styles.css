@@ -424,3 +424,25 @@ button{font-family:inherit}
 .wechat-progress-track{height:5px;border-radius:999px;background:#eef2f6;overflow:hidden;margin-top:6px}
 .wechat-progress-track span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0f766e,#2dd4bf);transition:width .35s ease}
 .wechat-job-detail{font-size:9px;color:var(--muted-2);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Customer profile ---------- */
+.customer-side-actions{display:flex;gap:5px;margin-top:14px;flex-wrap:wrap}
+.customer-side-actions .btn{height:28px;padding:0 8px;font-size:10.5px}
+.danger-btn{color:#b42318;border-color:#fecdca;background:#fff}
+.danger-btn:hover{background:#fef3f2;border-color:#f97066}
+.customer-profile-lines{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:7px}
+.customer-profile-lines>div{display:flex;justify-content:space-between;gap:12px;font-size:10.5px;line-height:1.45}
+.customer-profile-lines>div>span{color:var(--muted-2);flex:0 0 auto}
+.customer-profile-lines>div>strong{font-weight:500;color:#344054;text-align:right;word-break:break-all}
+.customer-profile-lines .customer-notes{display:block}
+.customer-profile-lines .customer-notes>span{display:block;margin-bottom:3px}
+.customer-profile-lines .customer-notes>strong{display:block;text-align:left;white-space:pre-wrap;line-height:1.6}
+.customer-profile-modal{width:640px;max-width:calc(100vw - 40px)}
+.customer-form-body{padding:0 20px 18px}
+.customer-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.customer-form-grid label,.customer-form-wide{display:flex;flex-direction:column;gap:5px;font-size:10.5px;color:var(--muted-2)}
+.customer-form-grid input,.customer-form-wide input,.customer-form-wide textarea,.customer-form-wide select{border:1px solid var(--line);border-radius:8px;padding:8px 9px;background:#fff;font-family:inherit;font-size:12px;color:var(--ink);outline:none}
+.customer-form-grid input:focus,.customer-form-wide input:focus,.customer-form-wide textarea:focus,.customer-form-wide select:focus{border-color:#9fd0c9;box-shadow:0 0 0 2px rgba(15,118,110,.08)}
+.customer-form-wide{margin-top:10px}
+.customer-form-wide textarea{min-height:76px;resize:vertical}
+.customer-merge-source{font-size:12px;color:#475467;line-height:1.7;border:1px solid var(--line);border-radius:9px;padding:10px;background:#fbfcfd}

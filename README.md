@@ -64,9 +64,10 @@ pnpm electron:start
 
 ### 3. 客户模块
 
-- 客户列表：客户名、公司、当前项目、最近沟通、记录数、状态；
-- 搜索客户 / 公司 / 项目；
-- 右侧客户档案：基础信息、项目、通话/聊天/文件数量；
+- 客户列表：客户名、公司、职位、当前项目、最近沟通、记录数、状态；
+- 搜索客户 / 公司 / 职位 / 标签；
+- 客户档案：姓名、公司、职位、手机号、微信号、邮箱、标签、来源渠道、负责人、备注；
+- 新建客户、编辑档案、重复客户合并、客户删除；
 - 客户 360 统一时间线：按时间聚合通话、聊天、文件记录；
 - 点击时间线记录直接打开对应转写或聊天详情；
 - 客户 360 已具备基础聚合能力，完整客户画像与 AI 问答仍可继续扩展。
@@ -141,6 +142,12 @@ pnpm electron:start
 | GET | `/api/transcripts/{id}` | 获取转写稿与摘要 |
 | GET | `/api/chats/{id}` | 获取聊天时间线与对话解析 |
 | PATCH | `/api/chats/{id}/participants` | 手动纠正“我 / 客户”角色 |
+| GET | `/api/customers` | 客户档案列表 |
+| GET | `/api/customers/{name}` | 获取客户档案 |
+| POST | `/api/customers` | 新建客户 |
+| PATCH | `/api/customers/{name}` | 编辑客户档案 |
+| POST | `/api/customers/merge` | 合并重复客户 |
+| DELETE | `/api/customers/{name}` | 删除客户及其沟通记录 |
 | GET | `/api/customers/{name}/timeline` | 获取客户 360 统一时间线 |
 | GET | `/api/files/{name}` | 读取原始截图/附件 |
 | GET | `/api/wechat/status` | 微信解析引擎/账号/解密状态 |
@@ -196,6 +203,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 - [转写与摘要（Sidecar + MaaS 已连接）](<docs/app-screens/transcript-maas.png>)
 - [真实 6 分钟双人对话转写](<docs/app-screens/real-dialogue-transcript.png>)
 - [客户列表与基础客户 360](<docs/app-screens/customers.png>)
+- [客户档案：资料、标签、联系人信息、合并/删除入口](<docs/app-screens/customer-profile.png>)
 - [客户 360 统一时间线（通话 + 聊天）](<docs/app-screens/customer-360-zhangsan.png>)
 - [摘要 · 需求页签](<docs/app-screens/transcript-requirements.png>)
 - [摘要 · 原文引用页签](<docs/app-screens/transcript-citations.png>)

@@ -234,9 +234,13 @@ export default function App() {
     showToast(`已导入 ${files.length} 个文件，正在识别客户与转写（本地模拟）`);
   }
 
-  async function handleWechatImported() {
+  async function refreshImports() {
     const data = await fetchImports();
     if (data) setImports(data);
+  }
+
+  async function handleWechatImported() {
+    await refreshImports();
     showToast('微信聊天记录已进入分析队列，完成后可在客户 360 查看');
   }
 
@@ -324,6 +328,7 @@ export default function App() {
             imports={imports}
             onOpenRecord={(record) => handleOpenRecord(record, 'customers')}
             onToast={showToast}
+            onRefreshImports={refreshImports}
           />
         ) : view === 'chat' && activeChat ? (
           <ChatWorkspace

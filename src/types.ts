@@ -120,6 +120,22 @@ export interface ChatRecord {
   endedAt?: string;
 }
 
+export interface CustomerProfile {
+  name: string;
+  company: string;
+  position: string;
+  phone: string;
+  wechat: string;
+  email: string;
+  tags: string[];
+  sourceChannel: string;
+  owner: string;
+  notes: string;
+  recordCount: number;
+  lastAt: string;
+  project: string;
+}
+
 export interface WeChatAccountInfo {
   account: string;
   name?: string;
