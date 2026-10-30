@@ -49,6 +49,10 @@
         "to": "wechat-engine"
       },
       {
+        "from": "services/ffmpeg",
+        "to": "ffmpeg"
+      },
+      {
         "from": "release/ai-sidecar",
         "to": "ai-sidecar"
       }

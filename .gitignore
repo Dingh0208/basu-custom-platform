@@ -10,6 +10,7 @@ vite.config.d.ts
 docs/reference.docx
 .dsh-office-*/
 services/ai/.env
+services/ffmpeg/
 release/
 build/
 docs/reverse-wechat/asar/

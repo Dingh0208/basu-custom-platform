@@ -21,6 +21,12 @@ function startPackagedSidecar() {
       CLIENTHUB_ENV_FILE: fs.existsSync(path.join(process.resourcesPath, 'ai-sidecar', '.env'))
         ? path.join(process.resourcesPath, 'ai-sidecar', '.env')
         : path.join(app.getPath('userData'), 'clienthub.env'),
+      FFMPEG_PATH: fs.existsSync(path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe'))
+        ? path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe')
+        : '',
+      FFPROBE_PATH: fs.existsSync(path.join(process.resourcesPath, 'ffmpeg', 'ffprobe.exe'))
+        ? path.join(process.resourcesPath, 'ffmpeg', 'ffprobe.exe')
+        : '',
       WECHAT_DATA_ANALYSIS_BACKEND: path.join(process.resourcesPath, 'wechat-engine', 'wechat-backend.exe'),
       WECHAT_DATA_ANALYSIS_DATA_DIR: dataDir,
       WECHAT_DATA_ANALYSIS_OUTPUT_DIR: path.join(dataDir, 'output'),
