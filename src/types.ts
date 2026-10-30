@@ -1,4 +1,4 @@
-export type View = 'import' | 'transcript' | 'customers' | 'chat';
+export type View = 'import' | 'transcript' | 'customers' | 'chat' | 'settings';
 
 export type ImportStatus = 'processing' | 'done' | 'inbox' | 'failed';
 
@@ -160,6 +160,22 @@ export interface RequirementItemRecord {
   sourceQuote: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LlmConfig {
+  baseUrl: string;
+  asrModel: string;
+  summaryModel: string;
+  visionModel: string;
+  apiKeyMasked?: string;
+  hasKey?: boolean;
+}
+
+export interface LlmModelsResult {
+  status: 'ok' | 'error';
+  count?: number;
+  models?: string[];
+  error?: string;
 }
 
 export interface CustomerProfile {

@@ -4,6 +4,7 @@ import ImportCenter from './components/ImportCenter';
 import TranscriptWorkspace from './components/TranscriptWorkspace';
 import CustomerList from './components/CustomerList';
 import ChatWorkspace from './components/ChatWorkspace';
+import SettingsPage from './components/SettingsPage';
 import Toast from './components/Toast';
 import { initialImports, transcriptRecord } from './mock/data';
 import type { ChatRecord, ImportRecord, TranscriptRecord, View } from './types';
@@ -58,7 +59,7 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'transcript' || value === 'customers' || value === 'chat' ? value : 'import';
+    return value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' ? value : 'import';
   });
   const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers'>('import');
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
@@ -166,6 +167,10 @@ export default function App() {
     }
     if (label === '客户') {
       setView('customers');
+      return;
+    }
+    if (label === '设置') {
+      setView('settings');
       return;
     }
     showToast(`${label} 模块将在 Sprint 2 提供`);
@@ -351,6 +356,8 @@ export default function App() {
             onToast={showToast}
             onChatUpdate={setActiveChat}
           />
+        ) : view === 'settings' ? (
+          <SettingsPage onToast={showToast} />
         ) : (
           <TranscriptWorkspace
             record={activeTranscript}

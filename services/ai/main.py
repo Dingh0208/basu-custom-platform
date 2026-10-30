@@ -231,6 +231,10 @@ def init_db() -> None:
                 created_at TEXT,
                 updated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT DEFAULT ''
+            );
             """
         )
         # Lightweight migration for databases created before attachment indexing.
@@ -434,7 +438,7 @@ def analyze_chat_messages(messages: list[dict], me_name: str) -> dict:
 聊天记录：
 {transcript}"""
     payload = {
-        "model": MAAS_SUMMARY_MODEL,
+        "model": get_llm_config()["summaryModel"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 2200,
@@ -610,7 +614,7 @@ def extract_chat_screenshot(image_bytes: bytes, mime_type: str, file_name: str, 
 输出格式：
 {{"participants":[{{"name":"","role":"客户"}}],"messages":[{{"sender":"","time":"","content":""}}],"summary":""}}"""
     payload = {
-        "model": MAAS_VISION_MODEL,
+        "model": get_llm_config()["visionModel"],
         "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": data_uri}},
             {"type": "text", "text": prompt},
@@ -1321,13 +1325,109 @@ def update_chat_participants(chat_id: str, participants: list[dict]) -> dict | N
     return row_to_chat(updated)
 
 
+def _llm_setting_rows() -> dict[str, str]:
+    with db() as conn:
+        return {
+            str(row["key"]): str(row["value"] or "")
+            for row in conn.execute("SELECT key,value FROM settings WHERE key LIKE 'llm.%'").fetchall()
+        }
+
+
+def get_llm_config() -> dict:
+    rows = _llm_setting_rows()
+
+    def pick(key: str, default: str) -> str:
+        value = rows.get(key, "").strip()
+        return value or default
+
+    return {
+        "baseUrl": pick("llm.base_url", MAAS_BASE_URL).rstrip("/"),
+        "apiKey": pick("llm.api_key", MAAS_API_KEY),
+        "asrModel": pick("llm.asr_model", MAAS_ASR_MODEL),
+        "summaryModel": pick("llm.summary_model", MAAS_SUMMARY_MODEL),
+        "visionModel": pick("llm.vision_model", MAAS_VISION_MODEL),
+    }
+
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return key[:2] + "****" + key[-2:]
+    return key[:4] + "****" + key[-4:]
+
+
+def save_llm_config(data: dict) -> dict:
+    updates = {
+        "llm.base_url": str(data.get("baseUrl") or MAAS_BASE_URL).strip().rstrip("/"),
+        "llm.api_key": str(data.get("apiKey") or "").strip(),
+        "llm.asr_model": str(data.get("asrModel") or MAAS_ASR_MODEL).strip(),
+        "llm.summary_model": str(data.get("summaryModel") or MAAS_SUMMARY_MODEL).strip(),
+        "llm.vision_model": str(data.get("visionModel") or MAAS_VISION_MODEL).strip(),
+    }
+    # Do not wipe an existing key when the UI leaves the password field blank.
+    if not updates["llm.api_key"]:
+        updates.pop("llm.api_key")
+    with db() as conn:
+        for key, value in updates.items():
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+    return get_llm_config()
+
+
+def _llm_open(method: str, url: str, *, api_key: str = "", timeout: int = 30):
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    req = urllib.request.Request(url, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response
+
+
+def _llm_target(data: dict | None) -> tuple[str, str]:
+    config = get_llm_config()
+    base_url = config["baseUrl"]
+    api_key = config["apiKey"]
+    if isinstance(data, dict):
+        base_url = str(data.get("baseUrl") or base_url).strip().rstrip("/")
+        api_key = str(data.get("apiKey") or api_key).strip()
+    return base_url, api_key
+
+
+def list_llm_models(data: dict | None = None) -> dict:
+    base_url, api_key = _llm_target(data)
+    if not base_url:
+        return {"status": "error", "error": "请先填写 Base URL", "models": []}
+    try:
+        response = _llm_open("GET", f"{base_url}/models", api_key=api_key, timeout=30)
+        body = json.loads(response.read().decode("utf-8"))
+        models = [str(item.get("id") or "") for item in (body.get("data") or []) if str(item.get("id") or "")]
+        models = [m for m in models if m]
+        return {"status": "ok", "count": len(models), "models": models}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "models": []}
+
+
+def test_llm_config(data: dict | None = None) -> dict:
+    base_url, api_key = _llm_target(data)
+    if not base_url:
+        return {"status": "error", "error": "请填写聚合大模型 Base URL"}
+    if not api_key:
+        return {"status": "error", "error": "请填写聚合大模型 API Key"}
+    models = list_llm_models(data)
+    if models.get("status") != "ok":
+        return models
+    return {"status": "ok", "count": models.get("count", 0), "models": models.get("models", [])}
+
+
 def maas_request(path: str, payload: dict, timeout: int = 600) -> dict:
-    if not MAAS_API_KEY:
-        raise RuntimeError("MAAS_API_KEY is not configured")
+    config = get_llm_config()
+    if not config["apiKey"]:
+        raise RuntimeError("聚合大模型 API Key 未配置，请到设置页配置")
     req = urllib.request.Request(
-        MAAS_BASE_URL + path,
+        config["baseUrl"] + path,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {MAAS_API_KEY}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {config['apiKey']}", "Content-Type": "application/json"},
         method="POST",
     )
     try:
@@ -1342,7 +1442,7 @@ def transcribe_audio(audio_bytes: bytes, mime_type: str) -> str:
     """Call qwen3-asr-flash for one short audio chunk."""
     data_uri = f"data:{mime_type or 'audio/mpeg'};base64,{base64.b64encode(audio_bytes).decode()}"
     payload = {
-        "model": MAAS_ASR_MODEL,
+        "model": get_llm_config()["asrModel"],
         "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": data_uri}}]}],
         "stream": False,
         "asr_options": {"language": "zh", "enable_itn": False},
@@ -1417,7 +1517,7 @@ def summarize_transcript(transcript: str) -> dict:
 转写：
 {transcript[:12000]}"""
     payload = {
-        "model": MAAS_SUMMARY_MODEL,
+        "model": get_llm_config()["summaryModel"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 2200,
@@ -1649,14 +1749,29 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"status": "error", "error": str(exc)}, 502)
             return
+        if path == "/api/settings/llm":
+            config = get_llm_config()
+            self._json({
+                "baseUrl": config["baseUrl"],
+                "asrModel": config["asrModel"],
+                "summaryModel": config["summaryModel"],
+                "visionModel": config["visionModel"],
+                "apiKeyMasked": _mask_key(config["apiKey"]),
+                "hasKey": bool(config["apiKey"]),
+            })
+            return
+        if path == "/api/settings/llm/models":
+            self._json(list_llm_models())
+            return
         if path == "/api/health":
+            config = get_llm_config()
             self._json({
                 "status": "ok",
                 "service": "clienthub-ai-sidecar",
-                "mode": "maas" if MAAS_API_KEY else "mock",
-                "asrModel": MAAS_ASR_MODEL,
-                "summaryModel": MAAS_SUMMARY_MODEL,
-                "visionModel": MAAS_VISION_MODEL,
+                "mode": "maas" if config["apiKey"] else "mock",
+                "asrModel": config["asrModel"],
+                "summaryModel": config["summaryModel"],
+                "visionModel": config["visionModel"],
                 "version": "0.2.0",
             })
             return
@@ -1730,6 +1845,29 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         data = self._read_json()
+
+        if path == "/api/settings/llm":
+            try:
+                saved = save_llm_config(data)
+                self._json({
+                    "baseUrl": saved["baseUrl"],
+                    "asrModel": saved["asrModel"],
+                    "summaryModel": saved["summaryModel"],
+                    "visionModel": saved["visionModel"],
+                    "apiKeyMasked": _mask_key(saved["apiKey"]),
+                    "hasKey": bool(saved["apiKey"]),
+                })
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/settings/llm/test":
+            self._json(test_llm_config(data))
+            return
+
+        if path == "/api/settings/llm/models":
+            self._json(list_llm_models(data))
+            return
 
         if path.startswith("/api/customers/") and path.endswith("/projects"):
             parts = [part for part in path.split("/") if part]
@@ -1850,7 +1988,7 @@ class Handler(BaseHTTPRequestHandler):
                 tmp_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp_path.write_bytes(audio)
                 text = transcribe_audio_file(tmp_path, str(data.get("mimeType") or "audio/mpeg"))
-                self._json({"text": text, "model": MAAS_ASR_MODEL})
+                self._json({"text": text, "model": get_llm_config()["asrModel"]})
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
             finally:
@@ -1864,7 +2002,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "transcript_required"}, 400)
                 return
             try:
-                self._json({"summary": summarize_transcript(transcript), "model": MAAS_SUMMARY_MODEL})
+                self._json({"summary": summarize_transcript(transcript), "model": get_llm_config()["summaryModel"]})
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
             return

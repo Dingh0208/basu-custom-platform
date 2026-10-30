@@ -1,7 +1,8 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { autoUpdater } = require('electron-updater');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -41,6 +42,23 @@ function stopPackagedSidecar() {
   sidecarProc = null;
 }
 
+function setupAutoUpdater() {
+  if (isDev) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
+  autoUpdater.on('update-not-available', () => sendUpdateStatus('none'));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
+  autoUpdater.on('error', (err) => sendUpdateStatus('error', String(err && err.message || err)));
+  autoUpdater.checkForUpdatesAndNotify();
+}
+
+function sendUpdateStatus(status, version = '') {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('clienthub:update-status', { status, version });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -76,9 +94,20 @@ function createWindow() {
   });
 }
 
+ipcMain.handle('clienthub:check-updates', async () => {
+  if (isDev) return { status: 'dev' };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { status: 'checked', version: result && result.updateInfo && result.updateInfo.version };
+  } catch (error) {
+    return { status: 'error', error: String(error && error.message || error) };
+  }
+});
+
 app.whenReady().then(() => {
   if (app.isPackaged) startPackagedSidecar();
   createWindow();
+  setupAutoUpdater();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

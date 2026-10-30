@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download bundled FFmpeg
+        shell: pwsh
+        run: |
+          $dir = "services/ffmpeg"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "$env:TEMP\ffmpeg.zip"
+          Expand-Archive "$env:TEMP\ffmpeg.zip" "$env:TEMP\ffmpeg-extract" -Force
+          $bin = Get-ChildItem "$env:TEMP\ffmpeg-extract" -Recurse -Filter ffmpeg.exe | Select-Object -First 1 -ExpandProperty DirectoryName
+          Copy-Item (Join-Path $bin "ffmpeg.exe") (Join-Path $dir "ffmpeg.exe") -Force
+          Copy-Item (Join-Path $bin "ffprobe.exe") (Join-Path $dir "ffprobe.exe") -Force
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Build Python sidecar
+        shell: pwsh
+        run: |
+          pip install pyinstaller
+          powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python python
+
+      - name: Build and publish NSIS installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm exec electron-builder --win nsis --publish always
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clienthub-setup
+          path: release/*.exe

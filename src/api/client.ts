@@ -1,4 +1,4 @@
-import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, LlmConfig, LlmModelsResult, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -69,6 +69,31 @@ export async function updateChatParticipants(id: string, participants: Array<{ n
   return fetchJson<ChatRecord>(`/api/chats/${encodeURIComponent(id)}/participants`, {
     method: 'PATCH',
     body: JSON.stringify({ participants }),
+  });
+}
+
+export async function fetchLlmConfig(): Promise<LlmConfig | null> {
+  return fetchJson<LlmConfig>('/api/settings/llm', undefined, 5000);
+}
+
+export async function saveLlmConfig(data: Partial<LlmConfig> & { apiKey?: string }): Promise<LlmConfig | null> {
+  return fetchJson<LlmConfig>('/api/settings/llm', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testLlmConfig(data: Partial<LlmConfig> & { apiKey?: string }): Promise<LlmModelsResult | null> {
+  return fetchJson<LlmModelsResult>('/api/settings/llm/test', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function pullLlmModels(data: Partial<LlmConfig> & { apiKey?: string }): Promise<LlmModelsResult | null> {
+  return fetchJson<LlmModelsResult>('/api/settings/llm/models', {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }
 

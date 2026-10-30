@@ -501,3 +501,16 @@ button{font-family:inherit}
 .import-delete-btn{height:24px;padding:0 6px;font-size:10px}
 .file-delete-link{border:0;background:transparent;color:#98a2b3;font-family:inherit;font-size:9.5px;cursor:pointer;padding:0 0 0 6px}
 .file-delete-link:hover{color:#b42318;text-decoration:underline}
+
+/* ---------- Settings ---------- */
+.settings-workspace{display:grid;grid-template-columns:minmax(0,760px) minmax(280px,420px);gap:16px;padding:16px 18px;align-items:start}
+.settings-section{padding:16px 18px}
+.settings-field-wide{grid-column:1/-1}
+.settings-field-wide input{width:100%}
+.settings-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.llm-tip{background:var(--accent-soft,#eef7f6);border:1px solid #cfe9e6;border-radius:9px;padding:9px 11px;font-size:11px;color:#475467;line-height:1.6;margin:6px 0 12px}
+.llm-result{font-size:11px;color:#475467;margin-top:10px;line-height:1.6}
+.settings-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;margin-top:10px}
+.settings-meta-grid>div{display:flex;flex-direction:column;gap:3px}
+.settings-meta-grid span{font-size:10.5px;color:var(--muted-2)}
+.settings-meta-grid strong{font-size:12px;font-weight:600}

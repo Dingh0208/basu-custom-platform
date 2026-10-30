@@ -90,7 +90,16 @@ pnpm electron:start
 - 附件索引：原始截图、图片/语音/文件/链接消息统一列出，图片可预览；
 - 已用真实样例 `Martin Zhong / 梧桐` 验证 11 条消息；已用两张微信聊天截图验证 13 条 / 31 条消息的 OCR 与结构化解析。
 
-### 5. 从本地微信聊天库提取
+### 5. 设置与大模型配置
+
+- 底部“设置”进入设置页；
+- **大模型配置**：一个聚合 Key 通配音频 / 文本 / 视频三种功能模型；
+- 支持填写 Base URL 与 API Key、**测试连接**、**拉取模型**；
+- 可为 ASR（音频转写）、总结（文本/聊天）、视觉（视频/图像 OCR）分别指定模型；
+- 提供跳转 [阿里云百炼](https://bailian.console.aliyun.com/) 的入口；
+- 数据与版本说明：客户记录、导入文件、大模型 Key 只保存在本机。
+
+### 6. 从本地微信聊天库提取
 
 - 导入中心 → “从微信库提取”；
 - 自动连接 WeChatDataAnalysis 本地后端（微信 4.x SQLCipher/WCDB 解密、WCDB 会话/消息读取）；
@@ -167,6 +176,10 @@ pnpm electron:start
 | POST | `/api/requirements/merge` | 合并多条需求 |
 | GET | `/api/customers/{name}/timeline` | 获取客户 360 统一时间线 |
 | GET | `/api/files/{name}` | 读取原始截图/附件 |
+| GET | `/api/settings/llm` | 获取大模型配置（Key 脱敏） |
+| POST | `/api/settings/llm` | 保存大模型配置 |
+| POST | `/api/settings/llm/test` | 测试聚合 Key / Base URL 连通性 |
+| POST | `/api/settings/llm/models` | 拉取可用模型列表 |
 | GET | `/api/wechat/status` | 微信解析引擎/账号/解密状态 |
 | GET | `/api/wechat/sessions` | 微信会话列表 |
 | GET | `/api/wechat/messages` | 微信消息预览（日期/类型过滤） |
@@ -193,6 +206,37 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 数据保存在 `services/ai/data/clienthub.db`，删除该文件即可重置演示数据。微信库提取的引擎日志在 `%APPDATA%\wechat-data-analysis-desktop\clienthub-wechat-engine.log`。
 
 微信引擎已经内置在 `services/wechat-engine/`，包含 `wechat-backend.exe` 和 `native/`，不需要用户额外安装 WeChatDataAnalysis。
+
+## 发布与自动更新（GitHub Releases）
+
+本项目使用 `electron-builder` 的 NSIS 安装包 + `electron-updater` 实现自动更新：
+
+- 每次打 `v*` 标签推送（例如 `v0.2.0`），GitHub Actions 会自动构建 Windows 安装包并发布到 Releases；
+- 已安装的客户端启动后自动检查更新，发现新版本会下载并在下次启动时升级；
+- 设置页有“检查更新”入口，可手动触发。
+
+**当前 Release 页面：**
+
+> 请把下面链接中的 `YOUR_GITHUB_USERNAME` 换成你的 GitHub 用户名。
+
+```text
+https://github.com/YOUR_GITHUB_USERNAME/ClientHub/releases
+```
+
+**首次接入 GitHub 需要做的 3 件事：**
+
+1. 在 GitHub 新建仓库 `ClientHub`；
+2. 把 `package.json` 里 `repository` 和 `build.publish` 中的 `YOUR_GITHUB_USERNAME` 改为你的用户名；
+3. 在 GitHub 仓库的 `Settings → Secrets and variables → Actions` 中确认 `GITHUB_TOKEN` 可用（默认可用，无需手动添加）。
+
+之后推送标签即可自动发版：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+> 数据安全：`services/ai/.env`、`services/ai/data/`、`release/`、`build/`、`dist/` 均已加入 `.gitignore`，客户记录、导入文件、已配置的大模型 Key 不会推送到仓库。
 
 ## 复盘与优化
 
@@ -247,12 +291,12 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 - 客户识别目前是文件名/文本关键词规则，真实手机号/微信号匹配待接入；
 - 微信库提取引擎已内置到 `services/wechat-engine/`，不再依赖用户安装 WeChatDataAnalysis；首次使用需要微信已登录并保持运行以完成密钥获取/解密；
 - 微信图片/语音/视频/文件消息会进入附件索引，实际媒体文件的离线复制与语音转写仍可继续扩展；
-- Electron 安装包（NSIS）与 PyInstaller 打包尚未接入，当前 Electron 壳可直接加载 Vite 页面。
+- 安装包已接入 GitHub Releases 自动更新；当前仓库为占位用户名 `YOUR_GITHUB_USERNAME`，发布前需替换为真实 GitHub 用户名；
+- 其他文件类型（PDF/Word/Excel/图片/压缩包）仍走模拟解析。
 
 ## 下一步
 
 1. 长音频切片与并发转写（ffmpeg segment + Qwen ASR）；
 2. 说话人分离（ASR diarization 或本地声纹）；
 3. 其他文件类型解析：PDF/Word/Excel/图片 OCR；
-4. 打包 electron-builder NSIS 安装包 + PyInstaller Sidecar；
-5. 按 PRD Sprint 2 接聊天解析与客户 360。
+4. 按 PRD Sprint 2 接聊天解析与客户 360。
