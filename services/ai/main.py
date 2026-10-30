@@ -1907,12 +1907,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, payload: dict | list, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self._cors()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self._cors()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # The browser can close a polling connection before the response
+            # is written; this is normal and must not surface as a server error.
+            pass
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")

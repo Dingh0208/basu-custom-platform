@@ -142,6 +142,7 @@ scripts/installer.nsi      自定义 NSIS（本地测试包；官方自动更新
 - **设置测试连接**：不要用 `/models` 作为唯一判断，部分平台返回 HTML/401；已改为 `/chat/completions` 最小请求。`/models` 只用于“拉取模型”。
 - **微信引擎更新**：首次启动需要 10–30 秒；UI 已加 loading/自动重试，不要误判为“引擎未连接”。
 - **删除客户/导入**：删除客户会级联删除记录/需求；删除导入会删除文件/转写/聊天/需求，操作前确认用户数据。
+- **浏览器轮询断开**：前端关闭页面时可能打断正在写的 HTTP 响应；`_json` 已捕获 `BrokenPipeError/ConnectionAbortedError/ConnectionResetError`，不要再让这类异常冒到 `socketserver` 日志。
 
 ## 7. 快速验证命令
 
