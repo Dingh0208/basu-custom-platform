@@ -499,3 +499,5 @@ button{font-family:inherit}
 .wechat-date-presets button:hover{border-color:#b7d9d4;background:#f8fbfa}
 .wechat-date-presets button.on{border-color:#9fd0c9;background:var(--accent-soft);color:var(--accent);font-weight:600}
 .import-delete-btn{height:24px;padding:0 6px;font-size:10px}
+.file-delete-link{border:0;background:transparent;color:#98a2b3;font-family:inherit;font-size:9.5px;cursor:pointer;padding:0 0 0 6px}
+.file-delete-link:hover{color:#b42318;text-decoration:underline}

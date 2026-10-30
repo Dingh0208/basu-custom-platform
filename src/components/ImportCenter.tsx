@@ -136,7 +136,13 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
                           <div className="mini-ico">{fileIcon(record.type)}</div>
                           <div>
                             <div className="file-cell-name">{record.fileName}</div>
-                            <div className="file-cell-sub">{record.type} · {record.project}</div>
+                            <div className="file-cell-sub">
+                              {record.type} · {record.project}
+                              <button
+                                className="file-delete-link"
+                                onClick={(e) => { e.stopPropagation(); onDeleteRecord(record); }}
+                              >删除</button>
+                            </div>
                           </div>
                         </div>
                       </td>
