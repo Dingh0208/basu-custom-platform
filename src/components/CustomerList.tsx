@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord } from '../types';
+import type { CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, RequirementItemRecord } from '../types';
 import {
   createCustomer,
   createCustomerProject,
+  createCustomerRequirement,
   deleteCustomer,
   deleteCustomerProject,
+  deleteCustomerRequirement,
   fetchCustomerProjects,
+  fetchCustomerRequirements,
   fetchCustomerTimeline,
   fetchCustomers,
+  mergeCustomerRequirements,
   mergeCustomers,
   updateCustomer,
   updateCustomerProject,
+  updateCustomerRequirement,
 } from '../api/client';
 import { IconChat, IconFile, IconMic, IconSearch, IconUsers } from './Icons';
 import CustomerProfileModal from './CustomerProfileModal';
 import ProjectModal from './ProjectModal';
+import RequirementModal from './RequirementModal';
 import Modal from './Modal';
 
 type CustomerListProps = {
@@ -61,6 +67,11 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [projects, setProjects] = useState<CustomerProject[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const [requirements, setRequirements] = useState<RequirementItemRecord[]>([]);
+  const [requirementsLoading, setRequirementsLoading] = useState(false);
+  const [selectedRequirementIds, setSelectedRequirementIds] = useState<string[]>([]);
+  const [requirementOpen, setRequirementOpen] = useState(false);
+  const [editingRequirement, setEditingRequirement] = useState<RequirementItemRecord | null>(null);
   const [projectOpen, setProjectOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<CustomerProject | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -141,6 +152,22 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     return () => { mounted = false; };
   }, [selected?.name]);
 
+  useEffect(() => {
+    if (!selected) {
+      setRequirements([]);
+      return;
+    }
+    let mounted = true;
+    setRequirementsLoading(true);
+    setSelectedRequirementIds([]);
+    fetchCustomerRequirements(selected.name).then((data) => {
+      if (!mounted) return;
+      setRequirements(data ?? []);
+      setRequirementsLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [selected?.name]);
+
   function openTimelineEntry(entry: CustomerTimelineEntry) {
     const record = imports.find((item) => item.id === entry.id);
     if (record) onOpenRecord(record);
@@ -182,6 +209,57 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     }
     await refreshProjects();
     onToast('项目已删除，关联记录保留在客户时间线');
+  }
+
+  async function refreshRequirements() {
+    if (!selected) return;
+    const data = await fetchCustomerRequirements(selected.name);
+    setRequirements(data ?? []);
+  }
+
+  async function saveRequirement(data: Partial<RequirementItemRecord>) {
+    if (!selected) return false;
+    const result = editingRequirement
+      ? await updateCustomerRequirement(editingRequirement.id, data)
+      : await createCustomerRequirement(selected.name, data);
+    if (!result) {
+      onToast('需求保存失败');
+      return false;
+    }
+    await refreshRequirements();
+    await refreshProjects();
+    onToast(editingRequirement ? '需求已更新' : '需求已创建');
+    return true;
+  }
+
+  async function removeRequirement() {
+    if (!editingRequirement) return;
+    const result = await deleteCustomerRequirement(editingRequirement.id);
+    if (!result) {
+      onToast('需求删除失败');
+      return;
+    }
+    await refreshRequirements();
+    await refreshProjects();
+    onToast('需求已删除');
+  }
+
+  async function mergeSelectedRequirements() {
+    if (selectedRequirementIds.length < 2) return;
+    const [targetId, ...sourceIds] = selectedRequirementIds;
+    const result = await mergeCustomerRequirements(targetId, sourceIds);
+    if (!result) {
+      onToast('需求合并失败');
+      return;
+    }
+    setSelectedRequirementIds([]);
+    await refreshRequirements();
+    await refreshProjects();
+    onToast('已合并所选需求');
+  }
+
+  function toggleRequirement(id: string) {
+    setSelectedRequirementIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
   async function saveProfile(data: Partial<CustomerProfile> & { name: string; tags: string[] }) {
@@ -353,6 +431,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
                           <span>通话 {project.counts.calls}</span>
                           <span>聊天 {project.counts.chats}</span>
                           <span>文件 {project.counts.files}</span>
+                          <span>需求 {project.requirementCount ?? 0}</span>
                         </div>
                         {project.records.length > 0 && (
                           <div className="project-records">
@@ -365,6 +444,42 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
                             {project.records.length > 4 && <span className="project-more">+{project.records.length - 4} 条</span>}
                           </div>
                         )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="customer-side-section">
+                <div className="customer-side-label project-section-label">
+                  <span>需求清单</span>
+                  <div className="requirement-actions">
+                    {selectedRequirementIds.length >= 2 && (
+                      <button className="btn ghost project-add-btn" onClick={mergeSelectedRequirements}>合并所选 {selectedRequirementIds.length}</button>
+                    )}
+                    <button className="btn ghost project-add-btn" onClick={() => { setEditingRequirement(null); setRequirementOpen(true); }}>+ 新建需求</button>
+                  </div>
+                </div>
+                {requirementsLoading ? (
+                  <div className="empty-panel">正在加载需求…</div>
+                ) : requirements.length === 0 ? (
+                  <div className="empty-panel">暂无需求，点击“新建需求”手动添加</div>
+                ) : (
+                  <div className="requirement-list">
+                    {requirements.map((requirement) => (
+                      <div className={`requirement-card ${selectedRequirementIds.includes(requirement.id) ? 'selected' : ''}`} key={requirement.id}>
+                        <div className="requirement-card-head">
+                          <input type="checkbox" checked={selectedRequirementIds.includes(requirement.id)} onChange={() => toggleRequirement(requirement.id)} aria-label="选择需求用于合并" />
+                          <button className="requirement-title-btn" onClick={() => { setEditingRequirement(requirement); setRequirementOpen(true); }}>{requirement.title}</button>
+                          <span className={`pill ${requirement.priority === 'P0' ? 'red' : requirement.priority === 'P1' ? 'amber' : 'muted-pill'}`}>{requirement.priority}</span>
+                          <span className={`pill ${requirement.status === '已实现' || requirement.status === '已确认' ? 'green' : requirement.status === '已报价' ? 'blue' : ''}`}>{requirement.status}</span>
+                        </div>
+                        {requirement.description && <div className="requirement-description">{requirement.description}</div>}
+                        <div className="requirement-meta">
+                          <span>{requirement.project}</span>
+                          <span>{requirement.sourceType === 'audio' ? '通话' : requirement.sourceType === 'chat' ? '聊天' : requirement.sourceType === 'email' ? '邮件' : '手动'}</span>
+                          {requirement.sourceTime && <span>{requirement.sourceTime}</span>}
+                        </div>
+                        {requirement.sourceQuote && <div className="requirement-quote">原文：{requirement.sourceQuote}</div>}
                       </div>
                     ))}
                   </div>
@@ -428,6 +543,16 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
         onClose={() => setProjectOpen(false)}
         onSave={saveProject}
         onDelete={editingProject ? removeProject : undefined}
+      />
+
+      <RequirementModal
+        open={requirementOpen}
+        customerName={selected?.name || ''}
+        projects={projects}
+        requirement={editingRequirement}
+        onClose={() => setRequirementOpen(false)}
+        onSave={saveRequirement}
+        onDelete={editingRequirement ? removeRequirement : undefined}
       />
 
       <Modal open={mergeOpen} title="合并客户" subtitle="合并后源客户的所有沟通记录会迁移到目标客户" onClose={() => setMergeOpen(false)}>

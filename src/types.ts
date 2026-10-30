@@ -142,7 +142,24 @@ export interface CustomerProject {
   lastAt: string;
   counts: { calls: number; chats: number; files: number };
   records: ProjectRecordLink[];
+  requirementCount?: number;
   updatedAt?: string;
+}
+
+export interface RequirementItemRecord {
+  id: string;
+  customer: string;
+  project: string;
+  title: string;
+  description: string;
+  priority: 'P0' | 'P1' | 'P2' | string;
+  status: '待确认' | '已确认' | '已报价' | '已实现' | string;
+  sourceType: 'audio' | 'chat' | 'email' | 'manual' | string;
+  sourceId: string;
+  sourceTime: string;
+  sourceQuote: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CustomerProfile {

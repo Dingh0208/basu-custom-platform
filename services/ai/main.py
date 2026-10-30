@@ -216,6 +216,21 @@ def init_db() -> None:
                 updated_at TEXT,
                 UNIQUE(customer, name)
             );
+            CREATE TABLE IF NOT EXISTS requirements (
+                id TEXT PRIMARY KEY,
+                customer TEXT NOT NULL,
+                project TEXT DEFAULT '—',
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                priority TEXT DEFAULT 'P1',
+                status TEXT DEFAULT '待确认',
+                source_type TEXT DEFAULT 'manual',
+                source_id TEXT DEFAULT '',
+                source_time TEXT DEFAULT '',
+                source_quote TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT
+            );
             """
         )
         # Lightweight migration for databases created before attachment indexing.
@@ -418,6 +433,7 @@ def process_chat_analysis(import_id: str, chat_id: str) -> None:
                 "UPDATE imports SET progress=100, status='done', transcript_id=?, project=? WHERE id=?",
                 (chat_id, project_name, import_id),
             )
+        insert_requirements_from_chat(chat_id, str(row["customer"]), project_name, analysis, source_time=str(row["imported_at"] or ""))
     except Exception as exc:
         print(f"[ai-sidecar] chat analysis error {chat_id}: {exc}", flush=True)
         with db() as conn:
@@ -707,6 +723,7 @@ def update_customer(name: str, data: dict) -> dict | None:
             conn.execute("UPDATE imports SET customer=? WHERE customer=?", (new_name, name))
             conn.execute("UPDATE chats SET customer=? WHERE customer=?", (new_name, name))
             conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE requirements SET customer=? WHERE customer=?", (new_name, name))
             conn.execute("UPDATE customers SET name=? WHERE name=?", (new_name, name))
             name = new_name
         fields = {
@@ -750,6 +767,7 @@ def merge_customers(source: str, target: str) -> dict:
         conn.execute("UPDATE imports SET customer=? WHERE customer=?", (target, source))
         conn.execute("UPDATE chats SET customer=? WHERE customer=?", (target, source))
         conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (target, source))
+        conn.execute("UPDATE requirements SET customer=? WHERE customer=?", (target, source))
         # Fill target profile gaps from source, preserving explicit target values.
         for column in ("company", "position", "phone", "wechat", "email", "source_channel", "owner", "notes"):
             current = str(target_row[column] or "").strip()
@@ -773,6 +791,7 @@ def delete_customer(name: str) -> dict:
         conn.execute("DELETE FROM imports WHERE customer=?", (name,))
         conn.execute("DELETE FROM chats WHERE customer=?", (name,))
         conn.execute("DELETE FROM transcripts WHERE customer=?", (name,))
+        conn.execute("DELETE FROM requirements WHERE customer=?", (name,))
         conn.execute("DELETE FROM customers WHERE name=?", (name,))
     return {"deleted": name, "records": int(import_count)}
 
@@ -858,8 +877,12 @@ def list_projects(customer: str) -> list[dict]:
                     "status": item["status"],
                     "transcriptId": item["transcript_id"],
                 })
+            requirement_count = conn.execute(
+                "SELECT COUNT(*) AS n FROM requirements WHERE customer=? AND project=?",
+                (customer, row["name"]),
+            ).fetchone()["n"]
             project = _project_record(row)
-            project.update({"lastAt": last_at, "counts": counts, "records": record_items})
+            project.update({"lastAt": last_at, "counts": counts, "records": record_items, "requirementCount": int(requirement_count or 0)})
             result.append(project)
     result.sort(key=lambda item: item["lastAt"] or "", reverse=True)
     return result
@@ -900,6 +923,7 @@ def update_project(project_id: str, data: dict) -> dict | None:
             conn.execute("UPDATE imports SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
             conn.execute("UPDATE chats SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
             conn.execute("UPDATE transcripts SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
+            conn.execute("UPDATE requirements SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
         now = datetime.now().isoformat(timespec="seconds")
         target_launch = data.get("targetLaunchDate", row["target_launch_date"])
         description = data.get("description", row["description"])
@@ -928,8 +952,250 @@ def delete_project(project_id: str) -> dict:
         conn.execute("UPDATE imports SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("UPDATE chats SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("UPDATE transcripts SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
+        conn.execute("UPDATE requirements SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
     return {"deleted": project_id}
+
+
+_REQUIREMENT_PRIORITIES = ("P0", "P1", "P2")
+_REQUIREMENT_STATUSES = ("待确认", "已确认", "已报价", "已实现")
+
+
+def _normalize_priority(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    return text if text in _REQUIREMENT_PRIORITIES else "P1"
+
+
+def _normalize_status(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in _REQUIREMENT_STATUSES else "待确认"
+
+
+def _requirement_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "customer": row["customer"],
+        "project": row["project"] or "—",
+        "title": row["title"],
+        "description": row["description"] or "",
+        "priority": row["priority"] or "P1",
+        "status": row["status"] or "待确认",
+        "sourceType": row["source_type"] or "manual",
+        "sourceId": row["source_id"] or "",
+        "sourceTime": row["source_time"] or "",
+        "sourceQuote": row["source_quote"] or "",
+        "createdAt": row["created_at"] or "",
+        "updatedAt": row["updated_at"] or "",
+    }
+
+
+def _add_requirement(
+    conn: sqlite3.Connection,
+    *,
+    customer: str,
+    project: str,
+    title: str,
+    description: str = "",
+    priority: str = "P1",
+    status: str = "待确认",
+    source_type: str = "manual",
+    source_id: str = "",
+    source_time: str = "",
+    source_quote: str = "",
+) -> sqlite3.Row | None:
+    title = str(title or "").strip()
+    if not title:
+        return None
+    existing = conn.execute(
+        "SELECT * FROM requirements WHERE customer=? AND project=? AND title=?",
+        (customer, project or "—", title),
+    ).fetchone()
+    if existing:
+        return existing
+    now = datetime.now().isoformat(timespec="seconds")
+    requirement_id = f"req-{uuid.uuid4().hex[:10]}"
+    conn.execute(
+        "INSERT INTO requirements (id,customer,project,title,description,priority,status,source_type,source_id,source_time,source_quote,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            requirement_id, customer, project or "—", title, description or "",
+            _normalize_priority(priority), _normalize_status(status),
+            source_type or "manual", source_id or "", source_time or "", source_quote or "", now, now,
+        ),
+    )
+    return conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
+
+
+def insert_requirements_from_audio(import_id: str, customer: str, project: str, summary: dict, source_time: str = "") -> None:
+    needs = str(summary.get("needs") or "").strip()
+    if not needs or needs in ("未提及", "—", "无"):
+        return
+    titles = [part.strip() for part in re.split(r"[；;。、，,]", needs) if len(part.strip()) >= 2][:8]
+    if not titles:
+        return
+    with db() as conn:
+        for title in titles:
+            _add_requirement(
+                conn,
+                customer=customer,
+                project=project or "—",
+                title=title,
+                description=f"来自通话摘要：{needs}",
+                priority="P1",
+                status="待确认",
+                source_type="audio",
+                source_id=import_id,
+                source_time=source_time,
+                source_quote=needs,
+            )
+
+
+def insert_requirements_from_chat(chat_id: str, customer: str, project: str, analysis: dict, source_time: str = "") -> None:
+    items = analysis.get("requirements") or []
+    if not isinstance(items, list):
+        return
+    with db() as conn:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            _add_requirement(
+                conn,
+                customer=customer,
+                project=project or "—",
+                title=title,
+                description=str(item.get("description") or ""),
+                priority=item.get("priority") or "P1",
+                status=item.get("status") or "待确认",
+                source_type="chat",
+                source_id=chat_id,
+                source_time=item.get("time") or source_time,
+                source_quote=str(item.get("evidence") or ""),
+            )
+
+
+def list_requirements(customer: str, project: str = "") -> list[dict]:
+    with db() as conn:
+        if project:
+            rows = conn.execute(
+                "SELECT * FROM requirements WHERE customer=? AND project=? ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, updated_at DESC",
+                (customer, project),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM requirements WHERE customer=? ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, updated_at DESC",
+                (customer,),
+            ).fetchall()
+    return [_requirement_row(row) for row in rows]
+
+
+def create_requirement(customer: str, data: dict) -> dict | None:
+    with db() as conn:
+        _ensure_customer(conn, customer)
+        row = _add_requirement(
+            conn,
+            customer=customer,
+            project=str(data.get("project") or "—"),
+            title=str(data.get("title") or ""),
+            description=str(data.get("description") or ""),
+            priority=data.get("priority") or "P1",
+            status=data.get("status") or "待确认",
+            source_type=str(data.get("sourceType") or "manual"),
+            source_id=str(data.get("sourceId") or ""),
+            source_time=str(data.get("sourceTime") or datetime.now().strftime("%Y-%m-%d %H:%M")),
+            source_quote=str(data.get("sourceQuote") or ""),
+        )
+    return _requirement_row(row) if row else None
+
+
+def update_requirement(requirement_id: str, data: dict) -> dict | None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
+        if row is None:
+            return None
+        title = str(data.get("title", row["title"]) or "").strip()
+        if not title:
+            raise ValueError("需求标题不能为空")
+        project = str(data.get("project", row["project"]) or "—")
+        conn.execute(
+            "UPDATE requirements SET project=?, title=?, description=?, priority=?, status=?, source_time=?, source_quote=?, updated_at=? WHERE id=?",
+            (
+                project, title, str(data.get("description", row["description"]) or ""),
+                _normalize_priority(data.get("priority", row["priority"])),
+                _normalize_status(data.get("status", row["status"])),
+                str(data.get("sourceTime", row["source_time"]) or ""),
+                str(data.get("sourceQuote", row["source_quote"]) or ""),
+                datetime.now().isoformat(timespec="seconds"), requirement_id,
+            ),
+        )
+        updated = conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
+    return _requirement_row(updated)
+
+
+def delete_requirement(requirement_id: str) -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
+        if row is None:
+            raise ValueError("需求不存在")
+        conn.execute("DELETE FROM requirements WHERE id=?", (requirement_id,))
+    return {"deleted": requirement_id}
+
+
+def merge_requirements(target_id: str, source_ids: list[str]) -> dict | None:
+    with db() as conn:
+        target = conn.execute("SELECT * FROM requirements WHERE id=?", (target_id,)).fetchone()
+        if target is None:
+            return None
+        sources = [
+            conn.execute("SELECT * FROM requirements WHERE id=?", (source_id,)).fetchone()
+            for source_id in source_ids if source_id != target_id
+        ]
+        sources = [row for row in sources if row is not None]
+        descriptions = list(dict.fromkeys([str(target["description"] or ""), *[str(row["description"] or "") for row in sources]]))
+        quotes = list(dict.fromkeys([str(target["source_quote"] or ""), *[str(row["source_quote"] or "") for row in sources]]))
+        priorities = [str(target["priority"] or "P1"), *[str(row["priority"] or "P1") for row in sources]]
+        best_priority = min(priorities, key=lambda item: _REQUIREMENT_PRIORITIES.index(item) if item in _REQUIREMENT_PRIORITIES else 9)
+        conn.execute(
+            "UPDATE requirements SET description=?, priority=?, source_quote=?, updated_at=? WHERE id=?",
+            ("\n\n".join([item for item in descriptions if item]), best_priority, "\n\n".join([item for item in quotes if item]), datetime.now().isoformat(timespec="seconds"), target_id),
+        )
+        for source in sources:
+            conn.execute("DELETE FROM requirements WHERE id=?", (source["id"],))
+        updated = conn.execute("SELECT * FROM requirements WHERE id=?", (target_id,)).fetchone()
+    return _requirement_row(updated)
+
+
+def backfill_requirements() -> None:
+    """Populate requirements for records created before the requirement table existed."""
+    with db() as conn:
+        if conn.execute("SELECT COUNT(*) AS n FROM requirements").fetchone()["n"] > 0:
+            return
+        transcripts = conn.execute("SELECT * FROM transcripts").fetchall()
+        chats = conn.execute("SELECT * FROM chats WHERE status='done'").fetchall()
+    for transcript in transcripts:
+        try:
+            summary = json.loads(transcript["summary_json"] or "{}")
+            insert_requirements_from_audio(
+                transcript["id"],
+                str(transcript["customer"]),
+                str(transcript["project"] or "—"),
+                summary,
+                source_time=str(transcript["imported_at"] or ""),
+            )
+        except Exception:
+            pass
+    for chat in chats:
+        try:
+            insert_requirements_from_chat(
+                chat["id"],
+                str(chat["customer"]),
+                str(chat["project"] or "—"),
+                json.loads(chat["analysis_json"] or "{}"),
+                source_time=str(chat["imported_at"] or ""),
+            )
+        except Exception:
+            pass
 
 
 def customer_timeline(customer_name: str) -> dict:
@@ -1077,6 +1343,11 @@ def transcribe_audio_file(path: Path, mime_type: str = "audio/mpeg", progress_cb
             raise RuntimeError("ffmpeg produced no audio chunks")
         texts: list[str] = []
         for index, chunk in enumerate(chunks, start=1):
+            # Encoders can leave a tiny final fragment; MaaS rejects it as
+            # "audio is empty", so skip only near-empty artifacts.
+            if chunk.stat().st_size < 2000:
+                print(f"[ai-sidecar] chunk {index}/{len(chunks)} skipped (too small)", flush=True)
+                continue
             text = transcribe_audio(chunk.read_bytes(), "audio/mpeg").strip()
             if text:
                 texts.append(text)
@@ -1231,6 +1502,7 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str) -> Non
                 "UPDATE imports SET progress=100, status='done', transcript_id=? WHERE id=?",
                 (transcript_id, import_id),
             )
+        insert_requirements_from_audio(import_id, str(row["customer"]), str(row["project"] or "—"), summary, source_time=str(row["imported_at"] or ""))
     except Exception as exc:
         print(f"[ai-sidecar] real pipeline error {import_id}: {exc}", flush=True)
         with db() as conn:
@@ -1385,7 +1657,13 @@ class Handler(BaseHTTPRequestHandler):
             customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
             self._json(list_projects(customer_name))
             return
-        if path.startswith("/api/customers/") and not path.endswith("/timeline") and not path.endswith("/projects"):
+        if path.startswith("/api/customers/") and path.endswith("/requirements"):
+            parts = [part for part in path.split("/") if part]
+            customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
+            project = q("project")
+            self._json(list_requirements(customer_name, project))
+            return
+        if path.startswith("/api/customers/") and not path.endswith("/timeline") and not path.endswith("/projects") and not path.endswith("/requirements"):
             customer_name = unquote(path.split("/")[-1])
             customer = get_customer(customer_name)
             if customer is None:
@@ -1420,6 +1698,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 project = create_project(customer_name, data)
                 self._json(project, 201)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path.startswith("/api/customers/") and path.endswith("/requirements"):
+            parts = [part for part in path.split("/") if part]
+            customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
+            try:
+                requirement = create_requirement(customer_name, data)
+                self._json(requirement, 201)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/requirements/merge":
+            try:
+                target_id = str(data.get("targetId") or "")
+                source_ids = [str(item) for item in (data.get("sourceIds") or []) if str(item)]
+                self._json(merge_requirements(target_id, source_ids))
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return
@@ -1673,6 +1970,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "requirements":
+            try:
+                updated = update_requirement(parts[2], data)
+                if updated is None:
+                    self._json({"error": "requirement_not_found"}, 404)
+                else:
+                    self._json(updated)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         self._json({"error": "not_found"}, 404)
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -1690,6 +1997,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "requirements":
+            try:
+                self._json(delete_requirement(parts[2]))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         self._json({"error": "not_found"}, 404)
 
     def log_message(self, fmt: str, *args) -> None:  # keep output concise
@@ -1702,6 +2015,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     init_db()
+    backfill_requirements()
     # Resume any imports left in "processing" from a previous run.
     with db() as conn:
         pending = conn.execute("SELECT id,type,transcript_id FROM imports WHERE status='processing'").fetchall()

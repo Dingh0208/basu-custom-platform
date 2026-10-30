@@ -1,4 +1,4 @@
-import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -121,6 +121,36 @@ export async function updateCustomerProject(projectId: string, data: Partial<Cus
 
 export async function deleteCustomerProject(projectId: string): Promise<{ deleted: string } | null> {
   return fetchJson(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+}
+
+export async function fetchCustomerRequirements(customer: string, project = ''): Promise<RequirementItemRecord[] | null> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : '';
+  return fetchJson<RequirementItemRecord[]>(`/api/customers/${encodeURIComponent(customer)}/requirements${query}`, undefined, 4000);
+}
+
+export async function createCustomerRequirement(customer: string, data: Partial<RequirementItemRecord>): Promise<RequirementItemRecord | null> {
+  return fetchJson<RequirementItemRecord>(`/api/customers/${encodeURIComponent(customer)}/requirements`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCustomerRequirement(requirementId: string, data: Partial<RequirementItemRecord>): Promise<RequirementItemRecord | null> {
+  return fetchJson<RequirementItemRecord>(`/api/requirements/${encodeURIComponent(requirementId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCustomerRequirement(requirementId: string): Promise<{ deleted: string } | null> {
+  return fetchJson(`/api/requirements/${encodeURIComponent(requirementId)}`, { method: 'DELETE' });
+}
+
+export async function mergeCustomerRequirements(targetId: string, sourceIds: string[]): Promise<RequirementItemRecord | null> {
+  return fetchJson<RequirementItemRecord>('/api/requirements/merge', {
+    method: 'POST',
+    body: JSON.stringify({ targetId, sourceIds }),
+  });
 }
 
 export async function getWechatStatus(): Promise<WeChatStatus | null> {
