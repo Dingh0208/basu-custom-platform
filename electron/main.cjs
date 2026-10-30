@@ -46,14 +46,21 @@ function setupAutoUpdater() {
   autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
   autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
   autoUpdater.on('update-not-available', () => sendUpdateStatus('none'));
+  autoUpdater.on('download-progress', (progress) => sendUpdateStatus('progress', '', {
+    percent: progress.percent,
+    transferred: progress.transferred,
+    total: progress.total,
+  }));
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
   autoUpdater.on('error', (err) => sendUpdateStatus('error', String(err && err.message || err)));
   autoUpdater.checkForUpdatesAndNotify();
+  // Requirement: background update check every three hours.
+  setInterval(() => autoUpdater.checkForUpdatesAndNotify(), 3 * 60 * 60 * 1000);
 }
 
-function sendUpdateStatus(status, version = '') {
+function sendUpdateStatus(status, version = '', extra = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('clienthub:update-status', { status, version });
+  mainWindow.webContents.send('clienthub:update-status', { status, version, ...extra });
 }
 
 function createWindow() {
@@ -99,6 +106,12 @@ ipcMain.handle('clienthub:check-updates', async () => {
   } catch (error) {
     return { status: 'error', error: String(error && error.message || error) };
   }
+});
+
+ipcMain.handle('clienthub:install-update', () => {
+  if (isDev) return false;
+  autoUpdater.quitAndInstall();
+  return true;
 });
 
 app.whenReady().then(() => {

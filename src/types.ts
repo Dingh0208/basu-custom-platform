@@ -1,4 +1,4 @@
-export type View = 'import' | 'transcript' | 'customers' | 'chat' | 'settings';
+export type View = 'import' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects';
 
 export type ImportStatus = 'processing' | 'done' | 'inbox' | 'failed';
 
@@ -160,6 +160,19 @@ export interface RequirementItemRecord {
   sourceQuote: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectListItem extends CustomerProject {
+  customerCompany: string;
+  recordCount: number;
+}
+
+export interface AppSettings {
+  defaultProject: string;
+  defaultOwner: string;
+  autoMatch: boolean;
+  autoProcess: boolean;
+  updateIntervalHours: number;
 }
 
 export interface LlmConfig {

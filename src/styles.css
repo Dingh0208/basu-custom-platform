@@ -514,3 +514,17 @@ button{font-family:inherit}
 .settings-meta-grid>div{display:flex;flex-direction:column;gap:3px}
 .settings-meta-grid span{font-size:10.5px;color:var(--muted-2)}
 .settings-meta-grid strong{font-size:12px;font-weight:600}
+
+/* ---------- Project page ---------- */
+.project-workspace{padding:16px 18px}
+.project-list-card{width:100%}
+.project-workspace .table td{font-size:11px}
+.project-workspace .table th{font-size:10px}
+
+/* ---------- Update indicator ---------- */
+.update-indicator{margin:8px 14px 0;padding:9px 10px;border:1px solid #cfe9e6;border-radius:9px;background:#f4fbf9}
+.update-indicator-title{font-size:10.5px;font-weight:600;color:#0f766e;line-height:1.45}
+.update-progress{height:5px;border-radius:999px;background:#d9eeeb;overflow:hidden;margin-top:7px}
+.update-progress span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .3s}
+.update-progress-text{font-size:9px;color:var(--muted-2);margin-top:3px}
+.update-install-btn{width:100%;height:26px!important;margin-top:7px;font-size:10px!important}

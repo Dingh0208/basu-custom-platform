@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   IconHome,
   IconUsers,
@@ -10,7 +11,7 @@ import {
 } from './Icons';
 
 type SidebarProps = {
-  active: 'import' | 'customers' | 'other';
+  active: 'import' | 'customers' | 'projects' | 'other';
   inboxCount: number;
   onNavigate: (label: string) => void;
 };
@@ -29,8 +30,25 @@ const workItems = [
 ];
 
 export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps) {
+  const [update, setUpdate] = useState<{ status: string; version?: string; percent?: number; transferred?: number; total?: number } | null>(null);
+
+  useEffect(() => {
+    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number; transferred?: number; total?: number }) => void) => void } }).clientHub;
+    if (!bridge?.onUpdateStatus) return;
+    return bridge.onUpdateStatus((payload) => setUpdate(payload));
+  }, []);
+
+  function mb(value?: number) {
+    return value ? `${(value / 1024 / 1024).toFixed(1)} MB` : '';
+  }
+
+  async function installUpdate() {
+    const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
+    await bridge?.installUpdate?.();
+  }
+
   const isActive = (key: string) =>
-    (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers');
+    (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
 
   return (
     <aside className="sidebar">
@@ -76,6 +94,20 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
           设置
         </button>
       </div>
+      {update && update.status !== 'none' && update.status !== 'checking' && (
+        <div className="update-indicator">
+          <div className="update-indicator-title">
+            {update.status === 'downloaded' ? `新版本 ${update.version || ''} 已就绪` : update.status === 'progress' ? '正在下载更新' : update.status === 'available' ? `发现新版本 ${update.version || ''}` : '更新检查失败'}
+          </div>
+          {update.status === 'progress' && (
+            <>
+              <div className="update-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div>
+              <div className="update-progress-text">{mb(update.transferred)} / {mb(update.total)}</div>
+            </>
+          )}
+          {update.status === 'downloaded' && <button className="btn primary update-install-btn" onClick={installUpdate}>重启并安装</button>}
+        </div>
+      )}
       <div className="user-card">
         <div className="avatar">王</div>
         <div>

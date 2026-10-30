@@ -5,16 +5,19 @@ import TranscriptWorkspace from './components/TranscriptWorkspace';
 import CustomerList from './components/CustomerList';
 import ChatWorkspace from './components/ChatWorkspace';
 import SettingsPage from './components/SettingsPage';
+import ProjectPage from './components/ProjectPage';
 import Toast from './components/Toast';
 import { initialImports, transcriptRecord } from './mock/data';
-import type { ChatRecord, ImportRecord, TranscriptRecord, View } from './types';
+import type { ChatRecord, ImportRecord, ProjectListItem, TranscriptRecord, View } from './types';
 import {
   createChatImport,
   createChatScreenshot,
   createImport,
   deleteImport,
   fetchChat,
+  fetchAppSettings,
   fetchImports,
+  fetchProjects,
   fetchTranscript,
   getHealth,
   pasteImport,
@@ -59,7 +62,7 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' ? value : 'import';
+    return value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' ? value : 'import';
   });
   const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers'>('import');
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
@@ -72,6 +75,8 @@ export default function App() {
     new URLSearchParams(window.location.search).get('id') || '',
   );
   const [sidecarOnline, setSidecarOnline] = useState(false);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [selectedProject, setSelectedProject] = useState('');
   const [toast, setToast] = useState<string | null>(null);
 
   // Detect the local Python sidecar; keep retrying so `pnpm dev:full` works even if Vite is ready first.
@@ -85,6 +90,12 @@ export default function App() {
         setSidecarOnline(true);
         const data = await fetchImports();
         if (mounted && data) setImports(data);
+        const projectData = await fetchProjects();
+        const appSettings = await fetchAppSettings();
+        if (mounted && projectData) {
+          setProjects(projectData);
+          setSelectedProject((current) => current || appSettings?.defaultProject || '');
+        }
         return;
       }
       setSidecarOnline(false);
@@ -173,6 +184,10 @@ export default function App() {
       setView('settings');
       return;
     }
+    if (label === '项目') {
+      setView('projects');
+      return;
+    }
     showToast(`${label} 模块将在 Sprint 2 提供`);
   }
 
@@ -185,7 +200,7 @@ export default function App() {
         const known = /张三|某某科技|会员小程序/.test(file.name);
         if (type === '聊天记录' && file.size <= 8 * 1024 * 1024) {
           const text = await file.text();
-          const chat = await createChatImport(text, { fileName: file.name, customer: known ? '张三' : '', project: known ? '会员小程序商城' : '' });
+          const chat = await createChatImport(text, { fileName: file.name, customer: known ? '张三' : '', project: selectedProject });
           if (chat?.chatId) continue;
         }
         if (type === '图片' && file.size <= 12 * 1024 * 1024) {
@@ -193,7 +208,7 @@ export default function App() {
           const imageBase64 = await fileToBase64(file);
           const chat = await createChatScreenshot(imageBase64, file.type || 'image/png', file.name, {
             customer: known ? '张三' : undefined,
-            project: known ? '会员小程序商城' : undefined,
+            project: selectedProject || undefined,
           });
           if (chat?.chatId) {
             showToast('聊天截图已识别，正在生成对话解析');
@@ -207,7 +222,7 @@ export default function App() {
           type,
           size: formatSize(file.size),
           customer: known ? '张三' : '待归档',
-          project: known ? '会员小程序商城' : '—',
+          project: selectedProject || '—',
           kind: type,
           audioBase64,
           mimeType: media ? (file.type || (type === '视频' ? 'video/mp4' : 'audio/mpeg')) : undefined,
@@ -229,7 +244,7 @@ export default function App() {
         type,
         size: formatSize(file.size),
         customer: known ? '张三' : '待归档',
-        project: known ? '会员小程序商城' : '—',
+        project: selectedProject || '—',
         status: 'processing',
         progress: 0,
         importedAt: nowTime(),
@@ -263,7 +278,7 @@ export default function App() {
 
   async function handlePasteText(text: string) {
     if (sidecarOnline) {
-      const result = await pasteImport(text);
+      const result = await pasteImport(text, { project: selectedProject });
       const data = await fetchImports();
       if (data) setImports(data);
       showToast(result ? '已提交粘贴文本到本地 Sidecar，正在解析对话' : 'Sidecar 暂时不可用，已切换为本地模拟');
@@ -276,7 +291,7 @@ export default function App() {
       type: '聊天记录',
       size: `${text.length} 字`,
       customer: known ? '张三' : '待归档',
-      project: known ? '会员小程序商城' : '—',
+      project: selectedProject || '—',
       status: 'processing',
       progress: 0,
       importedAt: nowTime(),
@@ -325,7 +340,7 @@ export default function App() {
   return (
     <div className="app">
       <Sidebar
-        active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view === 'customers' ? 'customers' : 'import'}
+        active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view === 'customers' ? 'customers' : view === 'projects' ? 'projects' : 'import'}
         inboxCount={inboxCount}
         onNavigate={handleNavigate}
       />
@@ -340,6 +355,9 @@ export default function App() {
             onToast={showToast}
             onWechatImported={handleWechatImported}
             onDeleteRecord={handleDeleteRecord}
+            projects={projects}
+            selectedProject={selectedProject}
+            onProjectChange={setSelectedProject}
           />
         ) : view === 'customers' ? (
           <CustomerList
@@ -358,6 +376,8 @@ export default function App() {
           />
         ) : view === 'settings' ? (
           <SettingsPage onToast={showToast} />
+        ) : view === 'projects' ? (
+          <ProjectPage onToast={showToast} />
         ) : (
           <TranscriptWorkspace
             record={activeTranscript}

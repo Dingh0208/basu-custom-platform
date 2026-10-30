@@ -1,4 +1,4 @@
-import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, LlmConfig, LlmModelsResult, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -50,10 +50,10 @@ export async function createImport(payload: {
   });
 }
 
-export async function pasteImport(text: string): Promise<{ id: string; status: string } | null> {
+export async function pasteImport(text: string, meta?: { project?: string; customer?: string }): Promise<{ id: string; status: string } | null> {
   return fetchJson('/api/imports/paste', {
     method: 'POST',
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, project: meta?.project, customer: meta?.customer }),
   });
 }
 
@@ -132,6 +132,21 @@ export async function deleteCustomer(name: string): Promise<{ deleted: string; r
 
 export async function fetchCustomerTimeline(customer: string): Promise<{ customer: string; records: CustomerTimelineEntry[] } | null> {
   return fetchJson(`/api/customers/${encodeURIComponent(customer)}/timeline`, undefined, 3000);
+}
+
+export async function fetchProjects(): Promise<ProjectListItem[] | null> {
+  return fetchJson<ProjectListItem[]>('/api/projects', undefined, 5000);
+}
+
+export async function fetchAppSettings(): Promise<AppSettings | null> {
+  return fetchJson<AppSettings>('/api/settings/app', undefined, 5000);
+}
+
+export async function saveAppSettings(data: Partial<AppSettings>): Promise<AppSettings | null> {
+  return fetchJson<AppSettings>('/api/settings/app', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function fetchCustomerProjects(customer: string): Promise<CustomerProject[] | null> {

@@ -931,6 +931,33 @@ def list_projects(customer: str) -> list[dict]:
     return result
 
 
+def list_all_projects() -> list[dict]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT p.*, c.company AS customer_company FROM projects p LEFT JOIN customers c ON c.name=p.customer ORDER BY p.updated_at DESC, p.name ASC"
+        ).fetchall()
+        result = []
+        for row in rows:
+            stats = conn.execute(
+                "SELECT COUNT(*) AS n, MAX(imported_at) AS last_at FROM imports WHERE customer=? AND project=?",
+                (row["customer"], row["name"]),
+            ).fetchone()
+            requirement_count = conn.execute(
+                "SELECT COUNT(*) AS n FROM requirements WHERE customer=? AND project=?",
+                (row["customer"], row["name"]),
+            ).fetchone()["n"]
+            project = _project_record(row)
+            project.update({
+                "customerCompany": row["customer_company"] or "—",
+                "lastAt": str(stats["last_at"] or ""),
+                "recordCount": int(stats["n"] or 0),
+                "requirementCount": int(requirement_count or 0),
+            })
+            result.append(project)
+    result.sort(key=lambda item: item["lastAt"] or "", reverse=True)
+    return result
+
+
 def create_project(customer: str, data: dict) -> dict | None:
     with db() as conn:
         _ensure_customer(conn, customer)
@@ -1377,6 +1404,62 @@ def save_llm_config(data: dict) -> dict:
     return get_llm_config()
 
 
+APP_SETTING_DEFAULTS = {
+    "defaultProject": "",
+    "defaultOwner": "王总",
+    "autoMatch": True,
+    "autoProcess": True,
+    "updateIntervalHours": 3,
+}
+
+
+def get_app_settings() -> dict:
+    with db() as conn:
+        rows = {
+            str(row["key"]): str(row["value"] or "")
+            for row in conn.execute("SELECT key,value FROM settings WHERE key LIKE 'app.%'").fetchall()
+        }
+    result = dict(APP_SETTING_DEFAULTS)
+    for key in result:
+        if f"app.{key}" not in rows:
+            continue
+        raw = rows[f"app.{key}"]
+        if key in ("autoMatch", "autoProcess"):
+            result[key] = raw.lower() == "true"
+        elif key == "updateIntervalHours":
+            try:
+                result[key] = max(1, int(raw))
+            except ValueError:
+                pass
+        else:
+            result[key] = raw
+    return result
+
+
+def save_app_settings(data: dict) -> dict:
+    updates = {}
+    for key in APP_SETTING_DEFAULTS:
+        if key not in data:
+            continue
+        value = data[key]
+        if key in ("autoMatch", "autoProcess"):
+            updates[f"app.{key}"] = "true" if value else "false"
+        elif key == "updateIntervalHours":
+            try:
+                updates[f"app.{key}"] = str(max(1, int(value)))
+            except (TypeError, ValueError):
+                pass
+        else:
+            updates[f"app.{key}"] = str(value or "")
+    with db() as conn:
+        for key, value in updates.items():
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+    return get_app_settings()
+
+
 def _llm_open(method: str, url: str, *, api_key: str = "", timeout: int = 30):
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     req = urllib.request.Request(url, headers=headers, method=method)
@@ -1400,10 +1483,17 @@ def list_llm_models(data: dict | None = None) -> dict:
         return {"status": "error", "error": "请先填写 Base URL", "models": []}
     try:
         response = _llm_open("GET", f"{base_url}/models", api_key=api_key, timeout=30)
-        body = json.loads(response.read().decode("utf-8"))
+        raw = response.read().decode("utf-8", "replace")
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"status": "error", "error": f"模型接口返回的不是 JSON（HTTP {response.status}）：{raw[:160]}", "models": []}
         models = [str(item.get("id") or "") for item in (body.get("data") or []) if str(item.get("id") or "")]
         models = [m for m in models if m]
         return {"status": "ok", "count": len(models), "models": models}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:300]
+        return {"status": "error", "error": f"HTTP {exc.code}: {detail}", "models": []}
     except Exception as exc:
         return {"status": "error", "error": str(exc), "models": []}
 
@@ -1414,10 +1504,33 @@ def test_llm_config(data: dict | None = None) -> dict:
         return {"status": "error", "error": "请填写聚合大模型 Base URL"}
     if not api_key:
         return {"status": "error", "error": "请填写聚合大模型 API Key"}
-    models = list_llm_models(data)
-    if models.get("status") != "ok":
-        return models
-    return {"status": "ok", "count": models.get("count", 0), "models": models.get("models", [])}
+    config = get_llm_config()
+    model = str((data or {}).get("summaryModel") or config["summaryModel"]).strip()
+    if not model:
+        return {"status": "error", "error": "请先填写文本/总结模型名称"}
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 8,
+        "temperature": 0,
+    }
+    try:
+        req = urllib.request.Request(
+            base_url + "/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=45) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        if body.get("choices"):
+            return {"status": "ok", "count": 1, "models": [model], "message": "连接成功"}
+        return {"status": "error", "error": f"模型返回异常：{str(body)[:300]}", "models": []}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        return {"status": "error", "error": f"HTTP {exc.code}: {detail}", "models": []}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "models": []}
 
 
 def maas_request(path: str, payload: dict, timeout: int = 600) -> dict:
@@ -1774,6 +1887,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings/llm/models":
             self._json(list_llm_models())
             return
+        if path == "/api/settings/app":
+            self._json(get_app_settings())
+            return
+        if path == "/api/projects":
+            self._json(list_all_projects())
+            return
         if path == "/api/health":
             config = get_llm_config()
             self._json({
@@ -1878,6 +1997,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/settings/llm/models":
             self._json(list_llm_models(data))
+            return
+
+        if path == "/api/settings/app":
+            try:
+                self._json(save_app_settings(data))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
             return
 
         if path.startswith("/api/chats/") and path.endswith("/reanalyze"):
@@ -2123,7 +2249,7 @@ class Handler(BaseHTTPRequestHandler):
                         "聊天记录",
                         f"{len(text)} 字",
                         "张三" if known else "待归档",
-                        "会员小程序商城" if known else "—",
+                        str(data.get("project") or "—"),
                         "processing",
                         0,
                         now_time(),

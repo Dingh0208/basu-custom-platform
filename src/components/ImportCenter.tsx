@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { ImportRecord } from '../types';
+import type { ImportRecord, ProjectListItem } from '../types';
 import { IconChat, IconFile, IconMic, IconUpload } from './Icons';
 import Modal from './Modal';
 import WeChatImportModal from './WeChatImportModal';
@@ -13,6 +13,9 @@ type ImportCenterProps = {
   onToast: (message: string) => void;
   onWechatImported: () => void;
   onDeleteRecord: (record: ImportRecord) => void;
+  projects: ProjectListItem[];
+  selectedProject: string;
+  onProjectChange: (name: string) => void;
 };
 
 function fileIcon(type: string) {
@@ -21,7 +24,7 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord }: ImportCenterProps) {
+export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, selectedProject, onProjectChange }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -194,7 +197,10 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
             </div>
             <div className="setting">
               <div className="setting-label">默认项目</div>
-              <select className="select"><option>不指定，按沟通内容判断</option><option>会员小程序商城</option><option>CRM 二期</option></select>
+              <select className="select" value={selectedProject} onChange={(e) => onProjectChange(e.target.value)}>
+                <option value="">不指定，按沟通内容判断</option>
+                {projects.map((project) => <option key={project.id} value={project.name}>{project.name}（{project.customer}）</option>)}
+              </select>
             </div>
             <div className="setting">
               <div className="setting-label">AI 处理模式</div>
