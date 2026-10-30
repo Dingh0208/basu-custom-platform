@@ -39,6 +39,7 @@ pnpm electron:start
 ### 1. 导入中心
 
 - 拖拽 / 批量选择文件（音频、视频、PDF、Word、Excel、PPT、图片、压缩包、聊天记录）；
+- 最近导入支持删除：删除文件、转写/聊天内容、关联需求和附件，并重新计算客户项目统计；
 - 粘贴文本：弹窗输入聊天记录，生成一条导入记录；
 - 粘贴截图：选择图片文件模拟截图导入；
 - 本地 Sidecar 接收导入记录并写入 SQLite；
@@ -96,6 +97,7 @@ pnpm electron:start
 - 顶部“更新微信库”：检测微信目录 → 读取密钥 → 批量解密 → 构建会话缓存，并显示实时进度；
 - 未完成解密时“开始提取”按钮禁用；
 - 选择账号、会话、开始/结束日期、记录类型；
+- 日期支持快捷选择：今天 / 3 天内 / 7 天内 / 全部；
 - 记录类型支持：文本、图片、语音、视频、文件、链接、聊天记录、引用、系统消息、表情、转账、红包、位置、通话；
 - 提取过程显示动态进度：读取消息 → 日期/类型筛选 → 创建聊天记录 → AI 对话解析；
 - 提取结果写入 `services/ai/data/wechat-exports/` JSON，并自动创建聊天记录、触发 AI 对话解析；
@@ -142,6 +144,7 @@ pnpm electron:start
 | POST | `/api/imports/paste` | 粘贴文本导入（自动识别聊天格式并建聊天记录） |
 | POST | `/api/imports/chat` | 直接导入微信聊天文本 |
 | POST | `/api/imports/chat-screenshot` | 上传聊天截图并 OCR 成聊天记录 |
+| DELETE | `/api/imports/{id}` | 删除导入文件及其转写/聊天/需求关联内容 |
 | POST | `/api/asr` | 直接测试 qwen3-asr-flash 转写 |
 | POST | `/api/summarize` | 直接测试 qwen3.8-flash 结构化摘要 |
 | GET | `/api/transcripts/{id}` | 获取转写稿与摘要 |

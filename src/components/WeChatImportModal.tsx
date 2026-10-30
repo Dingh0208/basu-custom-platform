@@ -108,6 +108,18 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   }, [open]);
 
   useEffect(() => {
+    if (!open || !status || status.available || prepareJob?.status === 'running') return;
+    let mounted = true;
+    const timer = window.setTimeout(async () => {
+      if (mounted) await refreshEngine();
+    }, 3000);
+    return () => {
+      mounted = false;
+      window.clearTimeout(timer);
+    };
+  }, [open, status?.available, prepareJob?.status]);
+
+  useEffect(() => {
     if (!open || prepareJob?.status !== 'running') return;
     let mounted = true;
     const timer = window.setInterval(async () => {
@@ -175,6 +187,25 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
 
   function toggleType(value: string) {
     setSelectedTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+  }
+
+  function applyDatePreset(days: number | null) {
+    if (days === null) {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - (days - 1));
+    const format = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    setStartDate(format(start));
+    setEndDate(format(end));
   }
 
   async function handlePrepare() {
@@ -245,7 +276,12 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
               {prepareJob.currentFile && <div className="wechat-job-detail">{prepareJob.currentFile}</div>}
             </div>
           )}
-          {status?.available ? (
+          {loading && !status ? (
+            <div className="wechat-unavailable">
+              <div className="empty-panel">正在启动微信解析引擎…</div>
+              <div className="small-note">首次启动需要读取微信数据，通常约 10–30 秒；启动完成后会自动加载会话。</div>
+            </div>
+          ) : status?.available ? (
             <>
               <div className="wechat-account-line">
                 <span>账号</span>
@@ -303,6 +339,13 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
                 <div className="wechat-selected-meta">{selectedSession.username} · 最后消息 {selectedSession.lastMessageTime || '—'}</div>
               </>
             ) : <div className="empty-hint">请在左侧选择一个会话</div>}
+          </div>
+          <div className="wechat-date-presets">
+            <span>快捷范围</span>
+            <button className={startDate && endDate && startDate === endDate ? 'on' : ''} onClick={() => applyDatePreset(1)}>今天</button>
+            <button onClick={() => applyDatePreset(3)}>3 天内</button>
+            <button onClick={() => applyDatePreset(7)}>7 天内</button>
+            <button onClick={() => applyDatePreset(null)}>全部</button>
           </div>
           <div className="wechat-date-row">
             <label>开始日期<input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label>

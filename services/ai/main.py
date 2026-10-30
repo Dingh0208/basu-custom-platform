@@ -278,6 +278,45 @@ def row_to_import(row: sqlite3.Row) -> dict:
     }
 
 
+def delete_import(import_id: str) -> dict:
+    files_to_remove: list[Path] = []
+    with db() as conn:
+        row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
+        if row is None:
+            raise ValueError("导入记录不存在")
+        if row["status"] == "processing":
+            raise ValueError("文件仍在处理中，请等待处理完成后再删除")
+        transcript_id = str(row["transcript_id"] or "")
+        customer = str(row["customer"] or "")
+        chat = None
+        if transcript_id.startswith("chat-"):
+            chat = conn.execute("SELECT * FROM chats WHERE id=?", (transcript_id,)).fetchone()
+            if chat:
+                attachments = json.loads(chat["attachments_json"] or "[]")
+                for attachment in attachments:
+                    if attachment.get("storedName"):
+                        files_to_remove.append(UPLOAD_DIR / str(attachment["storedName"]))
+                files_to_remove.append(EXPORT_DIR / f"{transcript_id}.json")
+                conn.execute("DELETE FROM requirements WHERE source_type='chat' AND source_id=?", (transcript_id,))
+                conn.execute("DELETE FROM chats WHERE id=?", (transcript_id,))
+        elif transcript_id:
+            other = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE transcript_id=? AND id<>?", (transcript_id, import_id)).fetchone()["n"]
+            if not other:
+                conn.execute("DELETE FROM requirements WHERE source_type='audio' AND source_id IN (?,?)", (import_id, transcript_id))
+                conn.execute("DELETE FROM transcripts WHERE id=?", (transcript_id,))
+        # Also remove requirements created directly from this import id.
+        conn.execute("DELETE FROM requirements WHERE source_id=?", (import_id,))
+        conn.execute("DELETE FROM imports WHERE id=?", (import_id,))
+    files_to_remove.extend(UPLOAD_DIR.glob(f"{import_id}*"))
+    for path in files_to_remove:
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError:
+            pass
+    return {"deleted": import_id, "customer": customer, "chatDeleted": bool(chat)}
+
+
 def row_to_transcript(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -1988,6 +2027,12 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
             try:
                 self._json(delete_customer(unquote(parts[2])))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "imports":
+            try:
+                self._json(delete_import(parts[2]))
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return

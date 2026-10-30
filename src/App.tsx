@@ -11,6 +11,7 @@ import {
   createChatImport,
   createChatScreenshot,
   createImport,
+  deleteImport,
   fetchChat,
   fetchImports,
   fetchTranscript,
@@ -244,6 +245,17 @@ export default function App() {
     showToast('微信聊天记录已进入分析队列，完成后可在客户 360 查看');
   }
 
+  async function handleDeleteRecord(record: ImportRecord) {
+    if (!window.confirm(`确定删除「${record.fileName}」？\n\n会删除该文件、转写/聊天内容、关联需求和项目统计，但不会删除客户档案。`)) return;
+    const result = await deleteImport(record.id);
+    if (!result) {
+      showToast('删除失败，请稍后重试');
+      return;
+    }
+    await refreshImports();
+    showToast(`已删除「${record.fileName}」及其关联内容`);
+  }
+
   async function handlePasteText(text: string) {
     if (sidecarOnline) {
       const result = await pasteImport(text);
@@ -322,6 +334,7 @@ export default function App() {
             onOpenRecord={(record) => handleOpenRecord(record, 'import')}
             onToast={showToast}
             onWechatImported={handleWechatImported}
+            onDeleteRecord={handleDeleteRecord}
           />
         ) : view === 'customers' ? (
           <CustomerList

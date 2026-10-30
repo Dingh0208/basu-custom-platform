@@ -12,6 +12,7 @@ type ImportCenterProps = {
   onOpenRecord: (record: ImportRecord) => void;
   onToast: (message: string) => void;
   onWechatImported: () => void;
+  onDeleteRecord: (record: ImportRecord) => void;
 };
 
 function fileIcon(type: string) {
@@ -20,7 +21,7 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported }: ImportCenterProps) {
+export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -126,7 +127,7 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
             </div>
             <div style={{ overflow: 'auto' }}>
               <table className="table">
-                <thead><tr><th>文件</th><th>类型</th><th>大小</th><th>识别客户</th><th>状态</th><th>导入时间</th></tr></thead>
+                <thead><tr><th>文件</th><th>类型</th><th>大小</th><th>识别客户</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
                 <tbody>
                   {imports.map((record) => (
                     <tr key={record.id} style={{ cursor: record.status === 'done' ? 'pointer' : 'default' }} onClick={() => onOpenRecord(record)}>
@@ -157,6 +158,12 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
                         )}
                       </td>
                       <td>{record.importedAt}</td>
+                      <td>
+                        <button
+                          className="btn danger-btn import-delete-btn"
+                          onClick={(e) => { e.stopPropagation(); onDeleteRecord(record); }}
+                        >删除</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

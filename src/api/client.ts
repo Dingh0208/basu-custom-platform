@@ -26,6 +26,10 @@ export async function getHealth(): Promise<Health | null> {
   return fetchJson<Health>('/api/health', undefined, 1200);
 }
 
+export async function deleteImport(id: string): Promise<{ deleted: string; customer?: string } | null> {
+  return fetchJson(`/api/imports/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 export async function fetchImports(): Promise<ImportRecord[] | null> {
   return fetchJson<ImportRecord[]>('/api/imports', undefined, 2200);
 }
