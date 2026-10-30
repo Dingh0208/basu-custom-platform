@@ -217,6 +217,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 ## 当前截图
 
 - [导入中心（含真实 6 分钟对话测试记录）](<docs/app-screens/import-real.png>)
+- [最近导入：文件删除与关联内容清理](<docs/app-screens/import-delete-final.png>)
 - [转写与摘要（Sidecar + MaaS 已连接）](<docs/app-screens/transcript-maas.png>)
 - [真实 6 分钟双人对话转写](<docs/app-screens/real-dialogue-transcript.png>)
 - [客户列表与基础客户 360](<docs/app-screens/customers.png>)
