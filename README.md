@@ -68,6 +68,9 @@ pnpm electron:start
 - 搜索客户 / 公司 / 职位 / 标签；
 - 客户档案：姓名、公司、职位、手机号、微信号、邮箱、标签、来源渠道、负责人、备注；
 - 新建客户、编辑档案、重复客户合并、客户删除；
+- 客户 360 项目聚合：项目名称、阶段（需求/报价/方案/签约/交付）、预算、目标上线时间、负责人；
+- 项目卡片显示关联通话/聊天/文件数量，并可直接打开关联记录；
+- 支持新建项目、编辑项目、删除项目；
 - 客户 360 统一时间线：按时间聚合通话、聊天、文件记录；
 - 点击时间线记录直接打开对应转写或聊天详情；
 - 客户 360 已具备基础聚合能力，完整客户画像与 AI 问答仍可继续扩展。
@@ -148,6 +151,10 @@ pnpm electron:start
 | PATCH | `/api/customers/{name}` | 编辑客户档案 |
 | POST | `/api/customers/merge` | 合并重复客户 |
 | DELETE | `/api/customers/{name}` | 删除客户及其沟通记录 |
+| GET | `/api/customers/{name}/projects` | 获取客户项目聚合 |
+| POST | `/api/customers/{name}/projects` | 新建客户项目 |
+| PATCH | `/api/projects/{id}` | 编辑项目阶段/预算/时间/负责人 |
+| DELETE | `/api/projects/{id}` | 删除项目（保留客户时间线记录） |
 | GET | `/api/customers/{name}/timeline` | 获取客户 360 统一时间线 |
 | GET | `/api/files/{name}` | 读取原始截图/附件 |
 | GET | `/api/wechat/status` | 微信解析引擎/账号/解密状态 |
@@ -204,6 +211,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 - [真实 6 分钟双人对话转写](<docs/app-screens/real-dialogue-transcript.png>)
 - [客户列表与基础客户 360](<docs/app-screens/customers.png>)
 - [客户档案：资料、标签、联系人信息、合并/删除入口](<docs/app-screens/customer-profile.png>)
+- [客户 360 项目聚合：阶段、预算、上线时间、负责人和关联记录](<docs/app-screens/customer-projects.png>)
 - [客户 360 统一时间线（通话 + 聊天）](<docs/app-screens/customer-360-zhangsan.png>)
 - [摘要 · 需求页签](<docs/app-screens/transcript-requirements.png>)
 - [摘要 · 原文引用页签](<docs/app-screens/transcript-citations.png>)

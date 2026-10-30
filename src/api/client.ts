@@ -1,4 +1,4 @@
-import type { ChatRecord, CustomerProfile, CustomerTimelineEntry, ImportRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -99,6 +99,28 @@ export async function deleteCustomer(name: string): Promise<{ deleted: string; r
 
 export async function fetchCustomerTimeline(customer: string): Promise<{ customer: string; records: CustomerTimelineEntry[] } | null> {
   return fetchJson(`/api/customers/${encodeURIComponent(customer)}/timeline`, undefined, 3000);
+}
+
+export async function fetchCustomerProjects(customer: string): Promise<CustomerProject[] | null> {
+  return fetchJson<CustomerProject[]>(`/api/customers/${encodeURIComponent(customer)}/projects`, undefined, 3000);
+}
+
+export async function createCustomerProject(customer: string, data: Partial<CustomerProject>): Promise<CustomerProject | null> {
+  return fetchJson<CustomerProject>(`/api/customers/${encodeURIComponent(customer)}/projects`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCustomerProject(projectId: string, data: Partial<CustomerProject>): Promise<CustomerProject | null> {
+  return fetchJson<CustomerProject>(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCustomerProject(projectId: string): Promise<{ deleted: string } | null> {
+  return fetchJson(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
 }
 
 export async function getWechatStatus(): Promise<WeChatStatus | null> {

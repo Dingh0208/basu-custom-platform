@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CustomerProfile, CustomerTimelineEntry, ImportRecord } from '../types';
+import type { CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord } from '../types';
 import {
   createCustomer,
+  createCustomerProject,
   deleteCustomer,
+  deleteCustomerProject,
+  fetchCustomerProjects,
   fetchCustomerTimeline,
   fetchCustomers,
   mergeCustomers,
   updateCustomer,
+  updateCustomerProject,
 } from '../api/client';
 import { IconChat, IconFile, IconMic, IconSearch, IconUsers } from './Icons';
 import CustomerProfileModal from './CustomerProfileModal';
+import ProjectModal from './ProjectModal';
 import Modal from './Modal';
 
 type CustomerListProps = {
@@ -54,6 +59,10 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
   const [customers, setCustomers] = useState<CustomerProfile[]>(() => fallbackProfiles(imports));
   const [timeline, setTimeline] = useState<CustomerTimelineEntry[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [projects, setProjects] = useState<CustomerProject[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectOpen, setProjectOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<CustomerProject | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerProfile | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -117,10 +126,62 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     return () => { mounted = false; };
   }, [selected?.name]);
 
+  useEffect(() => {
+    if (!selected) {
+      setProjects([]);
+      return;
+    }
+    let mounted = true;
+    setProjectsLoading(true);
+    fetchCustomerProjects(selected.name).then((data) => {
+      if (!mounted) return;
+      setProjects(data ?? []);
+      setProjectsLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [selected?.name]);
+
   function openTimelineEntry(entry: CustomerTimelineEntry) {
     const record = imports.find((item) => item.id === entry.id);
     if (record) onOpenRecord(record);
     else onToast('对应记录暂时不可打开');
+  }
+
+  function openProjectRecord(projectId: string, recordId: string) {
+    const record = imports.find((item) => item.id === recordId);
+    if (record) onOpenRecord(record);
+    else onToast(`项目 ${projectId} 的记录暂时不可打开`);
+  }
+
+  async function refreshProjects() {
+    if (!selected) return;
+    const data = await fetchCustomerProjects(selected.name);
+    setProjects(data ?? []);
+  }
+
+  async function saveProject(data: Partial<CustomerProject>) {
+    if (!selected) return false;
+    const result = editingProject
+      ? await updateCustomerProject(editingProject.id, data)
+      : await createCustomerProject(selected.name, data);
+    if (!result) {
+      onToast('项目保存失败');
+      return false;
+    }
+    await refreshProjects();
+    onToast(editingProject ? '项目已更新' : '项目已创建');
+    return true;
+  }
+
+  async function removeProject() {
+    if (!editingProject) return;
+    const result = await deleteCustomerProject(editingProject.id);
+    if (!result) {
+      onToast('项目删除失败');
+      return;
+    }
+    await refreshProjects();
+    onToast('项目已删除，关联记录保留在客户时间线');
   }
 
   async function saveProfile(data: Partial<CustomerProfile> & { name: string; tags: string[] }) {
@@ -263,6 +324,53 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
                 {selected.notes && <div className="customer-notes"><span>备注</span><strong>{selected.notes}</strong></div>}
               </div>
               <div className="customer-side-section">
+                <div className="customer-side-label project-section-label">
+                  <span>项目</span>
+                  <button className="btn ghost project-add-btn" onClick={() => { setEditingProject(null); setProjectOpen(true); }}>+ 新建项目</button>
+                </div>
+                {projectsLoading ? (
+                  <div className="empty-panel">正在加载项目…</div>
+                ) : projects.length === 0 ? (
+                  <div className="empty-panel">还没有项目，点击“新建项目”建立项目卡</div>
+                ) : (
+                  <div className="project-list">
+                    {projects.map((project) => (
+                      <div className="project-card" key={project.id}>
+                        <div className="project-card-head">
+                          <div className="project-card-name">{project.name}</div>
+                          <button className="icon-btn" title="编辑项目" onClick={() => { setEditingProject(project); setProjectOpen(true); }}>✎</button>
+                        </div>
+                        <div className="project-card-meta">
+                          <span className="pill blue">{project.stage || '需求'}</span>
+                          <span className="project-last">最近 {project.lastAt || '—'}</span>
+                        </div>
+                        <div className="project-fields">
+                          <div><span>预算</span><strong>{project.budget || '—'}</strong></div>
+                          <div><span>目标上线</span><strong>{project.targetLaunchDate || '—'}</strong></div>
+                          <div><span>负责人</span><strong>{project.owner || '—'}</strong></div>
+                        </div>
+                        <div className="project-counts">
+                          <span>通话 {project.counts.calls}</span>
+                          <span>聊天 {project.counts.chats}</span>
+                          <span>文件 {project.counts.files}</span>
+                        </div>
+                        {project.records.length > 0 && (
+                          <div className="project-records">
+                            {project.records.slice(0, 4).map((record) => (
+                              <button key={record.id} className="project-record-chip" onClick={() => openProjectRecord(project.id, record.id)}>
+                                {record.kind === 'audio' ? <IconMic size={10} /> : record.kind === 'chat' ? <IconChat size={10} /> : <IconFile size={10} />}
+                                {record.type === '音频' ? '通话' : record.type === '聊天记录' ? '聊天' : '文件'} · {record.importedAt}
+                              </button>
+                            ))}
+                            {project.records.length > 4 && <span className="project-more">+{project.records.length - 4} 条</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="customer-side-section">
                 <div className="customer-side-label">客户 360 · 统一时间线</div>
                 {timelineLoading ? (
                   <div className="empty-panel">正在加载时间线…</div>
@@ -311,6 +419,15 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
         customer={editingCustomer}
         onClose={() => setProfileOpen(false)}
         onSave={saveProfile}
+      />
+
+      <ProjectModal
+        open={projectOpen}
+        customerName={selected?.name || ''}
+        project={editingProject}
+        onClose={() => setProjectOpen(false)}
+        onSave={saveProject}
+        onDelete={editingProject ? removeProject : undefined}
       />
 
       <Modal open={mergeOpen} title="合并客户" subtitle="合并后源客户的所有沟通记录会迁移到目标客户" onClose={() => setMergeOpen(false)}>

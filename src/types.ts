@@ -120,6 +120,31 @@ export interface ChatRecord {
   endedAt?: string;
 }
 
+export interface ProjectRecordLink {
+  id: string;
+  fileName: string;
+  type: string;
+  kind: 'audio' | 'chat' | 'file';
+  importedAt: string;
+  status: string;
+  transcriptId?: string | null;
+}
+
+export interface CustomerProject {
+  id: string;
+  customer: string;
+  name: string;
+  stage: string;
+  budget: string;
+  targetLaunchDate: string;
+  owner: string;
+  description: string;
+  lastAt: string;
+  counts: { calls: number; chats: number; files: number };
+  records: ProjectRecordLink[];
+  updatedAt?: string;
+}
+
 export interface CustomerProfile {
   name: string;
   company: string;

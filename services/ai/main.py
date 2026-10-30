@@ -203,6 +203,19 @@ def init_db() -> None:
                 created_at TEXT,
                 updated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                customer TEXT NOT NULL,
+                name TEXT NOT NULL,
+                stage TEXT DEFAULT '需求',
+                budget TEXT DEFAULT '—',
+                target_launch_date TEXT DEFAULT '',
+                owner TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(customer, name)
+            );
             """
         )
         # Lightweight migration for databases created before attachment indexing.
@@ -764,6 +777,161 @@ def delete_customer(name: str) -> dict:
     return {"deleted": name, "records": int(import_count)}
 
 
+def _project_defaults(customer: str, name: str, owner: str = "王总") -> dict:
+    defaults = {
+        "stage": "需求",
+        "budget": "—",
+        "target_launch_date": "",
+        "owner": owner or "王总",
+        "description": "",
+    }
+    if customer == "张三" and name == "会员小程序商城":
+        defaults.update({"budget": "8–10 万", "target_launch_date": "2026-11-30", "owner": "王总"})
+    return defaults
+
+
+def _ensure_project(conn: sqlite3.Connection, customer: str, name: str, owner: str = "王总") -> sqlite3.Row | None:
+    name = str(name or "").strip()
+    if not name or name == "—":
+        return None
+    row = conn.execute("SELECT * FROM projects WHERE customer=? AND name=?", (customer, name)).fetchone()
+    if row is not None:
+        return row
+    now = datetime.now().isoformat(timespec="seconds")
+    project_id = f"proj-{uuid.uuid4().hex[:10]}"
+    defaults = _project_defaults(customer, name, owner)
+    conn.execute(
+        "INSERT INTO projects (id,customer,name,stage,budget,target_launch_date,owner,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (project_id, customer, name, defaults["stage"], defaults["budget"], defaults["target_launch_date"], defaults["owner"], defaults["description"], now, now),
+    )
+    return conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+
+
+def _project_record(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "customer": row["customer"],
+        "name": row["name"],
+        "stage": row["stage"] or "需求",
+        "budget": row["budget"] or "—",
+        "targetLaunchDate": row["target_launch_date"] or "",
+        "owner": row["owner"] or "",
+        "description": row["description"] or "",
+        "updatedAt": row["updated_at"] or "",
+    }
+
+
+def list_projects(customer: str) -> list[dict]:
+    with db() as conn:
+        _ensure_customer(conn, customer)
+        customer_row = conn.execute("SELECT * FROM customers WHERE name=?", (customer,)).fetchone()
+        owner = str(customer_row["owner"] if customer_row else "王总")
+        names = [
+            str(row["project"])
+            for row in conn.execute(
+                "SELECT DISTINCT project FROM imports WHERE customer=? AND project NOT IN ('', '—')",
+                (customer,),
+            ).fetchall()
+            if row["project"]
+        ]
+        for name in names:
+            _ensure_project(conn, customer, name, owner)
+        rows = conn.execute("SELECT * FROM projects WHERE customer=? ORDER BY updated_at DESC, name ASC", (customer,)).fetchall()
+        result = []
+        for row in rows:
+            records = conn.execute(
+                "SELECT id,file_name,type,project,imported_at,status,transcript_id FROM imports WHERE customer=? AND project=? ORDER BY imported_at DESC, rowid DESC",
+                (customer, row["name"]),
+            ).fetchall()
+            last_at = max((str(item["imported_at"] or "") for item in records), default="")
+            counts = {"calls": 0, "chats": 0, "files": 0}
+            record_items = []
+            for item in records:
+                kind = "chat" if item["type"] == "聊天记录" else "audio" if item["type"] == "音频" else "file"
+                counts["calls" if kind == "audio" else "chats" if kind == "chat" else "files"] += 1
+                record_items.append({
+                    "id": item["id"],
+                    "fileName": item["file_name"],
+                    "type": item["type"],
+                    "kind": kind,
+                    "importedAt": item["imported_at"],
+                    "status": item["status"],
+                    "transcriptId": item["transcript_id"],
+                })
+            project = _project_record(row)
+            project.update({"lastAt": last_at, "counts": counts, "records": record_items})
+            result.append(project)
+    result.sort(key=lambda item: item["lastAt"] or "", reverse=True)
+    return result
+
+
+def create_project(customer: str, data: dict) -> dict | None:
+    with db() as conn:
+        _ensure_customer(conn, customer)
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise ValueError("项目名称不能为空")
+        existing = conn.execute("SELECT * FROM projects WHERE customer=? AND name=?", (customer, name)).fetchone()
+        if existing:
+            updated = conn.execute("SELECT * FROM projects WHERE id=?", (existing["id"],)).fetchone()
+            return _project_record(updated)
+        now = datetime.now().isoformat(timespec="seconds")
+        project_id = f"proj-{uuid.uuid4().hex[:10]}"
+        conn.execute(
+            "INSERT INTO projects (id,customer,name,stage,budget,target_launch_date,owner,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (project_id, customer, name, str(data.get("stage") or "需求"), str(data.get("budget") or "—"), str(data.get("targetLaunchDate") or ""), str(data.get("owner") or "王总"), str(data.get("description") or ""), now, now),
+        )
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    return _project_record(row)
+
+
+def update_project(project_id: str, data: dict) -> dict | None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row is None:
+            return None
+        new_name = str(data.get("name") or row["name"]).strip()
+        if not new_name:
+            raise ValueError("项目名称不能为空")
+        if new_name != row["name"]:
+            conflict = conn.execute("SELECT id FROM projects WHERE customer=? AND name=? AND id<>?", (row["customer"], new_name, project_id)).fetchone()
+            if conflict:
+                raise ValueError("该项目名称已存在")
+            conn.execute("UPDATE imports SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
+            conn.execute("UPDATE chats SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
+            conn.execute("UPDATE transcripts SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
+        now = datetime.now().isoformat(timespec="seconds")
+        target_launch = data.get("targetLaunchDate", row["target_launch_date"])
+        description = data.get("description", row["description"])
+        conn.execute(
+            "UPDATE projects SET name=?, stage=?, budget=?, target_launch_date=?, owner=?, description=?, updated_at=? WHERE id=?",
+            (
+                new_name,
+                str(data.get("stage") or row["stage"] or "需求"),
+                str(data.get("budget") or row["budget"] or "—"),
+                str(target_launch or ""),
+                str(data.get("owner") or row["owner"] or ""),
+                str(description or ""),
+                now,
+                project_id,
+            ),
+        )
+        updated = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    return _project_record(updated)
+
+
+def delete_project(project_id: str) -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row is None:
+            raise ValueError("项目不存在")
+        conn.execute("UPDATE imports SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
+        conn.execute("UPDATE chats SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
+        conn.execute("UPDATE transcripts SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
+        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    return {"deleted": project_id}
+
+
 def customer_timeline(customer_name: str) -> dict:
     with db() as conn:
         imports = conn.execute(
@@ -1212,7 +1380,12 @@ class Handler(BaseHTTPRequestHandler):
             customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
             self._json(customer_timeline(customer_name))
             return
-        if path.startswith("/api/customers/") and not path.endswith("/timeline"):
+        if path.startswith("/api/customers/") and path.endswith("/projects"):
+            parts = [part for part in path.split("/") if part]
+            customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
+            self._json(list_projects(customer_name))
+            return
+        if path.startswith("/api/customers/") and not path.endswith("/timeline") and not path.endswith("/projects"):
             customer_name = unquote(path.split("/")[-1])
             customer = get_customer(customer_name)
             if customer is None:
@@ -1240,6 +1413,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         data = self._read_json()
+
+        if path.startswith("/api/customers/") and path.endswith("/projects"):
+            parts = [part for part in path.split("/") if part]
+            customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
+            try:
+                project = create_project(customer_name, data)
+                self._json(project, 201)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
 
         if path == "/api/customers":
             name = str(data.get("name") or "").strip()
@@ -1480,6 +1663,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "projects":
+            try:
+                updated = update_project(parts[2], data)
+                if updated is None:
+                    self._json({"error": "project_not_found"}, 404)
+                else:
+                    self._json(updated)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         self._json({"error": "not_found"}, 404)
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -1488,6 +1681,12 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
             try:
                 self._json(delete_customer(unquote(parts[2])))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "projects":
+            try:
+                self._json(delete_project(parts[2]))
             except Exception as exc:
                 self._json({"error": str(exc)}, 400)
             return
