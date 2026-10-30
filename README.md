@@ -279,7 +279,8 @@ git push origin v0.2.0
 ## 已知边界
 
 - 导入记录与转写稿已持久化到 SQLite，刷新不会丢失；
-- **音频导入已接真实链路**：前端上传音频 → Sidecar `ffmpeg` 压缩 → `qwen3-asr-flash` 转写 → `qwen3.8-flash` 结构化摘要；
+- **音频导入已接真实链路**：前端上传音频 → Sidecar 内置 `ffmpeg` 压缩/切片 → 聚合 ASR 模型转写 → 文本模型结构化摘要；
+- 安装包已做轻量化：只内置 `ffmpeg.exe`（`ffprobe` 已由 ffmpeg 时长探测替代），Electron 只保留中文/英文语言包；
 - 音频播放仍是模拟进度，不读取真实音频播放；
 - 其他文件类型（PDF/Word/Excel/图片/压缩包）仍走模拟解析；
 - 说话人区分尚未实现，真实转写统一标记为“说话人”，后续接 diarization；

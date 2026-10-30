@@ -1,4 +1,6 @@
 ﻿Unicode true
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
 !include "MUI2.nsh"
 
 !ifndef APP_DIR

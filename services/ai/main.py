@@ -1540,16 +1540,27 @@ def summarize_transcript(transcript: str) -> dict:
 
 
 def probe_duration(path: Path) -> float:
-    if not FFPROBE:
-        return 0.0
-    try:
-        out = subprocess.run(
-            [FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
-            capture_output=True, text=True, timeout=30,
-        )
-        return float(out.stdout.strip() or 0)
-    except Exception:
-        return 0.0
+    if FFPROBE:
+        try:
+            out = subprocess.run(
+                [FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            return float(out.stdout.strip() or 0)
+        except Exception:
+            pass
+    # ffprobe is optional in the lightweight build; ffmpeg prints the same
+    # duration on stderr during input probing.
+    if FFMPEG:
+        try:
+            proc = subprocess.run([FFMPEG, "-i", str(path)], capture_output=True, text=True, timeout=30)
+            match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr or "")
+            if match:
+                hours, minutes, seconds = int(match.group(1)), int(match.group(2)), float(match.group(3))
+                return hours * 3600 + minutes * 60 + seconds
+        except Exception:
+            pass
+    return 0.0
 
 
 def compress_audio(src: Path, dst: Path) -> Path | None:

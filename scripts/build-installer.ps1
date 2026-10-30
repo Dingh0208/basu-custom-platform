@@ -23,7 +23,6 @@ $packagedExes = @(
   (Join-Path $root "release\win-unpacked\ClientHub.exe"),
   (Join-Path $root "release\win-unpacked\resources\ai-sidecar\clienthub-ai.exe"),
   (Join-Path $root "release\win-unpacked\resources\ffmpeg\ffmpeg.exe"),
-  (Join-Path $root "release\win-unpacked\resources\ffmpeg\ffprobe.exe"),
   (Join-Path $root "release\win-unpacked\resources\wechat-engine\wechat-backend.exe"),
   (Join-Path $root "release\win-unpacked\resources\wechat-engine\native\wechatdb_broker.exe")
 )

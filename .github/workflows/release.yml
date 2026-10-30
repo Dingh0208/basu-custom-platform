@@ -36,7 +36,6 @@ jobs:
           Expand-Archive "$env:TEMP\ffmpeg.zip" "$env:TEMP\ffmpeg-extract" -Force
           $bin = Get-ChildItem "$env:TEMP\ffmpeg-extract" -Recurse -Filter ffmpeg.exe | Select-Object -First 1 -ExpandProperty DirectoryName
           Copy-Item (Join-Path $bin "ffmpeg.exe") (Join-Path $dir "ffmpeg.exe") -Force
-          Copy-Item (Join-Path $bin "ffprobe.exe") (Join-Path $dir "ffprobe.exe") -Force
 
       - name: Build frontend
         run: npm run build
