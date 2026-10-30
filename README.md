@@ -221,12 +221,19 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前 `v0.2.4` 安装包约 **287.5 MB**（`v0.2.3` 约 287.5 MB，`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
+当前 `v0.2.5` 安装包约 **287.5 MB**（`v0.2.4` / `v0.2.3` 约 287.5 MB，`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；
 - NSIS 使用 LZMA 压缩；
 - 微信引擎、FFmpeg、Sidecar 仍全部内置，不牺牲功能。
+
+**v0.2.5 更新内容：**
+
+- 修复退出软件后残留 Python Sidecar 进程（进程树清理 + 父进程看门狗 + 单实例锁）；
+- 修复客户已关联项目但「项目」页显示 0 个项目（项目列表从导入/聊天记录自动同步）；
+- 修复旧 Sidecar 残留导致的「测试连接 / 拉取模型」连接失败；
+- 项目页重新获得焦点时自动刷新。
 
 **v0.2.4 更新内容：**
 
@@ -236,7 +243,7 @@ https://github.com/Dingh0208/basu-custom-platform/releases
 - 首页工作台上线（统计、最近导入、项目阶段分布、最新需求、快捷入口）；
 - 设置页精简（移除「通用设置」）与右侧空白布局优化。
 
-完整说明：[v0.2.4 更新内容](<docs/RELEASE-NOTES-v0.2.4.md>)
+完整说明：[v0.2.5 更新内容](<docs/RELEASE-NOTES-v0.2.5.md>) · [v0.2.4 更新内容](<docs/RELEASE-NOTES-v0.2.4.md>)
 
 体积主要来自必须内置的 `wechat-engine`（约 192 MB）和 Electron 运行时（约 180 MB）；如果还需要更小，可以再做“微信引擎首次使用时下载”的 Lite 版本（安装包约 100 MB 级别）。
 

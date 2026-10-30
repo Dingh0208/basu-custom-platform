@@ -1,23 +1,65 @@
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
 let sidecarProc = null;
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    } catch {
+      // Process already exited.
+    }
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Process already exited.
+  }
+}
+
+function killStaleSidecars() {
+  if (process.platform !== 'win32') return;
+  // A previous ClientHub run may have left a PyInstaller one-file sidecar
+  // behind (its bootloader child is not always reaped by kill()). Clear it
+  // before binding port 8765 so the new app never talks to old code.
+  try {
+    execFileSync('taskkill', ['/IM', 'clienthub-ai.exe', '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  } catch {
+    // No stale sidecar.
+  }
+}
+
 function startPackagedSidecar() {
   const sidecarExe = path.join(process.resourcesPath, 'ai-sidecar', 'clienthub-ai.exe');
   if (!fs.existsSync(sidecarExe)) return;
+  killStaleSidecars();
   const dataDir = path.join(app.getPath('userData'), 'wechat-data');
-  sidecarProc = spawn(sidecarExe, ['--host', '127.0.0.1', '--port', '8765'], {
+  sidecarProc = spawn(sidecarExe, ['--host', '127.0.0.1', '--port', '8765', '--parent-pid', String(process.pid)], {
     cwd: path.dirname(sidecarExe),
     windowsHide: true,
     stdio: 'ignore',
     env: {
       ...process.env,
+      CLIENTHUB_APP_VERSION: app.getVersion(),
       CLIENTHUB_DATA_DIR: path.join(app.getPath('userData'), 'clienthub-data'),
       CLIENTHUB_ENV_FILE: fs.existsSync(path.join(process.resourcesPath, 'ai-sidecar', '.env'))
         ? path.join(process.resourcesPath, 'ai-sidecar', '.env')
@@ -35,8 +77,9 @@ function startPackagedSidecar() {
 }
 
 function stopPackagedSidecar() {
-  if (sidecarProc && !sidecarProc.killed) sidecarProc.kill();
+  const proc = sidecarProc;
   sidecarProc = null;
+  if (proc) killProcessTree(proc.pid);
 }
 
 function setupAutoUpdater() {
@@ -115,6 +158,7 @@ ipcMain.handle('clienthub:install-update', () => {
 });
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
   if (app.isPackaged) startPackagedSidecar();
   createWindow();
   setupAutoUpdater();
@@ -127,6 +171,11 @@ app.on('before-quit', () => {
   stopPackagedSidecar();
 });
 
+app.on('will-quit', () => {
+  stopPackagedSidecar();
+});
+
 app.on('window-all-closed', () => {
+  stopPackagedSidecar();
   if (process.platform !== 'darwin') app.quit();
 });

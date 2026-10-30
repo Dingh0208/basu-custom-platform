@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import hashlib
 import json
 import mimetypes
@@ -708,6 +709,7 @@ def _ensure_customer(conn: sqlite3.Connection, name: str, *, company: str = "", 
 
 def dashboard_summary() -> dict:
     with db() as conn:
+        _sync_projects_from_records(conn)
         stats = {
             "imports": conn.execute("SELECT COUNT(*) AS n FROM imports").fetchone()["n"],
             "customers": conn.execute("SELECT COUNT(*) AS n FROM customers").fetchone()["n"],
@@ -906,6 +908,32 @@ def _ensure_project(conn: sqlite3.Connection, customer: str, name: str, owner: s
     return conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
 
 
+def _sync_projects_from_records(conn: sqlite3.Connection) -> None:
+    """Materialize projects mentioned by imports/chats into the projects table.
+
+    The customer 360 page derives project cards from imports, while the
+    standalone project page reads the projects table. Without this sync a
+    project created by an import/chat could appear under a customer but not in
+    the project list until the customer detail page was opened.
+    """
+    rows = conn.execute(
+        """
+        SELECT customer, project, MAX(owner) AS owner FROM (
+            SELECT i.customer AS customer, i.project AS project, c.owner AS owner
+            FROM imports i LEFT JOIN customers c ON c.name = i.customer
+            WHERE i.project IS NOT NULL AND i.project NOT IN ('', '—')
+            UNION ALL
+            SELECT ch.customer AS customer, ch.project AS project, c.owner AS owner
+            FROM chats ch LEFT JOIN customers c ON c.name = ch.customer
+            WHERE ch.project IS NOT NULL AND ch.project NOT IN ('', '—')
+        )
+        GROUP BY customer, project
+        """
+    ).fetchall()
+    for row in rows:
+        _ensure_project(conn, str(row["customer"]), str(row["project"]), str(row["owner"] or "王总"))
+
+
 def _project_record(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -923,18 +951,7 @@ def _project_record(row: sqlite3.Row) -> dict:
 def list_projects(customer: str) -> list[dict]:
     with db() as conn:
         _ensure_customer(conn, customer)
-        customer_row = conn.execute("SELECT * FROM customers WHERE name=?", (customer,)).fetchone()
-        owner = str(customer_row["owner"] if customer_row else "王总")
-        names = [
-            str(row["project"])
-            for row in conn.execute(
-                "SELECT DISTINCT project FROM imports WHERE customer=? AND project NOT IN ('', '—')",
-                (customer,),
-            ).fetchall()
-            if row["project"]
-        ]
-        for name in names:
-            _ensure_project(conn, customer, name, owner)
+        _sync_projects_from_records(conn)
         rows = conn.execute("SELECT * FROM projects WHERE customer=? ORDER BY updated_at DESC, name ASC", (customer,)).fetchall()
         result = []
         for row in rows:
@@ -970,6 +987,7 @@ def list_projects(customer: str) -> list[dict]:
 
 def list_all_projects() -> list[dict]:
     with db() as conn:
+        _sync_projects_from_records(conn)
         rows = conn.execute(
             "SELECT p.*, c.company AS customer_company FROM projects p LEFT JOIN customers c ON c.name=p.customer ORDER BY p.updated_at DESC, p.name ASC"
         ).fetchall()
@@ -2012,7 +2030,7 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": "0.2.0",
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.5"),
             })
             return
         if path == "/api/imports":
@@ -2455,11 +2473,49 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[ai-sidecar] {self.address_string()} {fmt % args}", flush=True)
 
 
+def _is_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _watch_parent(parent_pid: int) -> None:
+    """Exit the sidecar if the Electron/Node parent disappears.
+
+    This is the last line of defence against orphaned Python processes when
+    the desktop app is closed or killed without running its quit handlers.
+    """
+    while True:
+        time.sleep(2.0)
+        if not _is_process_alive(parent_pid):
+            print("[ai-sidecar] parent process exited, shutting down", flush=True)
+            os._exit(0)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--parent-pid", type=int, default=0)
     args = parser.parse_args()
+    if args.parent_pid:
+        threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
     init_db()
     backfill_requirements()
     # Resume any imports left in "processing" from a previous run.

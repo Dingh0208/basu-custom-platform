@@ -162,7 +162,7 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
         <section className="card settings-section">
           <div className="card-head"><div><div className="card-title">数据与版本</div><div className="card-sub">本地数据只保存在这台电脑</div></div></div>
           <div className="settings-meta-grid">
-            <div><span>版本</span><strong>0.2.4</strong></div>
+            <div><span>版本</span><strong>0.2.5</strong></div>
             <div><span>数据存储</span><strong>本机用户数据目录</strong></div>
             <div><span>微信引擎</span><strong>内置，无需单独安装</strong></div>
             <div><span>FFmpeg</span><strong>内置，音频无需额外配置</strong></div>

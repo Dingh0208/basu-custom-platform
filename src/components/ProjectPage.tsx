@@ -25,6 +25,12 @@ export default function ProjectPage({ onToast }: ProjectPageProps) {
 
   useEffect(() => { refresh(); }, []);
 
+  useEffect(() => {
+    const handleFocus = () => { void refresh(); };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
   const filtered = useMemo(
     () => projects.filter((project) => !query.trim() || `${project.name}${project.customer}${project.customerCompany}${project.stage}${project.owner}`.toLowerCase().includes(query.trim().toLowerCase())),
     [projects, query],
