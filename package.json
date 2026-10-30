@@ -1,6 +1,6 @@
 {
   "name": "clienthub",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
   "main": "electron/main.cjs",
@@ -36,6 +36,7 @@
   "build": {
     "appId": "com.clienthub.desktop",
     "productName": "ClientHub",
+    "compression": "maximum",
     "afterPack": "scripts/afterPack.cjs",
     "directories": {
       "output": "release"
