@@ -12,6 +12,7 @@ import atexit
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -24,11 +25,17 @@ from typing import Any
 
 def _find_backend() -> Path | None:
     candidates = []
-    # Bundled engine inside ClientHub (dev tree and packaged resources).
-    candidates.append(Path(__file__).resolve().parents[1] / "wechat-engine" / "wechat-backend.exe")
+    # Packaged one-file sidecar lives in <app>/resources/ai-sidecar/; the
+    # engine sits in the sibling <app>/resources/wechat-engine/ directory.
+    # __file__ points into PyInstaller's temp extraction dir in one-file
+    # builds, so use sys.executable instead of __file__ for this path.
+    exe_root = Path(sys.executable).resolve().parent.parent
+    candidates.append(exe_root / "wechat-engine" / "wechat-backend.exe")
     configured = os.getenv("WECHAT_DATA_ANALYSIS_BACKEND", "").strip()
     if configured:
         candidates.append(Path(configured))
+    # Dev tree layout: services/ai/wechat_engine.py -> services/wechat-engine.
+    candidates.append(Path(__file__).resolve().parents[1] / "wechat-engine" / "wechat-backend.exe")
     appdata = os.getenv("APPDATA", "")
     candidates.extend(
         [
