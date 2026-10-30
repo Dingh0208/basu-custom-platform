@@ -91,14 +91,14 @@ export async function testLlmConfig(data: Partial<LlmConfig> & { apiKey?: string
   return fetchJson<LlmModelsResult>('/api/settings/llm/test', {
     method: 'POST',
     body: JSON.stringify(data),
-  });
+  }, 60000);
 }
 
 export async function pullLlmModels(data: Partial<LlmConfig> & { apiKey?: string }): Promise<LlmModelsResult | null> {
   return fetchJson<LlmModelsResult>('/api/settings/llm/models', {
     method: 'POST',
     body: JSON.stringify(data),
-  });
+  }, 60000);
 }
 
 export async function fetchCustomers(): Promise<CustomerProfile[] | null> {

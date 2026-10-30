@@ -63,14 +63,14 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - `.github/workflows/release.yml`：推送 `v*` tag 自动构建 Windows NSIS 并发布 Release；
 - 工作流使用 `npm`（不要再用 pnpm，GitHub Actions 上 pnpm 报过 `packages field missing or empty`）；
 - `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；侧边栏头像附近显示更新/下载进度（`2.1 MB / 287.5 MB`）和“重启并安装”；
-- 最新已发布 Release：`v0.2.3`，安装包约 **287.5MB**；
-- 用户要求“不推 release”，因此 v0.2.4 tag 已取消，当前 main 的首页/设置布局改动未作为新 Release 发布。
+- 最新已发布 Release：`v0.2.4`，安装包约 **287.5MB**；
+- v0.2.4 已包含首页、设置页精简与设置页布局优化；v0.2.3 仍保留为上一正式版本。
 
 ## 3. 当前卡点 / 状态
 
 1. **设置页右侧空白**：刚把 `.settings-workspace` 从固定 `760px + 420px` 改成 `1.35fr + 0.65fr` 并拉伸卡片高度；需要再截图确认 2503px 宽度下右侧是否仍空。修改在 `src/styles.css`。
 2. **本地开发数据库状态**：`services/ai/data/clienthub.db` 当前只有少量测试数据（2 个客户、4 条导入），不是完整演示数据；不要随意清空，先确认用户数据。
-3. **v0.2.4**：`package.json` 当前版本 `0.2.4`，但 GitHub 上没有 v0.2.4 release；用户明确说本次不推 release。下次发版时重新打 tag。
+3. **v0.2.4**：`package.json` 版本 `0.2.4`，已打 `v0.2.4` tag 并发布；设置页「测试连接 / 拉取模型」的 JSON 解析问题已修复。
 4. **微信真实账号检测**：当前开发机 `GET /api/wechat/status` 返回 `available:true`，但 `accounts:[]`，没有真实微信库可测；需要在登录微信的 Windows VM 上验证。
 5. **大模型 `/models` 接口**：部分聚合平台返回非 JSON 或 401；设置页“测试连接”已改为真实 `/chat/completions` 最小请求，已验证 `{"status":"ok"}`。但“拉取模型”仍依赖 `/models`，若平台不支持会报错，属正常边界。
 6. **自动更新**：代码和 release 工作流已接入，但尚未在真实旧版本安装包上完成一次“下载→进度→重启安装”的端到端实测；需要 VM 验证。
@@ -79,7 +79,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 
 1. 确认设置页布局（右边空白）最终截图；如果仍空，改成一列/加一张状态卡填满。
 2. 用 `pnpm build` + 本地打包验证首页、设置、项目模块。
-3. 在 Windows VM 重新安装 v0.2.3 安装包，验证：
+3. 在 Windows VM 重新安装 v0.2.4 安装包，验证：
    - 微信库更新/账号检测；
    - 音频导入；
    - 聊天解析；
@@ -176,5 +176,5 @@ GET  /api/customers/{name}/requirements
 ## 8. 备注
 
 - 本文件不含任何真实 API Key、密码或客户隐私数据。
-- 最新正式 Release：`v0.2.3`；当前 main 的首页/设置改动未发布（用户明确本次不推 release）。
+- 最新正式 Release：`v0.2.4`；v0.2.3 为上一正式版本。
 - 若新会话需要继续，先读本文件，再检查 `git status` 和 `release/`，不要重新从零猜架构。

@@ -1497,11 +1497,48 @@ def save_app_settings(data: dict) -> dict:
     return get_app_settings()
 
 
-def _llm_open(method: str, url: str, *, api_key: str = "", timeout: int = 30):
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    req = urllib.request.Request(url, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response
+def _llm_request(method: str, url: str, *, api_key: str = "", payload: dict | None = None, timeout: int = 60) -> tuple[int, str]:
+    """Send one request and always read the body before the response is closed.
+
+    urllib closes the response when the ``with`` block exits, so returning the
+    response object from inside the block makes the caller read an empty body.
+    Read the raw text here instead and return it together with the HTTP status.
+    """
+    headers = {"Accept": "application/json", "User-Agent": "ClientHub/0.2.4"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status = int(getattr(response, "status", 200) or 200)
+            return status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), exc.read().decode("utf-8", "replace")
+
+
+def _parse_llm_models(raw: str) -> list[str]:
+    body = json.loads(raw)
+    if isinstance(body, dict):
+        items = body.get("data") or body.get("models") or []
+    elif isinstance(body, list):
+        items = body
+    else:
+        items = []
+    models: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            model_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+        elif isinstance(item, str):
+            model_id = item.strip()
+        else:
+            model_id = ""
+        if model_id:
+            models.append(model_id)
+    return list(dict.fromkeys(models))
 
 
 def _llm_target(data: dict | None) -> tuple[str, str]:
@@ -1518,21 +1555,26 @@ def list_llm_models(data: dict | None = None) -> dict:
     base_url, api_key = _llm_target(data)
     if not base_url:
         return {"status": "error", "error": "请先填写 Base URL", "models": []}
+    url = f"{base_url}/models"
     try:
-        response = _llm_open("GET", f"{base_url}/models", api_key=api_key, timeout=30)
-        raw = response.read().decode("utf-8", "replace")
-        try:
-            body = json.loads(raw)
-        except json.JSONDecodeError:
-            return {"status": "error", "error": f"模型接口返回的不是 JSON（HTTP {response.status}）：{raw[:160]}", "models": []}
-        models = [str(item.get("id") or "") for item in (body.get("data") or []) if str(item.get("id") or "")]
-        models = [m for m in models if m]
-        return {"status": "ok", "count": len(models), "models": models}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        return {"status": "error", "error": f"HTTP {exc.code}: {detail}", "models": []}
+        status, raw = _llm_request("GET", url, api_key=api_key, timeout=30)
     except Exception as exc:
-        return {"status": "error", "error": str(exc), "models": []}
+        return {"status": "error", "error": f"无法连接模型接口：{exc}", "models": []}
+    if status >= 400:
+        return {"status": "error", "error": f"HTTP {status}: {raw[:300]}", "models": []}
+    if not raw.strip():
+        return {
+            "status": "error",
+            "error": f"模型接口返回空响应（HTTP {status}）。请确认 Base URL 是否正确，例如以 /compatible-mode/v1 结尾。",
+            "models": [],
+        }
+    try:
+        models = _parse_llm_models(raw)
+    except json.JSONDecodeError:
+        return {"status": "error", "error": f"模型接口返回的不是 JSON（HTTP {status}）：{raw[:200]}", "models": []}
+    if not models:
+        return {"status": "error", "error": f"模型接口返回成功但未包含模型列表（HTTP {status}）：{raw[:200]}", "models": []}
+    return {"status": "ok", "count": len(models), "models": models}
 
 
 def test_llm_config(data: dict | None = None) -> dict:
@@ -1552,22 +1594,45 @@ def test_llm_config(data: dict | None = None) -> dict:
         "temperature": 0,
     }
     try:
-        req = urllib.request.Request(
-            base_url + "/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
+        status, raw = _llm_request(
+            "POST", base_url + "/chat/completions", api_key=api_key, payload=payload, timeout=60
         )
-        with urllib.request.urlopen(req, timeout=45) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        if body.get("choices"):
-            return {"status": "ok", "count": 1, "models": [model], "message": "连接成功"}
-        return {"status": "error", "error": f"模型返回异常：{str(body)[:300]}", "models": []}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:500]
-        return {"status": "error", "error": f"HTTP {exc.code}: {detail}", "models": []}
     except Exception as exc:
-        return {"status": "error", "error": str(exc), "models": []}
+        return {"status": "error", "error": f"无法连接对话接口：{exc}", "models": []}
+
+    if status >= 400:
+        return {"status": "error", "error": f"HTTP {status}: {raw[:500]}", "models": []}
+
+    if not raw.strip():
+        # Some aggregators occasionally return an empty 200 for chat/completions
+        # while /models is healthy. Fall back to the model list so "测试连接"
+        # still gives a usable result instead of a JSONDecodeError.
+        try:
+            models_status, models_raw = _llm_request("GET", f"{base_url}/models", api_key=api_key, timeout=30)
+            models = _parse_llm_models(models_raw) if models_status < 400 and models_raw.strip() else []
+        except Exception:
+            models = []
+        if models:
+            return {
+                "status": "ok",
+                "count": len(models),
+                "models": models,
+                "message": f"连接成功（对话接口返回空响应，模型列表可用，共 {len(models)} 个模型）",
+            }
+        return {"status": "error", "error": "对话接口返回空响应（HTTP 200），请检查 Base URL 与模型名称", "models": []}
+
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"status": "error", "error": f"对话接口返回的不是 JSON（HTTP {status}）：{raw[:300]}", "models": []}
+
+    if isinstance(body, dict) and body.get("choices"):
+        return {"status": "ok", "count": 1, "models": [model], "message": "连接成功"}
+    error = body.get("error") if isinstance(body, dict) else None
+    if error:
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        return {"status": "error", "error": f"模型接口报错：{message}", "models": []}
+    return {"status": "error", "error": f"模型返回异常：{str(body)[:300]}", "models": []}
 
 
 def maas_request(path: str, payload: dict, timeout: int = 600) -> dict:
