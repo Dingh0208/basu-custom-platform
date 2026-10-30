@@ -19,4 +19,10 @@ $entry = Join-Path $root "services\ai\main.py"
 & $Python -m PyInstaller --noconfirm --clean --onefile --name clienthub-ai `
   --distpath $outDir --workpath $workDir --specpath $specDir $entry
 
+$envFile = Join-Path $root "services\ai\.env"
+if (Test-Path $envFile) {
+  Copy-Item $envFile (Join-Path $outDir ".env") -Force
+  Write-Host "Bundled local .env for test build"
+}
+
 Write-Host "Built: $outDir\clienthub-ai.exe"

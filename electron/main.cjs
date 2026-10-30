@@ -18,7 +18,9 @@ function startPackagedSidecar() {
     env: {
       ...process.env,
       CLIENTHUB_DATA_DIR: path.join(app.getPath('userData'), 'clienthub-data'),
-      CLIENTHUB_ENV_FILE: path.join(app.getPath('userData'), 'clienthub.env'),
+      CLIENTHUB_ENV_FILE: fs.existsSync(path.join(process.resourcesPath, 'ai-sidecar', '.env'))
+        ? path.join(process.resourcesPath, 'ai-sidecar', '.env')
+        : path.join(app.getPath('userData'), 'clienthub.env'),
       WECHAT_DATA_ANALYSIS_BACKEND: path.join(process.resourcesPath, 'wechat-engine', 'wechat-backend.exe'),
       WECHAT_DATA_ANALYSIS_DATA_DIR: dataDir,
       WECHAT_DATA_ANALYSIS_OUTPUT_DIR: path.join(dataDir, 'output'),
