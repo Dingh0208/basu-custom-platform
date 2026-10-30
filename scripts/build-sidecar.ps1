@@ -25,4 +25,8 @@ if (Test-Path $envFile) {
   Write-Host "Bundled local .env for test build"
 }
 
+# One-file PyInstaller builds must run at Medium integrity to create their
+# extraction temp dir; the workspace may stamp files with Low integrity.
+& icacls (Join-Path $outDir "clienthub-ai.exe") /setintegritylevel Medium | Out-Null
+
 Write-Host "Built: $outDir\clienthub-ai.exe"
