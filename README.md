@@ -217,17 +217,14 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 
 **当前 Release 页面：**
 
-> 请把下面链接中的 `YOUR_GITHUB_USERNAME` 换成你的 GitHub 用户名。
-
 ```text
-https://github.com/YOUR_GITHUB_USERNAME/ClientHub/releases
+https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-**首次接入 GitHub 需要做的 3 件事：**
+**首次接入 GitHub 需要做的 2 件事：**
 
-1. 在 GitHub 新建仓库 `ClientHub`；
-2. 把 `package.json` 里 `repository` 和 `build.publish` 中的 `YOUR_GITHUB_USERNAME` 改为你的用户名；
-3. 在 GitHub 仓库的 `Settings → Secrets and variables → Actions` 中确认 `GITHUB_TOKEN` 可用（默认可用，无需手动添加）。
+1. 在 GitHub 确认仓库 `Dingh0208/basu-custom-platform` 存在（或新建）；
+2. 在仓库的 `Settings → Secrets and variables → Actions` 中确认 `GITHUB_TOKEN` 可用（默认可用，无需手动添加）。
 
 之后推送标签即可自动发版：
 
@@ -291,7 +288,7 @@ git push origin v0.2.0
 - 客户识别目前是文件名/文本关键词规则，真实手机号/微信号匹配待接入；
 - 微信库提取引擎已内置到 `services/wechat-engine/`，不再依赖用户安装 WeChatDataAnalysis；首次使用需要微信已登录并保持运行以完成密钥获取/解密；
 - 微信图片/语音/视频/文件消息会进入附件索引，实际媒体文件的离线复制与语音转写仍可继续扩展；
-- 安装包已接入 GitHub Releases 自动更新；当前仓库为占位用户名 `YOUR_GITHUB_USERNAME`，发布前需替换为真实 GitHub 用户名；
+- 安装包已接入 GitHub Releases 自动更新，仓库为 `Dingh0208/basu-custom-platform`；
 - 其他文件类型（PDF/Word/Excel/图片/压缩包）仍走模拟解析。
 
 ## 下一步

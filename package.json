@@ -68,13 +68,13 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "YOUR_GITHUB_USERNAME",
-        "repo": "ClientHub"
+        "owner": "Dingh0208",
+        "repo": "basu-custom-platform"
       }
     ]
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_GITHUB_USERNAME/ClientHub.git"
+    "url": "https://github.com/Dingh0208/basu-custom-platform.git"
   }
 }
