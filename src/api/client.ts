@@ -72,6 +72,10 @@ export async function updateChatParticipants(id: string, participants: Array<{ n
   });
 }
 
+export async function reanalyzeChat(id: string): Promise<{ status: string; chatId: string } | null> {
+  return fetchJson(`/api/chats/${encodeURIComponent(id)}/reanalyze`, { method: 'POST', body: '{}' });
+}
+
 export async function fetchLlmConfig(): Promise<LlmConfig | null> {
   return fetchJson<LlmConfig>('/api/settings/llm', undefined, 5000);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChatParticipant, ChatRecord } from '../types';
-import { API_BASE, updateChatParticipants } from '../api/client';
+import { API_BASE, reanalyzeChat, updateChatParticipants } from '../api/client';
 import {
   IconChat,
   IconDownload,
@@ -61,6 +61,19 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
   const attachments = record.attachments ?? [];
   const sourceLabel = /\.(png|jpe?g|webp)$/i.test(record.fileName) ? '来自聊天截图 OCR' : '来自聊天文本';
 
+  async function handleReanalyze() {
+    if (!sidecarOnline) {
+      onToast('当前为内置 Mock，无法触发真实解析');
+      return;
+    }
+    const result = await reanalyzeChat(record.id);
+    if (!result) {
+      onToast('重新分析请求失败，请检查 Sidecar');
+      return;
+    }
+    onToast('已开始重新分析，完成后刷新即可看到新解析结果');
+  }
+
   async function saveRoles() {
     setSavingRoles(true);
     if (sidecarOnline) {
@@ -92,7 +105,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
           <span className={`badge ${sidecarOnline ? 'done' : 'warn'}`}>{sidecarOnline ? 'Sidecar 已连接' : '内置 Mock'}</span>
         </div>
         <div className="top-actions">
-          <button className="btn" onClick={() => onToast('正在重新分析聊天记录…')}><IconRefresh size={15} />重新分析</button>
+          <button className="btn" onClick={handleReanalyze}><IconRefresh size={15} />重新分析</button>
           <button className="btn" onClick={() => onToast('聊天记录导出已生成（原型模拟）')}><IconDownload size={15} />导出记录</button>
           <button className="btn primary" onClick={() => onToast(`已添加待办：跟进 ${customerName} 的后续沟通`)}><IconPlus size={15} />添加待办</button>
         </div>

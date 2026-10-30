@@ -1869,6 +1869,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(list_llm_models(data))
             return
 
+        if path.startswith("/api/chats/") and path.endswith("/reanalyze"):
+            chat_id = path.split("/")[-2]
+            with db() as conn:
+                chat = conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
+                import_row = conn.execute("SELECT * FROM imports WHERE transcript_id=? ORDER BY rowid DESC LIMIT 1", (chat_id,)).fetchone()
+            if chat is None:
+                self._json({"error": "chat_not_found"}, 404)
+                return
+            with db() as conn:
+                conn.execute("UPDATE chats SET status='processing' WHERE id=?", (chat_id,))
+                if import_row:
+                    conn.execute("UPDATE imports SET status='processing', progress=5 WHERE id=?", (import_row["id"],))
+            threading.Thread(target=process_chat_analysis, args=(import_row["id"] if import_row else "", chat_id), daemon=True).start()
+            self._json({"status": "started", "chatId": chat_id})
+            return
+
         if path.startswith("/api/customers/") and path.endswith("/projects"):
             parts = [part for part in path.split("/") if part]
             customer_name = unquote(parts[-2]) if len(parts) >= 2 else ""
