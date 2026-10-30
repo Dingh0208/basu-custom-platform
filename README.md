@@ -221,6 +221,15 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
+当前 `v0.2.2` 安装包约 **287 MB**（`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
+
+- 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
+- Electron 只保留 `zh-CN` / `en-US` 语言包；
+- NSIS 使用 LZMA 压缩；
+- 微信引擎、FFmpeg、Sidecar 仍全部内置，不牺牲功能。
+
+体积主要来自必须内置的 `wechat-engine`（约 192 MB）和 Electron 运行时（约 180 MB）；如果还需要更小，可以再做“微信引擎首次使用时下载”的 Lite 版本（安装包约 100 MB 级别）。
+
 **首次接入 GitHub 需要做的 2 件事：**
 
 1. 在 GitHub 确认仓库 `Dingh0208/basu-custom-platform` 存在（或新建）；
