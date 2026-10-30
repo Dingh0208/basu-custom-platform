@@ -221,7 +221,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前 `v0.2.2` 安装包约 **287 MB**（`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
+当前 `v0.2.3` 安装包约 **287.5 MB**（`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；
