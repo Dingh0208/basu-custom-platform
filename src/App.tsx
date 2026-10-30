@@ -6,6 +6,7 @@ import CustomerList from './components/CustomerList';
 import ChatWorkspace from './components/ChatWorkspace';
 import SettingsPage from './components/SettingsPage';
 import ProjectPage from './components/ProjectPage';
+import HomePage from './components/HomePage';
 import Toast from './components/Toast';
 import { initialImports, transcriptRecord } from './mock/data';
 import type { ChatRecord, ImportRecord, ProjectListItem, TranscriptRecord, View } from './types';
@@ -15,7 +16,6 @@ import {
   createImport,
   deleteImport,
   fetchChat,
-  fetchAppSettings,
   fetchImports,
   fetchProjects,
   fetchTranscript,
@@ -62,7 +62,7 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' ? value : 'import';
+    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' ? value : 'home';
   });
   const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers'>('import');
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
@@ -91,10 +91,9 @@ export default function App() {
         const data = await fetchImports();
         if (mounted && data) setImports(data);
         const projectData = await fetchProjects();
-        const appSettings = await fetchAppSettings();
         if (mounted && projectData) {
           setProjects(projectData);
-          setSelectedProject((current) => current || appSettings?.defaultProject || '');
+          setSelectedProject((current) => current || '');
         }
         return;
       }
@@ -172,6 +171,10 @@ export default function App() {
   }
 
   function handleNavigate(label: string) {
+    if (label === '首页') {
+      setView('home');
+      return;
+    }
     if (label === '导入中心') {
       setView('import');
       return;
@@ -340,12 +343,18 @@ export default function App() {
   return (
     <div className="app">
       <Sidebar
-        active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view === 'customers' ? 'customers' : view === 'projects' ? 'projects' : 'import'}
+        active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view === 'customers' ? 'customers' : view === 'projects' ? 'projects' : view === 'settings' ? 'settings' : view === 'home' ? 'home' : 'import'}
         inboxCount={inboxCount}
         onNavigate={handleNavigate}
       />
       <main className="main">
-        {view === 'import' ? (
+        {view === 'home' ? (
+          <HomePage
+            onNavigate={handleNavigate}
+            onOpenRecord={(record) => handleOpenRecord(record, 'import')}
+            onToast={showToast}
+          />
+        ) : view === 'import' ? (
           <ImportCenter
             imports={imports}
             sidecarOnline={sidecarOnline}

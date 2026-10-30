@@ -1,4 +1,4 @@
-export type View = 'import' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects';
+export type View = 'home' | 'import' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects';
 
 export type ImportStatus = 'processing' | 'done' | 'inbox' | 'failed';
 
@@ -165,6 +165,24 @@ export interface RequirementItemRecord {
 export interface ProjectListItem extends CustomerProject {
   customerCompany: string;
   recordCount: number;
+}
+
+export interface DashboardRequirement {
+  id: string;
+  customer: string;
+  project: string;
+  title: string;
+  priority: string;
+  status: string;
+  sourceType: string;
+  updatedAt: string;
+}
+
+export interface DashboardSummary {
+  stats: { imports: number; customers: number; projects: number; requirements: number; inbox: number; processing: number };
+  recentImports: ImportRecord[];
+  recentRequirements: DashboardRequirement[];
+  stageCounts: Array<{ stage: string; count: number }>;
 }
 
 export interface AppSettings {

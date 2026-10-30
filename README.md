@@ -266,6 +266,9 @@ git push origin v0.2.0
 
 ## 当前截图
 
+- [首页 · 客户情报工作台](<docs/app-screens/home.png>)
+- [项目模块 · 全部项目与客户同步](<docs/app-screens/projects.png>)
+- [设置 · 大模型配置](<docs/app-screens/settings-final.png>)
 - [导入中心（含真实 6 分钟对话测试记录）](<docs/app-screens/import-real.png>)
 - [最近导入：文件删除与关联内容清理](<docs/app-screens/import-delete-final.png>)
 - [转写与摘要（Sidecar + MaaS 已连接）](<docs/app-screens/transcript-maas.png>)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, LlmConfig, LlmModelsResult, ProjectListItem } from '../types';
-import { fetchAppSettings, fetchLlmConfig, fetchProjects, pullLlmModels, saveAppSettings, saveLlmConfig, testLlmConfig } from '../api/client';
+import type { LlmConfig, LlmModelsResult } from '../types';
+import { fetchLlmConfig, pullLlmModels, saveLlmConfig, testLlmConfig } from '../api/client';
 
 type SettingsPageProps = {
   onToast: (message: string) => void;
@@ -20,9 +20,6 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
   const [busy, setBusy] = useState<'test' | 'pull' | 'save' | 'app' | null>(null);
   const [message, setMessage] = useState<string>('');
   const [updateStatus, setUpdateStatus] = useState<string>('');
-  const [appSettings, setAppSettings] = useState<AppSettings>({ defaultProject: '', defaultOwner: '王总', autoMatch: true, autoProcess: true, updateIntervalHours: 3 });
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [appMessage, setAppMessage] = useState('');
 
   useEffect(() => {
     const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string }) => void) => void } }).clientHub;
@@ -58,8 +55,6 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
       setMasked(data.apiKeyMasked || '');
       setHasKey(!!data.hasKey);
     });
-    fetchAppSettings().then((data) => { if (mounted && data) setAppSettings(data); });
-    fetchProjects().then((data) => { if (mounted && data) setProjects(data); });
     return () => { mounted = false; };
   }, []);
 
@@ -109,20 +104,6 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     setApiKey('');
     onToast('大模型配置已保存');
     setMessage('保存成功，新的分析任务将使用该配置');
-  }
-
-  async function saveApplicationSettings() {
-    setBusy('app');
-    setAppMessage('');
-    const result = await saveAppSettings(appSettings);
-    setBusy(null);
-    if (!result) {
-      setAppMessage('保存失败，请确认 Sidecar 已连接');
-      return;
-    }
-    setAppSettings(result);
-    setAppMessage('通用设置已保存');
-    onToast('通用设置已保存');
   }
 
   function modelInput(value: string, setter: (v: string) => void, placeholder: string, listId: string) {
@@ -179,27 +160,9 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
         </section>
 
         <section className="card settings-section">
-          <div className="card-head"><div><div className="card-title">通用设置</div><div className="card-sub">导入、项目默认值与更新检查</div></div></div>
-          <div className="customer-form-grid">
-            <label>默认项目<select value={appSettings.defaultProject} onChange={(e) => setAppSettings((s) => ({ ...s, defaultProject: e.target.value }))}>
-              <option value="">不指定，按沟通内容判断</option>
-              {projects.map((project) => <option key={project.id} value={project.name}>{project.name}（{project.customer}）</option>)}
-            </select></label>
-            <label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((s) => ({ ...s, defaultOwner: e.target.value }))} /></label>
-            <label>更新检查间隔（小时）<input type="number" min={1} value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((s) => ({ ...s, updateIntervalHours: Number(e.target.value) || 3 }))} /></label>
-            <label>自动识别客户<select value={appSettings.autoMatch ? 'on' : 'off'} onChange={(e) => setAppSettings((s) => ({ ...s, autoMatch: e.target.value === 'on' }))}><option value="on">开启</option><option value="off">关闭</option></select></label>
-            <label>导入后自动处理<select value={appSettings.autoProcess ? 'on' : 'off'} onChange={(e) => setAppSettings((s) => ({ ...s, autoProcess: e.target.value === 'on' }))}><option value="on">开启</option><option value="off">关闭</option></select></label>
-          </div>
-          <div className="settings-actions" style={{ marginTop: 12 }}>
-            <button className="btn primary" onClick={saveApplicationSettings} disabled={busy !== null}>{busy === 'app' ? '保存中…' : '保存通用设置'}</button>
-            {appMessage && <span className="llm-result" style={{ marginTop: 0 }}>{appMessage}</span>}
-          </div>
-        </section>
-
-        <section className="card settings-section">
           <div className="card-head"><div><div className="card-title">数据与版本</div><div className="card-sub">本地数据只保存在这台电脑</div></div></div>
           <div className="settings-meta-grid">
-            <div><span>版本</span><strong>0.2.3</strong></div>
+            <div><span>版本</span><strong>0.2.4</strong></div>
             <div><span>数据存储</span><strong>本机用户数据目录</strong></div>
             <div><span>微信引擎</span><strong>内置，无需单独安装</strong></div>
             <div><span>FFmpeg</span><strong>内置，音频无需额外配置</strong></div>

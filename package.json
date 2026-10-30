@@ -1,6 +1,6 @@
 {
   "name": "clienthub",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
   "main": "electron/main.cjs",

@@ -706,6 +706,43 @@ def _ensure_customer(conn: sqlite3.Connection, name: str, *, company: str = "", 
     )
 
 
+def dashboard_summary() -> dict:
+    with db() as conn:
+        stats = {
+            "imports": conn.execute("SELECT COUNT(*) AS n FROM imports").fetchone()["n"],
+            "customers": conn.execute("SELECT COUNT(*) AS n FROM customers").fetchone()["n"],
+            "projects": conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"],
+            "requirements": conn.execute("SELECT COUNT(*) AS n FROM requirements").fetchone()["n"],
+            "inbox": conn.execute("SELECT COUNT(*) AS n FROM imports WHERE status='inbox'").fetchone()["n"],
+            "processing": conn.execute("SELECT COUNT(*) AS n FROM imports WHERE status='processing'").fetchone()["n"],
+        }
+        recent_imports = conn.execute("SELECT * FROM imports ORDER BY imported_at DESC, rowid DESC LIMIT 6").fetchall()
+        recent_requirements = conn.execute(
+            "SELECT * FROM requirements ORDER BY updated_at DESC, rowid DESC LIMIT 6"
+        ).fetchall()
+        stage_rows = conn.execute(
+            "SELECT stage, COUNT(*) AS n FROM projects GROUP BY stage ORDER BY CASE stage WHEN '需求' THEN 0 WHEN '报价' THEN 1 WHEN '方案' THEN 2 WHEN '签约' THEN 3 WHEN '交付' THEN 4 ELSE 5 END"
+        ).fetchall()
+    return {
+        "stats": {key: int(value or 0) for key, value in stats.items()},
+        "recentImports": [row_to_import(row) for row in recent_imports],
+        "recentRequirements": [
+            {
+                "id": row["id"],
+                "customer": row["customer"],
+                "project": row["project"] or "—",
+                "title": row["title"],
+                "priority": row["priority"] or "P1",
+                "status": row["status"] or "待确认",
+                "sourceType": row["source_type"] or "manual",
+                "updatedAt": row["updated_at"] or "",
+            }
+            for row in recent_requirements
+        ],
+        "stageCounts": [{"stage": row["stage"] or "需求", "count": int(row["n"] or 0)} for row in stage_rows],
+    }
+
+
 def list_customers() -> list[dict]:
     with db() as conn:
         profiles = {row["name"]: row for row in conn.execute("SELECT * FROM customers").fetchall()}
@@ -1892,6 +1929,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/projects":
             self._json(list_all_projects())
+            return
+        if path == "/api/dashboard":
+            self._json(dashboard_summary())
             return
         if path == "/api/health":
             config = get_llm_config()

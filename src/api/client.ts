@@ -1,4 +1,4 @@
-import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -132,6 +132,10 @@ export async function deleteCustomer(name: string): Promise<{ deleted: string; r
 
 export async function fetchCustomerTimeline(customer: string): Promise<{ customer: string; records: CustomerTimelineEntry[] } | null> {
   return fetchJson(`/api/customers/${encodeURIComponent(customer)}/timeline`, undefined, 3000);
+}
+
+export async function fetchDashboard(): Promise<DashboardSummary | null> {
+  return fetchJson<DashboardSummary>('/api/dashboard', undefined, 5000);
 }
 
 export async function fetchProjects(): Promise<ProjectListItem[] | null> {

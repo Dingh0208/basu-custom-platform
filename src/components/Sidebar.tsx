@@ -11,7 +11,7 @@ import {
 } from './Icons';
 
 type SidebarProps = {
-  active: 'import' | 'customers' | 'projects' | 'other';
+  active: 'home' | 'import' | 'customers' | 'projects' | 'settings' | 'other';
   inboxCount: number;
   onNavigate: (label: string) => void;
 };
@@ -48,7 +48,7 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
   }
 
   const isActive = (key: string) =>
-    (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
+    (active === 'home' && key === 'home') || (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
 
   return (
     <aside className="sidebar">
@@ -89,7 +89,7 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
           );
         })}
         <div className="nav-spacer" />
-        <button className="nav-item" onClick={() => onNavigate('设置')}>
+        <button className={`nav-item ${active === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('设置')}>
           <IconSettings className="icon" />
           设置
         </button>
