@@ -1,0 +1,1106 @@
+[
+  {
+    "s": "dashboard",
+    "n": "Dashboard",
+    "k": "pages",
+    "c": 381
+  },
+  {
+    "s": "home",
+    "n": "Home",
+    "k": "pages",
+    "c": 346
+  },
+  {
+    "s": "checkout",
+    "n": "Checkout",
+    "k": "pages",
+    "c": 217
+  },
+  {
+    "s": "settings",
+    "n": "Settings",
+    "k": "pages",
+    "c": 205
+  },
+  {
+    "s": "sign-in",
+    "n": "Sign in",
+    "k": "pages",
+    "c": 184
+  },
+  {
+    "s": "pricing",
+    "n": "Pricing",
+    "k": "pages",
+    "c": 175
+  },
+  {
+    "s": "acknowledgement-and-success",
+    "n": "Acknowledgement & Success",
+    "k": "pages",
+    "c": 150
+  },
+  {
+    "s": "account-setup",
+    "n": "Account Setup",
+    "k": "pages",
+    "c": 142
+  },
+  {
+    "s": "landing-pages",
+    "n": "Landing Pages",
+    "k": "pages",
+    "c": 140
+  },
+  {
+    "s": "user-profile",
+    "n": "User profile",
+    "k": "pages",
+    "c": 125
+  },
+  {
+    "s": "shop-and-storefront",
+    "n": "Shop & Storefront",
+    "k": "pages",
+    "c": 110
+  },
+  {
+    "s": "calendar",
+    "n": "Calendar",
+    "k": "pages",
+    "c": 102
+  },
+  {
+    "s": "404",
+    "n": "404",
+    "k": "pages",
+    "c": 101
+  },
+  {
+    "s": "blog-index",
+    "n": "Blog index",
+    "k": "pages",
+    "c": 100
+  },
+  {
+    "s": "case-studies",
+    "n": "Case studies",
+    "k": "pages",
+    "c": 100
+  },
+  {
+    "s": "changelog",
+    "n": "Changelog",
+    "k": "pages",
+    "c": 100
+  },
+  {
+    "s": "contact",
+    "n": "Contact",
+    "k": "pages",
+    "c": 100
+  },
+  {
+    "s": "book-a-demo",
+    "n": "Book a demo",
+    "k": "pages",
+    "c": 99
+  },
+  {
+    "s": "invite-and-refer-friends",
+    "n": "Invite & Refer Friends",
+    "k": "pages",
+    "c": 97
+  },
+  {
+    "s": "about",
+    "n": "About",
+    "k": "pages",
+    "c": 90
+  },
+  {
+    "s": "resources-page",
+    "n": "Resources page",
+    "k": "pages",
+    "c": 79
+  },
+  {
+    "s": "sign-up",
+    "n": "Sign up",
+    "k": "pages",
+    "c": 79
+  },
+  {
+    "s": "blog-post",
+    "n": "Blog post",
+    "k": "pages",
+    "c": 74
+  },
+  {
+    "s": "careers",
+    "n": "Careers",
+    "k": "pages",
+    "c": 73
+  },
+  {
+    "s": "partners-page",
+    "n": "Partners page",
+    "k": "pages",
+    "c": 71
+  },
+  {
+    "s": "map",
+    "n": "Map",
+    "k": "pages",
+    "c": 68
+  },
+  {
+    "s": "song-and-podcast-detail",
+    "n": "Song & Podcast detail",
+    "k": "pages",
+    "c": 65
+  },
+  {
+    "s": "help-and-support",
+    "n": "Help and support",
+    "k": "pages",
+    "c": 63
+  },
+  {
+    "s": "magazine-pages",
+    "n": "Magazine pages",
+    "k": "pages",
+    "c": 60
+  },
+  {
+    "s": "portfolio-website",
+    "n": "Portfolio website",
+    "k": "pages",
+    "c": 60
+  },
+  {
+    "s": "misc",
+    "n": "Misc",
+    "k": "pages",
+    "c": 58
+  },
+  {
+    "s": "project-tracker",
+    "n": "Project tracker",
+    "k": "pages",
+    "c": 58
+  },
+  {
+    "s": "verification",
+    "n": "Verification",
+    "k": "pages",
+    "c": 57
+  },
+  {
+    "s": "agency-websites",
+    "n": "Agency websites",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "crm",
+    "n": "CRM",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "parallax-effect",
+    "n": "Parallax effect",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "personal-website",
+    "n": "Personal website",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "sponsor-page",
+    "n": "Sponsor page",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "technology-websites",
+    "n": "Technology websites",
+    "k": "pages",
+    "c": 55
+  },
+  {
+    "s": "rich-text-editor",
+    "n": "Rich text editor",
+    "k": "pages",
+    "c": 54
+  },
+  {
+    "s": "text-particles",
+    "n": "Text particles",
+    "k": "pages",
+    "c": 54
+  },
+  {
+    "s": "error",
+    "n": "Error",
+    "k": "pages",
+    "c": 53
+  },
+  {
+    "s": "retro-websites",
+    "n": "Retro websites",
+    "k": "pages",
+    "c": 53
+  },
+  {
+    "s": "news-feed",
+    "n": "News feed",
+    "k": "pages",
+    "c": 51
+  },
+  {
+    "s": "reset-password",
+    "n": "Reset password",
+    "k": "pages",
+    "c": 51
+  },
+  {
+    "s": "achievements-and-awards",
+    "n": "Achievements & Awards",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "audio-and-video-recorder",
+    "n": "Audio & Video Recorder",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "audio-player",
+    "n": "Audio player",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "billing",
+    "n": "Billing",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "bookmarks-and-collections",
+    "n": "Bookmarks & Collections",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "call",
+    "n": "Call",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "canvas",
+    "n": "Canvas",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "cart-and-bag",
+    "n": "Cart & Bag",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "chat-bot",
+    "n": "Chat bot",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "chat-detail",
+    "n": "Chat detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "class-lesson-detail",
+    "n": "Class lesson detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "code-editor",
+    "n": "Code editor",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "comments",
+    "n": "Comments",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "dark-mode",
+    "n": "Dark mode",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "delete-and-deactivate-account",
+    "n": "Delete & Deactivate account",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "emails-and-messages",
+    "n": "Emails & Messages",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "event-detail",
+    "n": "Event detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "feature-info",
+    "n": "Feature info",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "feedback",
+    "n": "Feedback",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "followers-and-following",
+    "n": "Followers & Following",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "goal-and-task",
+    "n": "Goal & Task",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "guided-tour-and-tutorial",
+    "n": "Guided tour and tutorial",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "internal-tool",
+    "n": "Internal tool",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "kanban-board",
+    "n": "Kanban board",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "media-editor",
+    "n": "Media editor",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "multi-column-layout",
+    "n": "Multi column layout",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "note-detail",
+    "n": "Note detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "order-detail",
+    "n": "Order detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "order-history",
+    "n": "Order history",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "payment-method",
+    "n": "Payment Method",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "permission",
+    "n": "Permission",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "post-detail",
+    "n": "Post detail",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "progress",
+    "n": "Progress",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "qr-code",
+    "n": "QR code",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "quiz",
+    "n": "Quiz",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "search",
+    "n": "Search",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "subscription-and-paywall",
+    "n": "Subscription & Paywall",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "suggestions-and-similar-items",
+    "n": "Suggestions & Similar Items",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "timeline-and-history",
+    "n": "Timeline & History",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "timer-and-clock",
+    "n": "Timer & Clock",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "trash-and-archive",
+    "n": "Trash & Archive",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "wallet-and-balance",
+    "n": "Wallet & Balance",
+    "k": "pages",
+    "c": 50
+  },
+  {
+    "s": "tv-show-and-movie-detail",
+    "n": "TV Show & Movie detail",
+    "k": "pages",
+    "c": 41
+  },
+  {
+    "s": "community-websites",
+    "n": "Community websites",
+    "k": "pages",
+    "c": 39
+  },
+  {
+    "s": "playlists",
+    "n": "Playlists",
+    "k": "pages",
+    "c": 38
+  },
+  {
+    "s": "add-and-create",
+    "n": "Add & Create",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "empty-state",
+    "n": "Empty state",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "loading",
+    "n": "Loading",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "notifications",
+    "n": "Notifications",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "promotions-and-rewards",
+    "n": "Promotions & Rewards",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "recipe-detail",
+    "n": "Recipe detail",
+    "k": "pages",
+    "c": 34
+  },
+  {
+    "s": "social-feed",
+    "n": "Social feed",
+    "k": "pages",
+    "c": 32
+  },
+  {
+    "s": "stories",
+    "n": "Stories",
+    "k": "pages",
+    "c": 32
+  },
+  {
+    "s": "leaderboard",
+    "n": "Leaderboard",
+    "k": "pages",
+    "c": 31
+  },
+  {
+    "s": "hero",
+    "n": "Hero",
+    "k": "sections",
+    "c": 370
+  },
+  {
+    "s": "testimonials",
+    "n": "Testimonials",
+    "k": "sections",
+    "c": 313
+  },
+  {
+    "s": "navbar",
+    "n": "Navbar",
+    "k": "sections",
+    "c": 299
+  },
+  {
+    "s": "footer",
+    "n": "Footer",
+    "k": "sections",
+    "c": 251
+  },
+  {
+    "s": "charts",
+    "n": "Charts",
+    "k": "sections",
+    "c": 250
+  },
+  {
+    "s": "features",
+    "n": "Features",
+    "k": "sections",
+    "c": 224
+  },
+  {
+    "s": "table",
+    "n": "Table",
+    "k": "sections",
+    "c": 200
+  },
+  {
+    "s": "faq",
+    "n": "FAQ",
+    "k": "sections",
+    "c": 199
+  },
+  {
+    "s": "forms",
+    "n": "Forms",
+    "k": "sections",
+    "c": 198
+  },
+  {
+    "s": "card",
+    "n": "Card",
+    "k": "sections",
+    "c": 169
+  },
+  {
+    "s": "cta-band",
+    "n": "CTA band",
+    "k": "sections",
+    "c": 167
+  },
+  {
+    "s": "stats",
+    "n": "Stats",
+    "k": "sections",
+    "c": 136
+  },
+  {
+    "s": "dialog",
+    "n": "Dialog",
+    "k": "sections",
+    "c": 125
+  },
+  {
+    "s": "carousel",
+    "n": "Carousel",
+    "k": "sections",
+    "c": 111
+  },
+  {
+    "s": "reviews-and-ratings",
+    "n": "Reviews & Ratings",
+    "k": "sections",
+    "c": 100
+  },
+  {
+    "s": "quotes",
+    "n": "Quotes",
+    "k": "sections",
+    "c": 92
+  },
+  {
+    "s": "bento-grid",
+    "n": "Bento grid",
+    "k": "sections",
+    "c": 88
+  },
+  {
+    "s": "logo-cloud",
+    "n": "Logo cloud",
+    "k": "sections",
+    "c": 82
+  },
+  {
+    "s": "waitlist",
+    "n": "Waitlist",
+    "k": "sections",
+    "c": 74
+  },
+  {
+    "s": "compare",
+    "n": "Compare",
+    "k": "sections",
+    "c": 65
+  },
+  {
+    "s": "how-it-works",
+    "n": "How it works",
+    "k": "sections",
+    "c": 63
+  },
+  {
+    "s": "newsletter",
+    "n": "Newsletter",
+    "k": "sections",
+    "c": 60
+  },
+  {
+    "s": "product-detail",
+    "n": "Product detail",
+    "k": "sections",
+    "c": 60
+  },
+  {
+    "s": "command-palette",
+    "n": "Command palette",
+    "k": "sections",
+    "c": 59
+  },
+  {
+    "s": "header",
+    "n": "Header",
+    "k": "sections",
+    "c": 59
+  },
+  {
+    "s": "toggle-switch",
+    "n": "Toggle switch",
+    "k": "sections",
+    "c": 59
+  },
+  {
+    "s": "video-player",
+    "n": "Video player",
+    "k": "sections",
+    "c": 58
+  },
+  {
+    "s": "social-links",
+    "n": "Social links",
+    "k": "sections",
+    "c": 57
+  },
+  {
+    "s": "manifesto",
+    "n": "Manifesto",
+    "k": "sections",
+    "c": 56
+  },
+  {
+    "s": "timeline-roadmap",
+    "n": "Timeline roadmap",
+    "k": "sections",
+    "c": 56
+  },
+  {
+    "s": "avatar",
+    "n": "Avatar",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "button",
+    "n": "Button",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "checkbox",
+    "n": "Checkbox",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "floating-action-button",
+    "n": "Floating action button",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "radio-button",
+    "n": "Radio button",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "segmented-control",
+    "n": "Segmented control",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "skeleton-loader",
+    "n": "Skeleton loader",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "slider",
+    "n": "Slider",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "status-icon",
+    "n": "Status icon",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "team",
+    "n": "Team",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "text-area",
+    "n": "Text area",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "text-field",
+    "n": "Text field",
+    "k": "sections",
+    "c": 55
+  },
+  {
+    "s": "menu",
+    "n": "Menu",
+    "k": "sections",
+    "c": 53
+  },
+  {
+    "s": "widgets",
+    "n": "Widgets",
+    "k": "sections",
+    "c": 53
+  },
+  {
+    "s": "gallery",
+    "n": "Gallery",
+    "k": "sections",
+    "c": 52
+  },
+  {
+    "s": "checklist",
+    "n": "Checklist",
+    "k": "sections",
+    "c": 51
+  },
+  {
+    "s": "accordion",
+    "n": "Accordion",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "action-and-option",
+    "n": "Action & Option",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "breadcrumb",
+    "n": "Breadcrumb",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "chat",
+    "n": "Chat",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "coach-marks",
+    "n": "Coach marks",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "code-snippet",
+    "n": "Code snippet",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "color-picker",
+    "n": "Color picker",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "context-menu",
+    "n": "Context menu",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "date-picker",
+    "n": "Date picker",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "drawer",
+    "n": "Drawer",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "dropdown-menu",
+    "n": "Dropdown menu",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "file-upload",
+    "n": "File upload",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "filter-chips",
+    "n": "Filter chips",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "full-screen-overlay",
+    "n": "Full screen overlay",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "grid-list",
+    "n": "Grid list",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "mega-menu",
+    "n": "Mega menu",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "pagination",
+    "n": "Pagination",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "popover",
+    "n": "Popover",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "search-bar",
+    "n": "Search bar",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "side-navigation",
+    "n": "Side navigation",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "stacked-list",
+    "n": "Stacked list",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "stepper",
+    "n": "Stepper",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "tabs",
+    "n": "Tabs",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "time-picker",
+    "n": "Time picker",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "toast-notification",
+    "n": "Toast notification",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "toolbar",
+    "n": "Toolbar",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "tree",
+    "n": "Tree",
+    "k": "sections",
+    "c": 50
+  },
+  {
+    "s": "node-editor",
+    "n": "Node editor",
+    "k": "sections",
+    "c": 33
+  },
+  {
+    "s": "announcement-banner",
+    "n": "Announcement banner",
+    "k": "sections",
+    "c": 30
+  },
+  {
+    "s": "spline",
+    "n": "Spline",
+    "k": "animations",
+    "c": 8
+  },
+  {
+    "s": "fan-carousel",
+    "n": "Fan Carousel",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "hero-scrub",
+    "n": "Hero Scrub",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "marquee",
+    "n": "Marquee",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "page-scrub",
+    "n": "Page Scrub",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "scroll-deck",
+    "n": "Scroll Deck",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "scroll-float",
+    "n": "Scroll Float",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "spotlight-reveal",
+    "n": "Spotlight Reveal",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "wipe-reveal",
+    "n": "Wipe Reveal",
+    "k": "animations",
+    "c": 3
+  },
+  {
+    "s": "design-systems",
+    "n": "Design Systems",
+    "k": "systems",
+    "c": 55
+  }
+]

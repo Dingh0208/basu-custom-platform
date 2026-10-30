@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClientHub · 转写与摘要</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">C</div>
+      <div>
+        <div class="brand-name">ClientHub</div>
+        <div class="brand-sub">客户情报工作台</div>
+      </div>
+    </div>
+    <div class="nav">
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>首页</a>
+      <a class="nav-item active" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>客户</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>项目</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>导入中心</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>待归档<span style="margin-left:auto;background:#fef3f2;color:#b42318;border-radius:999px;font-size:10px;padding:1px 6px">1</span></a>
+      <div class="nav-label">工作</div>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>待办</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI 问答</a>
+      <div class="nav-spacer"></div>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
+    </div>
+    <div class="user-card">
+      <div class="avatar">王</div>
+      <div><div class="user-name">王总</div><div class="user-role">产品负责人 · 本机</div></div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <span>客户</span><span class="sep">/</span><span>张三</span><span class="sep">/</span>
+        <strong>通话记录 · 会员小程序</strong>
+        <span class="badge done">已完成</span>
+      </div>
+      <div class="top-actions">
+        <button class="btn"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>重新处理</button>
+        <button class="btn"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>导出纪要</button>
+        <button class="btn primary"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>添加待办</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="left-rail">
+        <section class="card file-card">
+          <div class="card-head"><div><div class="card-title">文件信息</div><div class="card-sub">原始录音 · 本地保存</div></div></div>
+          <div class="card-body">
+            <div class="file-row">
+              <div class="file-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 7v10"/><path d="M22 9v6"/><path d="M7 7v10"/><path d="M2 9v6"/></svg></div>
+              <div><div class="file-name">2026-10-28_张三_会员小程序_通话录音.m4a</div><div class="file-meta">42.8 MB · 32:18 · 导入于 10:24</div></div>
+            </div>
+            <dl class="kv-list">
+              <div class="kv"><dt>客户</dt><dd>张三 · 某某科技</dd></div>
+              <div class="kv"><dt>项目</dt><dd>会员小程序商城</dd></div>
+              <div class="kv"><dt>来源</dt><dd>手机通话录音</dd></div>
+              <div class="kv"><dt>存储位置</dt><dd>本机 / 客户资料 / 2026-10</dd></div>
+            </dl>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div class="card-title">处理进度</div><span class="badge done">全部完成</span></div>
+          <div class="card-body">
+            <div class="progress-steps">
+              <div class="step done"><span class="step-dot">✓</span>上传完成<span class="step-time">10:24</span></div>
+              <div class="step done"><span class="step-dot">✓</span>转码完成<span class="step-time">10:25</span></div>
+              <div class="step done"><span class="step-dot">✓</span>转写完成<span class="step-time">10:29</span></div>
+              <div class="step done"><span class="step-dot">✓</span>摘要完成<span class="step-time">10:31</span></div>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div class="card-title">摘要依据</div></div>
+          <div class="card-body">
+            <div class="empty-hint" style="color:#475467"><span style="width:20px;height:20px;border-radius:6px;background:#eef4ff;color:#2563eb;display:flex;align-items:center;justify-content:center;font-size:10px">6</span>条原文引用已关联</div>
+            <div style="margin-top:10px;font-size:10.5px;color:#98a2b3;line-height:1.7">所有结论可点击引用图标，跳转到对应录音时间点。</div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="center">
+        <div class="card audio-card">
+          <button class="play-btn"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+          <div class="wave" aria-hidden="true">
+            <i style="height:10px"></i><i style="height:16px"></i><i class="on" style="height:22px"></i><i style="height:14px"></i><i style="height:28px"></i><i class="on" style="height:34px"></i><i style="height:18px"></i><i style="height:26px"></i><i class="on" style="height:32px"></i><i style="height:12px"></i><i style="height:22px"></i><i class="on" style="height:30px"></i><i style="height:20px"></i><i style="height:14px"></i><i class="on" style="height:36px"></i><i style="height:24px"></i><i style="height:16px"></i><i class="on" style="height:28px"></i><i style="height:10px"></i><i style="height:18px"></i><i class="on" style="height:32px"></i><i style="height:22px"></i><i style="height:12px"></i><i style="height:26px"></i><i class="on" style="height:30px"></i><i style="height:16px"></i><i style="height:24px"></i><i style="height:34px"></i><i style="height:18px"></i><i style="height:12px"></i><i class="on" style="height:28px"></i><i style="height:20px"></i><i style="height:14px"></i><i style="height:24px"></i><i style="height:32px"></i><i style="height:16px"></i><i style="height:22px"></i><i style="height:10px"></i><i style="height:18px"></i><i style="height:26px"></i>
+          </div>
+          <span class="audio-time">00:00 / 32:18</span>
+          <div class="audio-tools"><span class="speed">1.0x</span><svg class="icon-sm" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg><svg class="icon-sm" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></div>
+        </div>
+
+        <div class="card transcript-card">
+          <div class="transcript-head">
+            <span class="transcript-title">转写稿</span><span class="transcript-count">32:18 · 286 句</span>
+            <div class="search-box"><svg class="icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input value="预算" aria-label="搜索转写稿"></div>
+            <div class="seg"><span class="on">全部</span><span>只看客户</span></div>
+          </div>
+          <div class="transcript-body">
+            <div class="t-row"><div class="t-time">00:00</div><span class="speaker customer">客户</span><div class="t-text">王总，我们这边想做一个会员小程序，主要给老客户做积分和复购。</div></div>
+            <div class="t-row"><div class="t-time">00:18</div><span class="speaker me">我</span><div class="t-text">明白，现在会员数据是在 ERP 里还是 Excel？</div></div>
+            <div class="t-row"><div class="t-time">00:26</div><span class="speaker customer">客户</span><div class="t-text">在 ERP 里，主要还是想打通，不然两边对不上。</div></div>
+            <div class="t-row active"><div class="t-time">00:41</div><span class="speaker customer">客户</span><div class="t-text"><mark>预算</mark>大概八到十万，最好十一月底前能上线。</div></div>
+            <div class="t-row"><div class="t-time">01:02</div><span class="speaker me">我</span><div class="t-text">双十一前时间比较紧，我建议先上核心的积分和支付，营销玩法二期再加。</div></div>
+            <div class="t-row"><div class="t-time">01:15</div><span class="speaker customer">客户</span><div class="t-text">可以，先看方案。我们老板张三拍板，我这边运营负责对接。</div></div>
+            <div class="t-row"><div class="t-time">01:30</div><span class="speaker me">我</span><div class="t-text">那我周五前把方案和报价发您，下周一电话确认。</div></div>
+            <div class="t-row"><div class="t-time">01:42</div><span class="speaker customer">客户</span><div class="t-text">行，另外还要能发优惠券，最好能跟企微打通。</div></div>
+            <div class="t-row"><div class="t-time">02:05</div><span class="speaker me">我</span><div class="t-text">企微接口可以评估，优惠券放在二期也可以。</div></div>
+            <div class="t-row"><div class="t-time">02:18</div><span class="speaker customer">客户</span><div class="t-text">我这边最担心的是工期，双十一前如果上不了，效果就差很多。</div></div>
+            <div class="t-row"><div class="t-time">02:36</div><span class="speaker me">我</span><div class="t-text">理解，我们先把核心流程排出来，本周五给您一个明确的时间表。</div></div>
+            <div class="t-row"><div class="t-time">02:51</div><span class="speaker customer">客户</span><div class="t-text">行，另外报价里把会员等级和积分规则也拆开写一下。</div></div>
+            <div class="t-row"><div class="t-time">03:10</div><span class="speaker me">我</span><div class="t-text">没问题，我会在方案里单独列出来。</div></div>
+            <div style="text-align:center;padding:16px 0 4px;color:#98a2b3;font-size:10.5px">— 已显示最近 13 句 · 向上滚动查看更早内容 —</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="right-rail">
+        <div class="card summary-card">
+          <div class="summary-head">
+            <div class="summary-top">
+              <div class="title-wrap"><span class="card-title">AI 摘要</span><span class="ai-badge">✦ AI 生成</span><span class="confidence">置信度 92%</span></div>
+              <button class="btn ghost" style="height:28px;padding:0 8px;font-size:11px">编辑</button>
+            </div>
+            <div class="tabs"><div class="tab on">摘要</div><div class="tab">需求 <span class="count">4</span></div><div class="tab">原文引用 <span class="count">6</span></div></div>
+          </div>
+          <div class="summary-body">
+            <div class="summary-section">
+              <div class="summary-label">一句话结论 <svg class="evidence" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+              <div class="summary-value">客户要做会员小程序，预算 8–10 万，目标 11 月底上线，本周五前需给出方案和报价。</div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">客户需求与痛点</div>
+              <div class="summary-value">会员积分、微信支付、与现有 ERP 打通；担心工期影响双十一。</div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">预算与报价</div>
+              <div class="summary-value">8–10 万（客户口头区间） <span class="pill blue">待报价</span></div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">时间与优先级</div>
+              <div class="summary-value">11 月底前上线 <span class="pill amber">优先级高</span></div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">决策人与角色</div>
+              <div class="summary-value">张三（老板，拍板）<br>李四（运营，日常对接）</div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">异议与风险</div>
+              <div class="summary-value">工期紧；客户在对比其他外包；优惠券和企微接口可能增加范围。</div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">下一步动作</div>
+              <div class="summary-value">周五前发方案 + 报价；下周一电话确认。</div>
+            </div>
+            <div class="summary-section">
+              <div class="summary-label">付款方式</div>
+              <div class="summary-value empty">未提及</div>
+            </div>
+          </div>
+          <div class="summary-footer">
+            <button class="btn secondary"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>重新生成</button>
+            <button class="btn primary">保存修改</button>
+          </div>
+          <div class="evidence-note">摘要仅依据本次通话转写生成 · 共 6 条原文引用</div>
+        </div>
+      </aside>
+    </div>
+    <footer class="statusbar">
+      <div class="status-left"><span><span class="status-dot"></span>本地数据已自动保存 10:32</span><span>AI：阿里云百炼 · Qwen-Plus</span><span>转写：Paraformer · 99.2%</span></div>
+      <div>客户信息聚合工作台 · Sprint 1 原型</div>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClientHub · Sprint 1 产品原型</title>
+<style>
+  :root{--ink:#172033;--muted:#667085;--line:#e6e8ec;--accent:#0f766e;--bg:#f5f6f8}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;font-size:14px;line-height:1.6}
+  .wrap{max-width:1500px;margin:0 auto;padding:42px 36px 64px}
+  .kicker{font-size:12px;letter-spacing:.16em;color:var(--accent);font-weight:700;text-transform:uppercase}
+  h1{font-size:34px;line-height:1.25;margin:10px 0 8px;letter-spacing:-.02em}
+  .lead{color:var(--muted);font-size:15px;max-width:860px;margin:0 0 30px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,40,.04),0 14px 34px rgba(16,24,40,.05)}
+  .card img{display:block;width:100%;height:auto;border-bottom:1px solid var(--line)}
+  .card-body{padding:18px 20px 20px}
+  .card h2{font-size:18px;margin:0 0 5px}
+  .card p{margin:0;color:var(--muted);font-size:12.5px}
+  .card a{display:inline-flex;margin-top:12px;color:var(--accent);font-weight:600;text-decoration:none;font-size:12.5px}
+  .full{grid-column:1 / -1}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .chip{background:#eef4ff;color:#2563eb;border-radius:999px;padding:3px 9px;font-size:11px}
+  .chip.green{background:#ecfdf3;color:#067647}
+  .chip.amber{background:#fff7e6;color:#b45309}
+  .footer{margin-top:36px;color:#98a2b3;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">ClientHub · Sprint 1 Prototype</div>
+  <h1>录音 → 转写 → 摘要：产品原型</h1>
+  <p class="lead">基于 PRD Sprint 1 与 Qiaomu UI Learn 的参考设计，融合成一套适合「客户信息聚合工作台」的 Windows 桌面端界面。两个页面覆盖导入、转写、摘要、校对与重新生成的完整链路。</p>
+
+  <div class="grid">
+    <a class="card" href="transcript.html" style="text-decoration:none;color:inherit">
+      <img src="01-转写与摘要.png" alt="转写与摘要原型">
+      <div class="card-body">
+        <h2>01 · 转写与摘要工作台</h2>
+        <p>左侧文件信息与处理进度，中间音频播放器 + 时间戳转写稿，右侧固定七字段 AI 摘要与原文引用。</p>
+        <div class="meta"><span class="chip green">已完成</span><span class="chip">说话人区分</span><span class="chip">原文引用</span><span class="chip amber">空字段“未提及”</span></div>
+        <a href="transcript.html">打开 HTML 原型 →</a>
+      </div>
+    </a>
+    <a class="card" href="import.html" style="text-decoration:none;color:inherit">
+      <img src="02-导入中心.png" alt="导入中心原型">
+      <div class="card-body">
+        <h2>02 · 导入中心</h2>
+        <p>拖拽/批量选择、粘贴文本/截图、自动识别客户、SHA-256 去重、待归档提示与 AI 处理模式切换。</p>
+        <div class="meta"><span class="chip green">本地处理</span><span class="chip">多格式</span><span class="chip">自动识别客户</span><span class="chip">Mock / 阿里云百炼</span></div>
+        <a href="import.html">打开 HTML 原型 →</a>
+      </div>
+    </a>
+    <div class="card full">
+      <img src="00-乔木UI参考.png" alt="乔木 UI 参考选择">
+      <div class="card-body">
+        <h2>00 · 乔木 UI 参考选择</h2>
+        <p>从 Qiaomu UI Learn 的 13,561 条设计参考中，筛选出 5 个最相关的界面：Transcription、Fieldnote、Marlowe、Sidenote、Corbel。</p>
+        <a href="README.md">查看设计说明 →</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer">截图视口 1600×1000 · 静态 HTML 原型 · 数据为演示样例</div>
+</div>
+</body>
+</html>

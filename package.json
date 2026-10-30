@@ -1,0 +1,63 @@
+{
+  "name": "clienthub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:full": "concurrently -k \"node scripts/start-ai.mjs\" \"vite\"",
+    "ai:dev": "node scripts/start-ai.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"node scripts/start-ai.mjs\" \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "electron:start": "electron .",
+    "build:sidecar": "powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1",
+    "build:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "concurrently": "9.1.0",
+    "cross-env": "7.0.3",
+    "electron": "33.2.1",
+    "typescript": "5.7.2",
+    "vite": "5.4.11",
+    "wait-on": "8.0.1"
+  },
+  "build": {
+    "appId": "com.clienthub.desktop",
+    "productName": "ClientHub",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "services/wechat-engine",
+        "to": "wechat-engine"
+      },
+      {
+        "from": "release/ai-sidecar",
+        "to": "ai-sidecar"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

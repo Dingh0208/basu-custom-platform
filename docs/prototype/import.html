@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClientHub · 导入中心</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">C</div>
+      <div>
+        <div class="brand-name">ClientHub</div>
+        <div class="brand-sub">客户情报工作台</div>
+      </div>
+    </div>
+    <div class="nav">
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>首页</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>客户</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>项目</a>
+      <a class="nav-item active" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>导入中心</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>待归档<span style="margin-left:auto;background:#fef3f2;color:#b42318;border-radius:999px;font-size:10px;padding:1px 6px">1</span></a>
+      <div class="nav-label">工作</div>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>待办</a>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>AI 问答</a>
+      <div class="nav-spacer"></div>
+      <a class="nav-item" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
+    </div>
+    <div class="user-card">
+      <div class="avatar">王</div>
+      <div><div class="user-name">王总</div><div class="user-role">产品负责人 · 本机</div></div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs"><strong>导入中心</strong><span class="badge done">本地处理</span></div>
+      <div class="top-actions">
+        <button class="btn"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>批量导入</button>
+        <button class="btn primary"><svg class="icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>选择文件</button>
+      </div>
+    </header>
+    <div class="kpi-row">
+      <div class="kpi"><svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg><div><div class="kpi-num">3</div><div class="kpi-label">今日已导入</div></div></div>
+      <div class="kpi"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><div class="kpi-num">0</div><div class="kpi-label">处理中</div></div></div>
+      <div class="kpi"><svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><div><div class="kpi-num">1</div><div class="kpi-label">待归档</div></div></div>
+      <div class="kpi" style="margin-left:auto"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 7v10"/><path d="M22 9v6"/><path d="M7 7v10"/><path d="M2 9v6"/></svg><div><div class="kpi-num">32:18</div><div class="kpi-label">最近一条录音</div></div></div>
+    </div>
+    <div class="import-workspace">
+      <div class="import-left">
+        <section class="dropzone">
+          <div class="drop-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg></div>
+          <div class="drop-title">拖入文件，自动识别客户</div>
+          <div class="drop-sub">通话录音、微信聊天记录、邮件、需求文档、截图，统一进入客户时间线</div>
+          <div class="drop-actions">
+            <button class="btn primary">选择文件</button>
+            <button class="btn">粘贴文本</button>
+            <button class="btn">粘贴截图</button>
+          </div>
+          <div class="drop-hint">单文件最大 2GB · 自动 SHA-256 去重 · 支持批量选择</div>
+          <div class="type-chips">
+            <span class="type-chip">mp3 / m4a / wav</span><span class="type-chip">mp4 / mov</span><span class="type-chip">pdf</span><span class="type-chip">docx / xlsx / pptx</span><span class="type-chip">png / jpg</span><span class="type-chip">zip / rar / 7z</span><span class="type-chip">txt / html / json</span>
+          </div>
+        </section>
+
+        <section class="card recent-card">
+          <div class="card-head">
+            <div><div class="card-title">最近导入</div><div class="card-sub">处理完成后自动进入客户时间线</div></div>
+            <button class="btn ghost" style="height:28px;padding:0 8px;font-size:11px">查看全部</button>
+          </div>
+          <div style="overflow:auto">
+            <table class="table">
+              <thead><tr><th>文件</th><th>类型</th><th>大小</th><th>识别客户</th><th>状态</th><th>导入时间</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><div class="file-cell"><div class="mini-ico"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 7v10"/><path d="M22 9v6"/><path d="M7 7v10"/><path d="M2 9v6"/></svg></div><div><div class="file-cell-name">2026-10-28_张三_会员小程序_通话录音.m4a</div><div class="file-cell-sub">通话录音 · 32:18</div></div></div></td>
+                  <td>音频</td><td>42.8 MB</td><td>张三</td><td><span class="badge done">已完成</span></td><td>10:31</td>
+                </tr>
+                <tr>
+                  <td><div class="file-cell"><div class="mini-ico"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div><div class="file-cell-name">微信聊天_张三_20261027.txt</div><div class="file-cell-sub">聊天记录 · 1,284 条</div></div></div></td>
+                  <td>聊天记录</td><td>1.2 MB</td><td>张三</td><td><span class="progress-line"><span style="width:60%"></span></span><span class="badge processing">解析中</span></td><td>10:28</td>
+                </tr>
+                <tr>
+                  <td><div class="file-cell"><div class="mini-ico"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div class="file-cell-name">某某科技_会员小程序_需求说明书.pdf</div><div class="file-cell-sub">PDF · 18 页 · 扫描件</div></div></div></td>
+                  <td>PDF</td><td>3.4 MB</td><td>待归档</td><td><span class="badge warn">待归档</span></td><td>10:20</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid #f2f4f7;color:#667085;font-size:10.5px;background:#fafbfc">
+            <span style="font-weight:600;color:#344054">处理流程</span>
+            <span style="background:#fff;border:1px solid #e6e8ec;border-radius:999px;padding:2px 8px">识别客户</span>
+            <span>→</span>
+            <span style="background:#fff;border:1px solid #e6e8ec;border-radius:999px;padding:2px 8px">转写 / 解析</span>
+            <span>→</span>
+            <span style="background:#fff;border:1px solid #e6e8ec;border-radius:999px;padding:2px 8px">生成摘要与需求</span>
+            <span style="margin-left:auto;color:#98a2b3">失败项自动进入待归档，不会丢失</span>
+          </div>
+        </section>
+      </div>
+
+      <aside class="card settings-card">
+        <div class="card-head"><div><div class="card-title">导入设置</div><div class="card-sub">仅影响本次导入</div></div></div>
+        <div class="settings-body">
+          <div class="setting">
+            <div class="setting-top"><div><div class="setting-label">自动识别客户</div><div class="setting-desc">手机号 / 微信号 / 邮箱 / 文件名</div></div><div class="switch on"></div></div>
+          </div>
+          <div class="setting">
+            <div class="setting-label">默认项目</div>
+            <select class="select"><option>不指定，按沟通内容判断</option><option>会员小程序商城</option><option>CRM 二期</option></select>
+          </div>
+          <div class="setting">
+            <div class="setting-label">AI 处理模式</div>
+            <div class="segmented"><span class="on">阿里云百炼</span><span>Mock</span></div>
+            <div class="setting-desc" style="margin-top:7px">真实模式会消耗 API 额度；Mock 用于演示流程。</div>
+          </div>
+          <div class="setting">
+            <div class="setting-label">识别规则</div>
+            <div class="rule-list">
+              <div class="rule"><span class="dot"></span>文件名包含客户姓名或公司名</div>
+              <div class="rule"><span class="dot"></span>通话记录中的手机号匹配</div>
+              <div class="rule"><span class="dot"></span>微信导出文件中的备注名匹配</div>
+              <div class="rule"><span class="dot"></span>邮件发件人 / 收件人邮箱匹配</div>
+            </div>
+          </div>
+          <div class="setting">
+            <div class="setting-label">导入后自动处理</div>
+            <div class="setting-top"><div class="setting-desc">转写 → 摘要 → 需求抽取 → 建索引</div><div class="switch on"></div></div>
+          </div>
+          <div class="small-note"><strong style="color:#344054">小提示：</strong>识别不到客户的记录会进入“待归档”，不会丢失；您可以随时手动归档或新建客户。</div>
+        </div>
+      </aside>
+    </div>
+    <footer class="statusbar">
+      <div class="status-left"><span><span class="status-dot"></span>本地数据 · 未上传原始文件</span><span>AI：阿里云百炼 · 已连接</span></div>
+      <div>客户信息聚合工作台 · Sprint 1 原型</div>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

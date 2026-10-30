@@ -1,0 +1,15 @@
+node_modules/
+dist/
+services/ai/data/
+__pycache__/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+*.log
+.DS_Store
+docs/reference.docx
+.dsh-office-*/
+services/ai/.env
+release/
+build/
+docs/reverse-wechat/asar/
