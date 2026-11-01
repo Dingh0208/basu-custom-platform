@@ -13,6 +13,7 @@ import {
 } from './Icons';
 
 type SidebarProps = {
+  notificationEntry: React.ReactNode;
   profile: PersonalProfile;
   onProfile: () => void;
   active: 'home' | 'import' | 'inbox' | 'customers' | 'projects' | 'settings' | 'todos' | 'other';
@@ -41,10 +42,10 @@ const workItems = [
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
-const CURRENT_VERSION = '0.2.6';
+const CURRENT_VERSION = '0.2.7';
 const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
 
-export default function Sidebar({ profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
+export default function Sidebar({ notificationEntry, profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' });
   const [versionOpen, setVersionOpen] = useState(false);
   const versionMenuRef = useRef<HTMLDivElement>(null);
@@ -149,6 +150,7 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
           );
         })}
         <div className="nav-spacer" />
+        {notificationEntry}
         <button className={`nav-item ${active === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('设置')}>
           <IconSettings className="icon" />
           设置

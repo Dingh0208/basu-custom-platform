@@ -12,6 +12,7 @@ import GlobalSearch from './components/GlobalSearch';
 import TodoWorkspace from './components/TodoWorkspace';
 import InboxArchive, { needsArchive } from './components/InboxArchive';
 import PersonalProfileModal, { defaultProfile } from './components/PersonalProfileModal';
+import NotificationCenter from './components/NotificationCenter';
 import { initialImports, transcriptRecord } from './mock/data';
 import type { ChatRecord, ImportRecord, ProjectListItem, SearchResult, TranscriptRecord, View } from './types';
 import {
@@ -44,7 +45,7 @@ function inferType(name: string) {
   if (['doc', 'docx'].includes(ext)) return 'Word';
   if (['xls', 'xlsx'].includes(ext)) return 'Excel';
   if (['ppt', 'pptx'].includes(ext)) return 'PPT';
-  if (['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext)) return '图片';
+  if (['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tif', 'tiff'].includes(ext)) return '图片';
   if (['zip', 'rar', '7z'].includes(ext)) return '压缩包';
   if (['txt', 'html', 'json', 'csv'].includes(ext)) return '聊天记录';
   return '文件';
@@ -88,6 +89,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState(defaultProfile);
+  const [todoFocus, setTodoFocus] = useState('');
   const [inboxFocus, setInboxFocus] = useState(() => new URLSearchParams(window.location.search).get('id') || '');
   const [customerFocus, setCustomerFocus] = useState(() => ({ customer: new URLSearchParams(window.location.search).get('customer') || '', requirement: new URLSearchParams(window.location.search).get('requirement') || '' }));
   const [projectFocus, setProjectFocus] = useState(() => new URLSearchParams(window.location.search).get('project') || '');
@@ -288,7 +290,7 @@ export default function App() {
     showToast(`${label} 模块将在 Sprint 2 提供`);
   }
 
-  async function handleAddFiles(files: File[]) {
+  async function handleAddFiles(files: File[], chatScreenshot = false) {
     if (!files.length) return;
     if (sidecarOnline) {
       let duplicates = 0;
@@ -304,7 +306,12 @@ export default function App() {
             failed += 1;
             continue;
           }
-          if (type === '图片' && file.size <= 12 * 1024 * 1024) {
+          if (type === '图片' && chatScreenshot) {
+            if (file.size > 12 * 1024 * 1024) {
+              failed += 1;
+              showToast(`${file.name} 超过聊天截图的 12 MB 限制`);
+              continue;
+            }
             showToast('正在识别聊天截图，请稍候…');
             const imageBase64 = await fileToBase64(file);
             const chat = await createChatScreenshot(imageBase64, file.type || 'image/png', file.name, {
@@ -319,7 +326,7 @@ export default function App() {
             continue;
           }
           const media = type === '音频' || type === '视频';
-          const document = ['pdf', 'docx', 'xlsx', 'eml'].includes(file.name.split('.').pop()?.toLowerCase() ?? '');
+          const document = ['PDF', 'Word', 'Excel', 'PPT', '邮件', '图片'].includes(type);
           if ((media || document) && file.size > 100 * 1024 * 1024) {
             failed += 1;
             showToast(`${file.name} 超过 100 MB，请压缩或拆分后重新导入`);
@@ -345,7 +352,7 @@ export default function App() {
       const data = await fetchImports();
       if (data) setImports(data);
       const suffix = failed ? `，${failed} 个文件处理失败` : '';
-      showToast(duplicates > 0 ? `${files.length} 个文件已提交，其中 ${duplicates} 个重复文件已跳过${suffix}` : `已提交 ${files.length - failed} 个文件到本地 Sidecar，正在上传并转写${suffix}`);
+      showToast(duplicates > 0 ? `${files.length} 个文件已提交，其中 ${duplicates} 个重复文件已跳过${suffix}` : `已提交 ${files.length - failed} 个文件到本地 Sidecar 处理${suffix}`);
       return;
     }
 
@@ -477,6 +484,7 @@ export default function App() {
   return (
     <div className="app">
       <Sidebar
+        notificationEntry={<NotificationCenter online={sidecarOnline} onTodo={(id) => { setTodoFocus(id); navigateTo('todos'); }} />}
         profile={profile}
         onProfile={() => setProfileOpen(true)}
         active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view}
@@ -538,7 +546,7 @@ export default function App() {
         ) : view === 'projects' ? (
           <ProjectPage key={projectFocus} initialProject={projectFocus} onToast={showToast} onCustomer={openCustomer} />
         ) : view === 'todos' ? (
-          <TodoWorkspace online={sidecarOnline} onSource={openSource} onRequirement={openCustomer} />
+          <TodoWorkspace key={todoFocus} initialId={todoFocus} online={sidecarOnline} onSource={openSource} onRequirement={openCustomer} />
         ) : (
           <TranscriptWorkspace
             onRequirement={openCustomer}

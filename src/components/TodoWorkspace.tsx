@@ -8,18 +8,22 @@ export function localDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-type Props = { online: boolean; customer?: string; revision?: number; onSource: (id: string) => void; onRequirement: (customer: string, id: string) => void };
+type Props = { online: boolean; initialId?: string; customer?: string; revision?: number; onSource: (id: string) => void; onRequirement: (customer: string, id: string) => void };
 
-export default function TodoWorkspace({ online, customer, revision, onSource, onRequirement }: Props) {
+export default function TodoWorkspace({ online, initialId, customer, revision, onSource, onRequirement }: Props) {
   const [todos, setTodos] = useState<TodoRecord[]>([]);
   const [followup, setFollowup] = useState<FollowupData | null>(null);
   const [seed, setSeed] = useState<Partial<TodoRecord> | null>(null);
-  const [filter, setFilter] = useState('active');
+  const [filter, setFilter] = useState(initialId ? 'all' : 'active');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   const [busyId, setBusyId] = useState('');
   const today = localDate();
+
+  useEffect(() => {
+    if (initialId && !loading) document.getElementById(`todo-${initialId}`)?.scrollIntoView({ block: 'center' });
+  }, [initialId, loading]);
 
   useEffect(() => {
     let live = true;
@@ -60,7 +64,7 @@ export default function TodoWorkspace({ online, customer, revision, onSource, on
           <div className="sales-filters" aria-label="待办筛选">{[['active', '待跟进'], ['overdue', '逾期'], ['done', '已完成'], ['all', '全部']].map(([id, label]) => <button key={id} className={`btn ${filter === id ? 'primary' : 'ghost'}`} onClick={() => setFilter(id)}>{label}</button>)}</div>
           {error && <div className="sales-error" role="alert">{error}<button className="btn ghost" onClick={() => setVersion((v) => v + 1)}>重试</button></div>}
           {loading ? <div className="empty-panel">正在加载待办…</div> : !error && visible.length === 0 ? <div className="empty-panel">当前筛选下没有待办</div> : visible.map((todo) => (
-            <article className="sales-todo" key={todo.id}>
+            <article className={`sales-todo ${todo.id === initialId ? 'notification-target' : ''}`} id={`todo-${todo.id}`} key={todo.id}>
               <div className="sales-todo-head"><button className="requirement-title-btn" onClick={() => setSeed(todo)}>{todo.title}</button><span className={`pill ${todo.status === 'done' ? 'green' : todo.dueDate < today && active.includes(todo) ? 'red' : ''}`}>{todo.status === 'done' ? '已完成' : todo.status === 'cancelled' ? '已取消' : todo.status === 'doing' ? '进行中' : '待处理'}</span></div>
               <div className="requirement-meta"><span>{todo.customer} · {todo.project}</span><span>{todo.owner}</span><span>截止 {todo.dueDate}</span></div>
               {todo.sourceQuote && <div className="requirement-quote">{todo.sourceQuote}</div>}

@@ -10,7 +10,7 @@ type ImportCenterProps = {
   onInbox: () => void;
   imports: ImportRecord[];
   sidecarOnline: boolean;
-  onAddFiles: (files: File[]) => void;
+  onAddFiles: (files: File[], chatScreenshot?: boolean) => void;
   onPasteText: (text: string) => void;
   onOpenRecord: (record: ImportRecord) => void;
   onToast: (message: string) => void;
@@ -163,12 +163,12 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
             <div className="drop-actions">
               <button className="btn primary" onClick={() => fileInput.current?.click()}>选择文件</button>
               <button className="btn" onClick={() => setPasteOpen(true)}>粘贴文本</button>
-              <button className="btn" onClick={() => imageInput.current?.click()}>粘贴截图</button>
+              <button className="btn" onClick={() => imageInput.current?.click()}>聊天截图</button>
               <button className="btn" onClick={() => setWechatOpen(true)}>从微信库提取</button>
             </div>
-            <div className="drop-hint">单文件最大 2GB · 自动 SHA-256 去重 · 支持批量选择</div>
+            <div className="drop-hint">单文件最大 100 MB · 普通图片自动 OCR · 聊天截图请使用专用入口</div>
             <div className="type-chips">
-              <span className="type-chip">mp3 / m4a / wav</span><span className="type-chip">mp4 / mov</span><span className="type-chip">pdf</span><span className="type-chip">docx / xlsx / pptx</span><span className="type-chip">png / jpg</span><span className="type-chip">zip / rar / 7z</span><span className="type-chip">txt / html / json</span>
+              <span className="type-chip">mp3 / m4a / wav</span><span className="type-chip">mp4 / mov</span><span className="type-chip">PDF / 扫描件</span><span className="type-chip">doc / docx / xls / xlsx</span><span className="type-chip">ppt / pptx</span><span className="type-chip">图片 / eml</span><span className="type-chip">txt / html / json</span>
             </div>
           </section>
 
@@ -313,7 +313,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
       </footer>
 
       <input ref={fileInput} className="file-input-hidden" type="file" multiple onChange={(e) => { acceptFiles(Array.from(e.target.files ?? [])); e.currentTarget.value = ''; }} />
-      <input ref={imageInput} className="file-input-hidden" type="file" accept="image/*" multiple onChange={(e) => { acceptFiles(Array.from(e.target.files ?? [])); e.currentTarget.value = ''; }} />
+      <input ref={imageInput} className="file-input-hidden" type="file" accept="image/*" multiple onChange={(e) => { onAddFiles(Array.from(e.target.files ?? []), true); e.currentTarget.value = ''; }} />
 
       <Modal open={pasteOpen} title="粘贴聊天记录" subtitle="支持微信聊天文字、邮件正文或任意文本" onClose={() => setPasteOpen(false)}>
         <div className="modal-body">

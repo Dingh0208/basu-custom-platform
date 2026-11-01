@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, execFileSync } = require('node:child_process');
@@ -254,6 +254,25 @@ ipcMain.handle('clienthub:install-update', () => {
 
 ipcMain.handle('clienthub:configure-updates', (_event, settings = {}) => configureAutoUpdater(settings));
 
+ipcMain.handle('clienthub:show-reminder', (event, payload) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || !Notification.isSupported()) return false;
+  if (!payload || typeof payload.title !== 'string' || typeof payload.body !== 'string') return false;
+  return new Promise((resolve) => {
+    const notice = new Notification({ title: payload.title.slice(0, 120), body: payload.body.slice(0, 600) });
+    const timer = setTimeout(() => resolve(false), 5000);
+    notice.once('show', () => { clearTimeout(timer); resolve(true); });
+    notice.once('failed', () => { clearTimeout(timer); resolve(false); });
+    notice.on('click', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send('clienthub:open-reminder', typeof payload.todoId === 'string' ? payload.todoId : '');
+    });
+    notice.show();
+  });
+});
+
 ipcMain.handle('clienthub:restart-sidecar', () => {
   if (!app.isPackaged) return { status: 'dev' };
   stopPackagedSidecar();
@@ -262,6 +281,7 @@ ipcMain.handle('clienthub:restart-sidecar', () => {
 
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
+  app.setAppUserModelId('com.clienthub.desktop');
   if (app.isPackaged) startPackagedSidecar();
   createWindow();
   setupAutoUpdater();

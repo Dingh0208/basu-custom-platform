@@ -39,8 +39,9 @@ export default function AttachmentList({ sourceId, sourceType, attachments, side
 
   const url = selected?.storedName ? `${API_BASE}/api/files/${encodeURIComponent(selected.storedName)}` : '';
   const pdf = selected && /\.pdf$/i.test(selected.name);
-  const media = selected && ['image', 'voice', 'video'].includes(selected.kind);
-  const textPreview = selected && /\.(docx|xlsx|eml|txt|csv)$/i.test(selected.name);
+  const tiff = selected && /\.tiff?$/i.test(selected.name);
+  const media = selected && !tiff && ['image', 'voice', 'video'].includes(selected.kind);
+  const textPreview = selected && /\.(doc|docx|xls|xlsx|ppt|pptx|eml|txt|csv|tif|tiff)$/i.test(selected.name);
 
   useEffect(() => {
     setPreview(null);
@@ -86,7 +87,7 @@ export default function AttachmentList({ sourceId, sourceType, attachments, side
       {items.length === 0 && <div className="empty-hint">暂无附件</div>}
       {items.map((item) => <div className="attachment-item" key={item.id}>
         <button className="attachment-open" onClick={() => item.storedName ? setSelected(item) : onToast('原始附件未离线保存，请在微信中查看或重新导入')}>
-          {item.kind === 'image' && item.storedName ? <img className="attachment-thumb" loading="lazy" src={`${API_BASE}/api/files/${encodeURIComponent(item.storedName)}`} alt={item.name} /> : <span className="attachment-ico"><IconFile size={17} /></span>}
+          {item.kind === 'image' && item.storedName && !/\.tiff?$/i.test(item.name) ? <img className="attachment-thumb" loading="lazy" src={`${API_BASE}/api/files/${encodeURIComponent(item.storedName)}`} alt={item.name} /> : <span className="attachment-ico"><IconFile size={17} /></span>}
           <span className="attachment-main"><span className="attachment-name" title={item.name}>{item.name}</span><span className="attachment-label">{item.storedName ? '已离线保存 · 点击预览' : '原始附件未保存'}</span></span>
         </button>
         {item.kind === 'voice' && item.storedName && <button className="btn ghost" disabled={!sidecarOnline || item.transcriptStatus === 'processing' || item.transcriptStatus === 'done'} onClick={() => void transcribe(item)}>{item.transcriptStatus === 'processing' ? '转写中…' : item.transcriptStatus === 'done' ? '已转写' : item.transcriptStatus === 'failed' ? '重试转写' : '转写语音'}</button>}
@@ -96,7 +97,7 @@ export default function AttachmentList({ sourceId, sourceType, attachments, side
     </div>
     <Modal open={!!selected} title={selected?.name || '附件预览'} subtitle="本机离线副本" onClose={() => setSelected(null)} className="attachment-preview">
       <div className="modal-body">
-        {selected?.kind === 'image' && <img className="attachment-preview-image" src={url} alt={selected.name} />}
+        {selected?.kind === 'image' && !tiff && <img className="attachment-preview-image" src={url} alt={selected.name} />}
         {selected?.kind === 'voice' && <audio controls src={url}>当前格式无法播放，请下载后打开。</audio>}
         {selected?.kind === 'video' && <video controls src={url}>当前格式无法播放，请下载后打开。</video>}
         {pdf && !media && <iframe src={url} title={selected?.name} />}

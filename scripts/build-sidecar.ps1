@@ -16,14 +16,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $outDir, $workDir, $specDir | Out-Null
-& $Python -c "import pypdf, docx, openpyxl"
+& $Python -c "import pypdf, docx, openpyxl, pptx, xlrd, olefile, pypdfium2, rapidocr_onnxruntime, onnxruntime"
 if ($LASTEXITCODE -ne 0) {
   throw "Document parsers not installed. Run: $Python -m pip install -r services/ai/requirements.txt"
 }
 $entry = Join-Path $root "services\ai\main.py"
-& $Python -m PyInstaller --noconfirm --clean --onefile --name clienthub-ai `
-  --distpath $outDir --workpath $workDir --specpath $specDir $entry
-if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
+# Prefer the installed VC++ runtime over older copies on PATH (for example Java).
+# Mixing those DLLs can crash ONNX Runtime even when source-mode OCR works.
+$buildOriginalPath = $env:PATH
+try {
+  $env:PATH = "$env:SystemRoot\System32;$buildOriginalPath"
+  & $Python -m PyInstaller --noconfirm --clean --onefile --name clienthub-ai `
+    --collect-all rapidocr_onnxruntime --collect-all onnxruntime --collect-all pypdfium2 --collect-all pypdfium2_raw `
+    --distpath $outDir --workpath $workDir --specpath $specDir $entry
+  if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
+} finally {
+  $env:PATH = $buildOriginalPath
+}
 
 $envFile = Join-Path $root "services\ai\.env"
 $bundledEnv = Join-Path $outDir ".env"

@@ -43,7 +43,9 @@ jobs:
       - name: Build Python sidecar
         shell: pwsh
         run: |
-          pip install pyinstaller -r services/ai/requirements.txt
+          pip install pyinstaller -r services/ai/requirements-dev.txt
+          python -m unittest discover -s services/ai -p "test_*.py"
+          if ($LASTEXITCODE -ne 0) { throw "Sidecar regression tests failed" }
           powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python python
           if (Test-Path "release/ai-sidecar/.env") { throw "Refusing to package services/ai/.env into a release" }
 

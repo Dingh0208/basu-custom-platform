@@ -307,6 +307,23 @@ export interface AppSettings {
   autoProcess: boolean;
   autoUpdate: boolean;
   updateIntervalHours: number;
+  systemNotifications: boolean;
+  quietStart: string;
+  quietEnd: string;
+}
+
+export interface WorkspaceNotification {
+  id: string;
+  todoId: string;
+  title: string;
+  customer: string;
+  project: string;
+  owner: string;
+  dueDate: string;
+  createdAt: string;
+  read: boolean;
+  delivered: boolean;
+  deliver: boolean;
 }
 
 export interface BackupSummary {

@@ -35,6 +35,8 @@ import uuid
 import zipfile
 import sales
 import document_ingest
+import audio_pipeline
+import notifications
 from contextlib import contextmanager
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -290,6 +292,7 @@ def init_db() -> None:
         migrate_ingest(conn)
         # Seed once so the UI has a realistic starting state.
         sales.migrate(conn)
+        notifications.migrate(conn)
         count = conn.execute("SELECT COUNT(*) AS n FROM imports").fetchone()["n"]
         if not existing_database and count == 0:
             seed = [
@@ -1903,6 +1906,9 @@ APP_SETTING_DEFAULTS = {
     "autoProcess": True,
     "autoUpdate": True,
     "updateIntervalHours": 3,
+    "systemNotifications": True,
+    "quietStart": "22:00",
+    "quietEnd": "08:00",
 }
 
 
@@ -1943,7 +1949,7 @@ def get_app_settings() -> dict:
         if f"app.{key}" not in rows:
             continue
         raw = rows[f"app.{key}"]
-        if key in ("autoMatch", "autoProcess", "autoUpdate"):
+        if key in ("autoMatch", "autoProcess", "autoUpdate", "systemNotifications"):
             result[key] = raw.lower() == "true"
         elif key == "updateIntervalHours":
             try:
@@ -1961,7 +1967,13 @@ def save_app_settings(data: dict) -> dict:
         if key not in data:
             continue
         value = data[key]
-        if key in ("autoMatch", "autoProcess", "autoUpdate"):
+        if key in ("quietStart", "quietEnd"):
+            if not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+                raise ValueError("免打扰时间须使用 HH:MM 格式")
+            updates[f"app.{key}"] = value
+        elif key in ("autoMatch", "autoProcess", "autoUpdate", "systemNotifications"):
+            if not isinstance(value, bool):
+                raise ValueError("开关设置须为布尔值")
             updates[f"app.{key}"] = "true" if value else "false"
         elif key == "updateIntervalHours":
             try:
@@ -1995,8 +2007,8 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.6"),
-        "apiRevision": 4,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.7"),
+        "apiRevision": 5,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -2145,8 +2157,8 @@ def test_llm_config(data: dict | None = None) -> dict:
     return {"status": "error", "error": f"模型返回异常：{str(body)[:300]}", "models": []}
 
 
-def maas_request(path: str, payload: dict, timeout: int = 600) -> dict:
-    config = get_llm_config()
+def maas_request(path: str, payload: dict, timeout: int = 600, config: dict | None = None) -> dict:
+    config = config or get_llm_config()
     if not config["apiKey"]:
         raise RuntimeError("聚合大模型 API Key 未配置，请到设置页配置")
     req = urllib.request.Request(
@@ -2163,64 +2175,35 @@ def maas_request(path: str, payload: dict, timeout: int = 600) -> dict:
         raise RuntimeError(f"MAAS HTTP {exc.code}: {body[:500]}") from exc
 
 
-def transcribe_audio(audio_bytes: bytes, mime_type: str) -> str:
+def transcribe_audio(audio_bytes: bytes, mime_type: str, config: dict | None = None) -> str:
     """Call qwen3-asr-flash for one short audio chunk."""
     data_uri = f"data:{mime_type or 'audio/mpeg'};base64,{base64.b64encode(audio_bytes).decode()}"
+    config = config or get_llm_config()
     payload = {
-        "model": get_llm_config()["asrModel"],
+        "model": config["asrModel"],
         "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": data_uri}}]}],
         "stream": False,
         "asr_options": {"language": "zh", "enable_itn": False},
     }
-    result = maas_request("/chat/completions", payload, timeout=600)
+    result = maas_request("/chat/completions", payload, timeout=600, config=config)
     choices = result.get("choices") or []
     if not choices:
         raise RuntimeError(f"ASR returned no choices: {result}")
     return str(choices[0].get("message", {}).get("content") or "").strip()
 
 
-def transcribe_audio_file(path: Path, mime_type: str = "audio/mpeg", progress_cb=None) -> str:
-    """Transcribe an arbitrary-length audio file by splitting into 60s MP3 chunks.
-
-    qwen3-asr-flash rejects very long single requests ("The audio is too long"),
-    so the local sidecar handles segmentation and concatenation transparently.
-    """
-    if not FFMPEG:
-        return transcribe_audio(path.read_bytes(), mime_type)
-
-    work = DATA_DIR / "tmp" / uuid.uuid4().hex
-    work.mkdir(parents=True, exist_ok=True)
-    try:
-        pattern = work / "chunk-%03d.mp3"
-        proc = subprocess.run(
-            [
-                FFMPEG, "-y", "-i", str(path), "-ac", "1", "-ar", "16000",
-                "-b:a", "32k", "-f", "segment", "-segment_time", "60",
-                str(pattern),
-            ],
-            capture_output=True, text=True, timeout=900,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg segment failed: {proc.stderr[-500:]}")
-        chunks = sorted(work.glob("chunk-*.mp3"))
-        if not chunks:
-            raise RuntimeError("ffmpeg produced no audio chunks")
-        texts: list[str] = []
-        for index, chunk in enumerate(chunks, start=1):
-            # Encoders can leave a tiny final fragment; MaaS rejects it as
-            # "audio is empty", so skip only near-empty artifacts.
-            if chunk.stat().st_size < 2000:
-                print(f"[ai-sidecar] chunk {index}/{len(chunks)} skipped (too small)", flush=True)
-                continue
-            text = transcribe_audio(chunk.read_bytes(), "audio/mpeg").strip()
-            if text:
-                texts.append(text)
-            print(f"[ai-sidecar] chunk {index}/{len(chunks)} -> {len(text)} chars", flush=True)
-            if progress_cb:
-                progress_cb(index, len(chunks))
-        return "\n".join(texts)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+def transcribe_audio_file(path: Path, mime_type: str = "audio/mpeg", progress_cb=None,
+                          task_id: str | None = None, chunks_out: list | None = None) -> str:
+    config = get_llm_config()
+    chunks = audio_pipeline.transcribe(
+        path, ffmpeg=FFMPEG, cache_dir=DATA_DIR / "asr-cache",
+        cache_key=config["baseUrl"] + "|" + config["asrModel"],
+        recognize=lambda data: transcribe_audio(data, "audio/mpeg", config),
+        check_active=lambda: ensure_task_active(task_id), progress=progress_cb,
+    )
+    if chunks_out is not None:
+        chunks_out.extend(chunks)
+    return "\n".join(chunk["text"] for chunk in chunks)
 
 
 def summarize_transcript(transcript: str) -> dict:
@@ -2276,7 +2259,8 @@ def process_document(import_id: str, path: Path, task_id: str | None = None) -> 
     try:
         ensure_task_active(task_id)
         set_task_progress(task_id, 15)
-        text, attachments = document_ingest.extract(path)
+        text, attachments = document_ingest.extract(path, check_active=lambda: ensure_task_active(task_id),
+            progress=lambda done, total: set_task_progress(task_id, 15 + int(35 * done / max(1, total))))
         if not text.strip():
             raise ValueError("文档未提取到可读内容")
         ensure_task_active(task_id)
@@ -2293,7 +2277,8 @@ def process_document(import_id: str, path: Path, task_id: str | None = None) -> 
                 return
             transcript_id = f"tr-{import_id}"
             segments = [{"id": f"p{index + 1}", "start": index, "end": index + 1, "speaker": "unknown", "text": text[index * 2000:(index + 1) * 2000]} for index in range((len(text) + 1999) // 2000)]
-            saved_attachments = [{"id": f"{import_id}-source", "name": row["file_name"], "kind": "file", "storedName": path.name, "label": "原始文件"}]
+            source_kind = "image" if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"} else "file"
+            saved_attachments = [{"id": f"{import_id}-source", "name": row["file_name"], "kind": source_kind, "storedName": path.name, "label": "原始文件"}]
             for index, (name, content) in enumerate(attachments):
                 stored_name = f"{import_id}-attachment-{index}{Path(name).suffix.lower()[:12]}"
                 (UPLOAD_DIR / stored_name).write_bytes(content)
@@ -2336,7 +2321,8 @@ def transcribe_saved_voice(source_type: str, source_id: str, attachment_id: str,
         path = (UPLOAD_DIR / Path(stored_name).name).resolve()
         if path.parent != UPLOAD_DIR.resolve() or not path.is_file() or path.stat().st_size > 25 * 1024 * 1024:
             raise ValueError("本地语音文件不存在或超过 25 MB")
-        text = transcribe_audio_file(path, mimetypes.guess_type(path.name)[0] or "audio/amr")
+        text = transcribe_audio_file(path, mimetypes.guess_type(path.name)[0] or "audio/amr",
+            lambda done, total: set_task_progress(task_id, int(90 * done / max(1, total))), task_id=task_id)
         if not text.strip():
             raise ValueError("语音未识别出可读文字，请检查音频后重试")
         ensure_task_active(task_id)
@@ -2374,19 +2360,6 @@ def probe_duration(path: Path) -> float:
     return 0.0
 
 
-def compress_audio(src: Path, dst: Path) -> Path | None:
-    if not FFMPEG:
-        return None
-    try:
-        subprocess.run(
-            [FFMPEG, "-y", "-i", str(src), "-ac", "1", "-ar", "16000", "-b:a", "32k", str(dst)],
-            capture_output=True, text=True, timeout=300,
-        )
-        return dst if dst.exists() and dst.stat().st_size > 0 else None
-    except Exception:
-        return None
-
-
 def split_transcript(text: str, duration: float) -> list[dict]:
     parts = [p.strip() for p in re.split(r"(?<=[。！？!?；;])", text) if p.strip()]
     if not parts:
@@ -2401,8 +2374,8 @@ def split_transcript(text: str, duration: float) -> list[dict]:
         end = round(cursor * 1000)
         segments.append({
             "id": f"s{index + 1:02d}",
-            "start": round(start / 1000),
-            "end": round(end / 1000),
+            "start": round(start / 1000, 2),
+            "end": round(end / 1000, 2),
             "speaker": "unknown",
             "text": part,
         })
@@ -2419,21 +2392,14 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str, task_i
             set_task_progress(task_id, value)
 
         progress(10)
-        chosen = audio_path
-        chosen_mime = mime_type or "audio/mpeg"
-        if FFMPEG and audio_path.suffix.lower() not in (".mp3", ".m4a"):
-            ensure_task_active(task_id)
-            compressed = compress_audio(audio_path, audio_path.with_suffix(".mp3"))
-            if compressed:
-                chosen = compressed
-                chosen_mime = "audio/mpeg"
         progress(25)
 
         def chunk_progress(index: int, total: int) -> None:
             progress(25 + int(25 * index / max(1, total)))
 
         ensure_task_active(task_id)
-        transcript_text = transcribe_audio_file(chosen, chosen_mime, chunk_progress)
+        chunks = []
+        transcript_text = transcribe_audio_file(audio_path, mime_type, chunk_progress, task_id, chunks)
         ensure_task_active(task_id)
         if not transcript_text:
             raise RuntimeError("ASR returned empty text")
@@ -2441,8 +2407,14 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str, task_i
         summary = summarize_transcript(transcript_text)
         ensure_task_active(task_id)
         progress(80)
-        duration = probe_duration(chosen) or 0.0
-        segments = split_transcript(transcript_text, duration)
+        duration = probe_duration(audio_path) or (chunks[-1]["end"] if chunks else 0.0)
+        segments = []
+        for chunk in chunks:
+            for segment in split_transcript(chunk["text"], chunk["end"] - chunk["start"]):
+                segment.update(id=f"s{len(segments) + 1:04d}",
+                    start=round(min(segment["start"] + chunk["start"], chunk["end"]), 2),
+                    end=round(min(segment["end"] + chunk["start"], chunk["end"]), 2))
+                segments.append(segment)
         with db() as conn:
             row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
             if row is None:
@@ -2721,6 +2693,7 @@ def restore_backup_archive(payload: bytes) -> dict:
                 source.backup(target)
                 sales.migrate(target)
                 migrate_ingest(target)
+                notifications.migrate(target)
                 target.commit()
             finally:
                 source.close()
@@ -2783,6 +2756,12 @@ class Handler(BaseHTTPRequestHandler):
             values = query.get(name) or []
             return str(values[0]) if values else default
 
+        if path == "/api/notifications":
+            settings = get_app_settings()
+            with db() as conn:
+                result = notifications.listing(conn, settings)
+            self._json(result)
+            return
         if path == "/api/search":
             with db() as conn:
                 result = sales.search(conn, q("q"))
@@ -2915,8 +2894,8 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.5"),
-                "apiRevision": 4,
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.7"),
+                "apiRevision": 5,
             })
             return
         if path == "/api/diagnostics":
@@ -3016,6 +2995,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         data = self._read_json()
 
+        if path == "/api/notifications":
+            try:
+                with db() as conn:
+                    notifications.refresh(conn)
+                    notifications.mark(conn, data)
+                self._json({"status": "ok"})
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if path == "/api/profile":
             try:
                 self._json(save_profile(data))

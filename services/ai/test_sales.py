@@ -207,6 +207,35 @@ class SalesTests(unittest.TestCase):
             for table in ('imports', 'transcripts', 'requirements', 'todos', 'customer_match_audits'):
                 self.assertEqual(conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0], 0)
 
+    def test_notification_settings_api_and_backup_restore(self):
+        import notifications
+        original = main.get_app_settings()
+        try:
+            self.assertEqual(self.request('/api/settings/app', 'POST', {'quietStart': '25:00'})[0], 400)
+            self.assertEqual(self.request('/api/settings/app', 'POST', {'systemNotifications': 'false'})[0], 400)
+            self.assertEqual(self.request('/api/settings/app', 'POST', {'systemNotifications': True, 'quietStart': '00:00', 'quietEnd': '00:00'})[0], 200)
+            todo = self.todo()
+            with patch.object(notifications, 'datetime') as clock:
+                clock.now.return_value = datetime.now().replace(hour=12)
+                status, result = self.request('/api/notifications')
+                self.assertEqual(status, 200)
+                self.assertEqual(result['unreadCount'], 1)
+                item = result['items'][0]
+                self.assertEqual(item['todoId'], todo['id'])
+                self.assertTrue(item['deliver'])
+                self.assertEqual(self.request('/api/notifications', 'POST', {'action': 'delivered', 'ids': [item['id']]})[0], 200)
+                self.assertEqual(self.request('/api/notifications', 'POST', {'action': 'read', 'all': True})[0], 200)
+                archive, _ = main.create_backup_archive()
+                with main.db() as conn:
+                    conn.execute('DELETE FROM notifications')
+                main.restore_backup_archive(archive)
+                restored = self.request('/api/notifications')[1]
+                self.assertEqual(restored['unreadCount'], 0)
+                self.assertTrue(restored['items'][0]['delivered'])
+                self.assertEqual(self.request('/api/notifications', 'POST', {'action': 'unsupported'})[0], 400)
+        finally:
+            main.save_app_settings(original)
+
     def test_profile_is_validated_and_persistent(self):
         with main.db() as conn:
             conn.execute("DELETE FROM settings WHERE key LIKE 'profile.%'")

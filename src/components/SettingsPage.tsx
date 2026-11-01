@@ -20,7 +20,7 @@ type SettingsPageProps = {
   onToast: (message: string) => void;
 };
 
-type SettingsSectionId = 'llm' | 'import' | 'data' | 'diagnostics' | 'updates' | 'about';
+type SettingsSectionId = 'llm' | 'import' | 'data' | 'diagnostics' | 'updates' | 'notifications' | 'about';
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: string }> = [
   { id: 'llm', label: '大模型', hint: '配置音频、文本和图像分析使用的模型' },
@@ -28,6 +28,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: str
   { id: 'data', label: '数据与备份', hint: '管理本地数据库、附件和备份文件' },
   { id: 'diagnostics', label: '本地诊断', hint: '查看 Sidecar、FFmpeg 和微信引擎状态' },
   { id: 'updates', label: '更新', hint: '控制自动更新检查和检查频率' },
+  { id: 'notifications', label: '通知', hint: '设置待办到期提醒和免打扰时间' },
   { id: 'about', label: '隐私与关于', hint: '查看密钥存储、版本和本地文件说明' },
 ];
 
@@ -39,6 +40,9 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   autoProcess: true,
   autoUpdate: true,
   updateIntervalHours: 3,
+  systemNotifications: true,
+  quietStart: '22:00',
+  quietEnd: '08:00',
 };
 
 function formatBytes(bytes: number) {
@@ -245,7 +249,7 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     const bridge = (window as unknown as { clientHub?: { configureUpdates?: (settings: { enabled: boolean; intervalHours: number }) => Promise<boolean> } }).clientHub;
     await bridge?.configureUpdates?.({ enabled: result.autoUpdate, intervalHours: result.updateIntervalHours });
     setAppBusy(false);
-    setAppMessage('导入与更新设置已保存');
+    setAppMessage('应用设置已保存');
     onToast('应用设置已保存');
   }
 
@@ -334,7 +338,7 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
 
           <section className="card settings-section" id="settings-data" hidden={activeSection !== 'data'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">02</span><div><div className="card-title">数据与备份</div><div className="card-sub">客户、项目、附件和任务都保存在本机</div></div></div></div>
-            <div className="settings-meta-grid settings-meta-grid-wide"><div><span>版本</span><strong>0.2.6</strong></div><div><span>数据库</span><strong>{diagnostics ? formatBytes(diagnostics.databaseSize) : '未读取'}</strong></div><div><span>数据目录</span><strong title={diagnostics?.dataDir}>{diagnostics?.dataDir || '本机用户数据目录'}</strong></div><div><span>备份数量</span><strong>{backups.length} 份</strong></div></div>
+            <div className="settings-meta-grid settings-meta-grid-wide"><div><span>版本</span><strong>0.2.7</strong></div><div><span>数据库</span><strong>{diagnostics ? formatBytes(diagnostics.databaseSize) : '未读取'}</strong></div><div><span>数据目录</span><strong title={diagnostics?.dataDir}>{diagnostics?.dataDir || '本机用户数据目录'}</strong></div><div><span>备份数量</span><strong>{backups.length} 份</strong></div></div>
             <div className="backup-panel"><div className="backup-panel-title">备份与恢复</div><div className="small-note">备份包含业务数据、附件和任务记录，不包含 API Key。恢复前会自动创建一份当前数据备份。</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={exportBackup} disabled={backupBusy !== null}>{backupBusy === 'export' ? '导出中…' : '导出备份'}</button><button className="btn" onClick={() => backupInput.current?.click()} disabled={backupBusy !== null}>{backupBusy === 'restore' ? '恢复中…' : '从备份恢复'}</button><input ref={backupInput} className="file-input-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void importBackup(file); }} /></div>{backups[0] && <div className="settings-last-backup">最近备份：{formatBackupDate(backups[0].createdAt)} · {formatBytes(backups[0].size)}</div>}{backupMessage && <div className="llm-result settings-feedback" aria-live="polite">{backupMessage}</div>}</div>
           </section>
         </main>
@@ -357,8 +361,19 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
             <div className="settings-toggle-row"><div><strong>自动检查更新</strong><span>发现新版本后提醒，下载由你确认</span></div><button className={`switch ${appSettings.autoUpdate ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoUpdate: !current.autoUpdate }))} aria-label="切换自动检查更新" /></div><label className="settings-field-inline">检查频率<select value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((current) => ({ ...current, updateIntervalHours: Number(e.target.value) }))}><option value={1}>每 1 小时</option><option value={3}>每 3 小时</option><option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option></select></label><div className="settings-actions settings-actions-spaced settings-update-actions"><button className="btn" onClick={() => void checkUpdates()} disabled={updatePhase === 'checking' || updatePhase === 'progress'}>立即检查</button>{updatePhase === 'available' && <button className="btn primary" onClick={() => void downloadUpdate()}>下载更新</button>}{updatePhase === 'downloaded' && <button className="btn primary" onClick={() => void installUpdate()}>重启该应用</button>}<button className="btn primary" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存更新设置'}</button></div>{updatePhase === 'progress' && <div className="settings-update-progress"><div><span>下载进度</span><strong>{Math.round(updateProgress)}%</strong></div><div className="version-progress"><span style={{ width: `${Math.min(100, Math.max(0, updateProgress))}%` }} /></div></div>}{updateStatus && <div className="llm-result settings-feedback" aria-live="polite">{updateStatus}</div>}
           </section>
 
+          <section className="card settings-section" id="settings-notifications" hidden={activeSection !== 'notifications'}>
+            <div className="card-head"><div><div className="card-title">待办提醒</div><div className="card-sub">到期日 09:00 提醒；启动应用后补充未送达的到期提醒</div></div></div>
+            <div className="settings-form-stack">
+              <div className="settings-toggle-row"><div><strong>Windows 系统通知</strong><span>应用运行时发送；应用内通知始终保留</span></div><button className={`switch ${appSettings.systemNotifications ? 'on' : ''}`} role="switch" aria-checked={appSettings.systemNotifications} aria-label="Windows 系统通知" onClick={() => setAppSettings((current) => ({ ...current, systemNotifications: !current.systemNotifications }))} /></div>
+              <label>免打扰开始<input type="time" value={appSettings.quietStart} onChange={(e) => setAppSettings((current) => ({ ...current, quietStart: e.target.value }))} /></label>
+              <label>免打扰结束<input type="time" value={appSettings.quietEnd} onChange={(e) => setAppSettings((current) => ({ ...current, quietEnd: e.target.value }))} /></label>
+              <p className="small-note">开始与结束时间相同时关闭免打扰。关闭应用后不发送系统通知。</p>
+              <button className="btn primary settings-save-btn" disabled={appBusy} onClick={() => void saveApplicationSettings()}>{appBusy ? '保存中…' : '保存通知设置'}</button>
+              {appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}
+            </div>
+          </section>
           <section className="card settings-section" id="settings-about" hidden={activeSection !== 'about'}>
-            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">06</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub 0.2.6 · API revision 4</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
+            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">06</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub 0.2.7 · API revision {diagnostics?.apiRevision ?? 5}</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
           </section>
         </aside>
       </div>

@@ -54,6 +54,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
   - 本地服务诊断（Sidecar API 修订、FFmpeg、微信引擎、账号数量、重启服务）；
   - 导入默认值（默认项目、负责人、自动识别和自动处理偏好）；
   - 更新设置（自动检查和频率）；
+  - 通知（Windows 到期提醒开关、免打扰起止时间）；
   - 隐私与关于（DPAPI 密钥存储、版本和本地文件说明）。
 - API Key 可在设置页删除；Windows 使用 DPAPI 加密文件，备份中不包含密钥。
 - 首页工作台：Hero、客户/项目/需求/待归档统计、最近导入、项目阶段分布、最新需求、快捷入口；
@@ -71,6 +72,35 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
 
 ## 3. 当前卡点 / 状态
+
+### 2026-11-01：v0.2.7 发布准备
+
+- 用户已授权将本轮改动推送 GitHub，并构建发布新的 Release。`package.json`、侧栏、设置页和 Sidecar 版本统一为 `0.2.7`。
+- 本版本包含本轮长音频/OCR/通知功能，以及此前尚未推送的设置布局和版本更新弹窗改动。发布说明：`docs/RELEASE-NOTES-v0.2.7.md`。
+- 远端 v0.2.6 的两笔提交与本地对应提交内容相同、SHA 不同；通过正常合并保留双方提交历史，不强制推送。
+- 推送 `v0.2.7` 标签后，由 `.github/workflows/release.yml` 执行回归、Windows Sidecar 构建、NSIS 打包和 Release 资产上传。
+
+### 2026-11-01：长音频、OCR 与系统通知（本轮工作区实现，未发布）
+
+- 用户明确确认继续使用**单机单用户**，不增加账号、团队权限或共享服务器；自动说话人分离不在本轮范围。PRD 原有单用户边界继续生效。
+- 长音频由 `audio_pipeline.py` 使用 FFmpeg segment 切为约 55 秒 MP3，为 Qwen 60 秒限制留编码余量；线程池和全局信号量将 ASR 并发限定为 3。结果按原序合并，保留实际片段起止，句子时间仍是片内估计。ASR 配置在一次转写内固定，避免处理中改模型污染缓存。
+- 成功片段写入 `DATA_DIR/asr-cache`，以模型配置与片段字节 SHA-256 建索引；失败重试和任务恢复时复用，取消后的响应不再保存。429、5xx、超时和连接错误最多尝试 3 次。缓存不进入便携备份，原文件、转写正文及附件仍进入备份。
+- 文档解析新增扫描 PDF 本地 OCR、PNG/JPEG/WebP/BMP/TIFF（含多页）、DOC、XLS、PPT/PPTX。RapidOCR 模型随 Sidecar 打包，PDFium 渲染扫描页；PPTX 提取文本、表格和备注。旧 PPT 根据 Current User、UserEdit 和持久对象索引读取当前幻灯片/备注，过滤旧保存版本及母版。Word 97 以前和加密 Office 文件需先转换/解锁。
+- 普通图片使用文件选择/拖放入口，本地提取原文后进入现有任务、转写、归档、搜索与附件链路；专用“聊天截图”入口继续使用视觉模型。旧 Office/PPT 可预览正文；TIFF 预览提取原文，并提供原文件下载。
+- `notifications.py` 增加持久化到期提醒：09:00 生成、应用内未读数、Windows 通知、默认 22:00–08:00 免打扰。已读与已送达分开保存，同一待办截止日期去重；完成、取消、删除、延期会移除过时提醒。桌面端每 30 秒或窗口聚焦时刷新，积压提醒合并发送；点击单条定位待办，批量通知打开通知列表。应用退出后不驻留发送，重新启动后补提醒。
+- 设置页新增通知分区：系统通知开关、免打扰起止时间；开始等于结束表示关闭免打扰。设置和通知表进入 SQLite 备份，旧库/备份恢复幂等迁移。Sidecar API revision 升为 **5**。
+- 依赖开发环境使用 **Python 3.11–3.12，推荐 3.12**，当前 RapidOCR 1.4 不支持 3.13。`requirements-dev.txt` 增加仅测试使用的 xlwt。发布 CI 先执行全部回归，再打包。
+- 修复实测安装版崩溃：PyInstaller 曾从 PATH 中 Java 目录收集旧版 VC++ DLL，源码 OCR 正常但 exe 在 MSVCP140.dll 崩溃。构建时临时优先 System32，收集一致的已安装运行库；打包加入 RapidOCR 模型、ONNX Runtime 和 PDFium 原生依赖。
+- 验证：47 项隔离回归通过（含真实 FFmpeg 短尾片、并发排序/缓存/取消、真实离线 OCR、旧 Word/PPT 样本、通知/API/备份恢复）。前端构建通过；1280×800 浏览器实测通知定位、设置保存及 PNG/扫描 PDF/DOC/PPT 上传闭环，无页面错误。打包后的 `release/ai-sidecar/clienthub-ai.exe` 实测四类文件均解析成功，大小约 112 MiB；未打完整 NSIS、未发布新版本，未调用真实 Qwen ASR 计费接口。Windows 原生烟测中当前执行环境的 `Notification.isSupported()` 返回 false，已确认回退到应用内提醒且不误标已送达；原生弹窗与点击激活仍需在正常安装后的交互式 Windows 会话验证。
+
+```text
+GET  /api/notifications
+POST /api/notifications {action:"read"|"delivered",ids:[...]}  # read 支持 all:true
+GET/POST /api/settings/app  # systemNotifications, quietStart, quietEnd
+
+python -m pip install -r services/ai/requirements-dev.txt
+python -m unittest discover -s services/ai -p "test_*.py" -v
+```
 
 ### 2026-11-01：设置中心扩展（工作区已实现，未重新发布）
 

@@ -2,6 +2,14 @@ import type { AppSettings, BackupSummary, ChatRecord, CustomerProfile, CustomerP
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
+export function fetchNotifications() {
+  return fetchJson<{ unreadCount: number; items: import('../types').WorkspaceNotification[] }>('/api/notifications', undefined, 5000);
+}
+
+export function markNotifications(action: 'read' | 'delivered', ids: string[], all = false) {
+  return fetchJson<{ status: string }>('/api/notifications', { method: 'POST', body: JSON.stringify({ action, ids, all }) }, 5000);
+}
+
 export async function fetchTodos(customer = '') {
   return fetchJson<import('../types').TodoRecord[]>(`/api/todos?customer=${encodeURIComponent(customer)}`, undefined, 5000);
 }
