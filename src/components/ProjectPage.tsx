@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomerProfile, ProjectListItem } from '../types';
 import { createCustomerProject, deleteCustomerProject, fetchCustomers, fetchProjects, updateCustomerProject } from '../api/client';
 import ProjectModal from './ProjectModal';
 import { IconSearch } from './Icons';
 
 type ProjectPageProps = {
+  initialProject?: string;
   onToast: (message: string) => void;
+  onCustomer: (customer: string) => void;
 };
 
-export default function ProjectPage({ onToast }: ProjectPageProps) {
+export default function ProjectPage({ initialProject, onToast, onCustomer }: ProjectPageProps) {
+  const openedInitial = useRef(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [query, setQuery] = useState('');
@@ -20,10 +23,15 @@ export default function ProjectPage({ onToast }: ProjectPageProps) {
     const [projectData, customerData] = await Promise.all([fetchProjects(), fetchCustomers()]);
     setProjects(projectData ?? []);
     setCustomers(customerData ?? []);
-    if (!newCustomer && customerData?.length) setNewCustomer(customerData[0].name);
+    setNewCustomer((current) => current && customerData?.some((customer) => customer.name === current) ? current : customerData?.[0]?.name ?? '');
   }
 
   useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (!initialProject || openedInitial.current) return;
+    const project = projects.find((item) => item.id === initialProject);
+    if (project) { openedInitial.current = true; setEditingProject(project); setModalOpen(true); }
+  }, [initialProject, projects]);
 
   useEffect(() => {
     const handleFocus = () => { void refresh(); };
@@ -85,7 +93,7 @@ export default function ProjectPage({ onToast }: ProjectPageProps) {
                 {filtered.map((project) => (
                   <tr key={project.id}>
                     <td><strong>{project.name}</strong></td>
-                    <td>{project.customer}<div className="file-cell-sub">{project.customerCompany}</div></td>
+                    <td><button className="requirement-title-btn" onClick={() => onCustomer(project.customer)}>{project.customer}</button><div className="file-cell-sub">{project.customerCompany}</div></td>
                     <td><span className="pill blue">{project.stage}</span></td>
                     <td>{project.budget || '—'}</td>
                     <td>{project.targetLaunchDate || '—'}</td>

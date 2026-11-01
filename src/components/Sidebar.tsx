@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { PersonalProfile } from '../types';
 import {
   IconHome,
   IconUsers,
@@ -8,10 +9,13 @@ import {
   IconCheckSquare,
   IconSparkles,
   IconSettings,
+  IconSearch,
 } from './Icons';
 
 type SidebarProps = {
-  active: 'home' | 'import' | 'customers' | 'projects' | 'settings' | 'other';
+  profile: PersonalProfile;
+  onProfile: () => void;
+  active: 'home' | 'import' | 'inbox' | 'customers' | 'projects' | 'settings' | 'todos' | 'other';
   inboxCount: number;
   onNavigate: (label: string) => void;
 };
@@ -29,11 +33,11 @@ const workItems = [
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
-export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps) {
+export default function Sidebar({ profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
   const [update, setUpdate] = useState<{ status: string; version?: string; percent?: number; transferred?: number; total?: number } | null>(null);
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number; transferred?: number; total?: number }) => void) => void } }).clientHub;
+    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number; transferred?: number; total?: number }) => void) => (() => void) | void } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
     return bridge.onUpdateStatus((payload) => setUpdate(payload));
   }, []);
@@ -60,12 +64,13 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
         </div>
       </div>
       <div className="nav">
+        <button className="nav-item global-search-trigger" onClick={() => onNavigate('全局搜索')}><IconSearch className="icon" />全局搜索<kbd>Ctrl K</kbd></button>
         {mainItems.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.key}
-              className={`nav-item ${isActive(item.key) ? 'active' : ''}`}
+              className={`nav-item ${isActive(item.key) || active === item.key ? 'active' : ''}`}
               onClick={() => onNavigate(item.label)}
             >
               <Icon className="icon" />
@@ -82,7 +87,7 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
         {workItems.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.key} className="nav-item" onClick={() => onNavigate(item.label)}>
+            <button key={item.key} className={`nav-item ${active === 'todos' && item.key === 'tasks' ? 'active' : ''}`} onClick={() => onNavigate(item.label)}>
               <Icon className="icon" />
               {item.label}
             </button>
@@ -108,13 +113,13 @@ export default function Sidebar({ active, inboxCount, onNavigate }: SidebarProps
           {update.status === 'downloaded' && <button className="btn primary update-install-btn" onClick={installUpdate}>重启并安装</button>}
         </div>
       )}
-      <div className="user-card">
-        <div className="avatar">王</div>
+      <button className="user-card" onClick={onProfile} aria-label="编辑个人信息" title="编辑个人信息">
+        <span className="avatar">{profile.name.slice(0, 1)}</span>
         <div>
-          <div className="user-name">王总</div>
-          <div className="user-role">产品负责人 · 本机</div>
+          <div className="user-name">{profile.name}</div>
+          <div className="user-role">{profile.role || '本机用户'} · {profile.company || '本机'}</div>
         </div>
-      </div>
+      </button>
     </aside>
   );
 }

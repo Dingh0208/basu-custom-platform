@@ -1,16 +1,17 @@
 # ClientHub · 客户信息聚合工作台
 
-Sprint 1 可运行原型：**导入中心 → 录音转写 → 七字段 AI 摘要**。
+ClientHub 是本地客户信息聚合工作台：导入沟通资料，归属客户与项目，并从原文建立可追踪的需求和待办。
 
-当前版本包含 **Python Sidecar（本地 HTTP API，标准库零依赖）+ SQLite 持久化 + Mock AI**；接口按 FastAPI 风格设计，后续可无缝切换为 FastAPI。Sidecar 不可用时前端自动回退到内置 Mock 数据。
+当前版本包含 **Python Sidecar + SQLite 持久化 + 可选 MaaS 摘要/转写**。文件解析使用本地 Python 包；Sidecar 不可用时前端会显示内置 Mock 数据。
 
 ## 快速启动
 
-> Sidecar 需要本机安装 Python 3.11+；当前使用标准库，无需 `pip install` 依赖。
+> Sidecar 需要本机安装 Python 3.11+。
 
 ```bash
 # 1. 安装依赖
 pnpm install
+python -m pip install -r services/ai/requirements.txt
 
 # 如果 Electron 没有自动下载二进制（pnpm 忽略 postinstall 时）：
 node node_modules/electron/install.js
@@ -47,6 +48,9 @@ pnpm electron:start
 - 自动识别客户 / 待归档提示；
 - 导入进度轮询、处理流程提示；
 - AI 处理模式切换：阿里云百炼 / Mock。
+- 文本层 PDF、DOCX、XLSX 与 EML 可解析；EML 正文及符合大小限制的附件会本机保存、预览并纳入检索。扫描版 PDF 会提示需要 OCR；旧版 DOC/XLS 与 PPT 暂不提取正文。
+- 最近导入保留至少 360px 高度，左侧内容可滚动查看，AI 任务列表位于导入记录之后。
+- 「待归档」为独立页面，点击未归档资料直接定位；可查看详情、预览已解析内容，批量确认客户、项目与负责人。
 
 ### 2. 转写与摘要
 
@@ -61,7 +65,10 @@ pnpm electron:start
 - “需求”页签：展示需求条目、状态、优先级、来源，可加入项目需求清单；
 - “原文引用”页签：展示原文片段与时间点，点击可定位；
 - 编辑摘要、保存修改、重新生成；
-- 重新处理、导出纪要、添加待办（原型模拟）。
+- 摘要显示原文证据覆盖度。编辑后证据会失效；可按已保存原文重新生成，逐段更正及摘要修改均有本地历史。
+- 通话说话人可逐段人工标注为我方/客户；声纹自动分离未接入当前 ASR 能力。
+- 摘要修改可保存到本地；下一步动作可确认负责人、日期并保存待办，需求可打开对应客户 360 继续跟进；
+- 重新处理、导出纪要（原型模拟）。
 
 ### 3. 客户模块
 
@@ -69,6 +76,7 @@ pnpm electron:start
 - 搜索客户 / 公司 / 职位 / 标签；
 - 客户档案：姓名、公司、职位、手机号、微信号、邮箱、标签、来源渠道、负责人、备注；
 - 新建客户、编辑档案、重复客户合并、客户删除；
+- 删除客户前明确提示：名下项目、需求、销售待办和沟通资料会同步删除；删除后的空库重启不会重新生成演示数据。
 - 客户 360 项目聚合：项目名称、阶段（需求/报价/方案/签约/交付）、预算、目标上线时间、负责人；
 - 项目卡片显示关联通话/聊天/文件数量，并可直接打开关联记录；
 - 支持新建项目、编辑项目、删除项目；
@@ -87,7 +95,7 @@ pnpm electron:start
 - 生成聊天摘要、主题、标签；
 - 提取关键问答、需求、承诺、下一步；
 - 聊天详情页左侧信息、中间气泡时间线、右侧 AI 对话解析；
-- 附件索引：原始截图、图片/语音/文件/链接消息统一列出，图片可预览；
+- 附件索引：原始截图、图片/语音/文件/链接消息统一列出。已保存在本机的图片、语音、视频、PDF、Word、Excel 和邮件可预览/播放或下载；语音可提交队列转写。
 - 已用真实样例 `Martin Zhong / 梧桐` 验证 11 条消息；已用两张微信聊天截图验证 13 条 / 31 条消息的 OCR 与结构化解析。
 
 ### 5. 设置与大模型配置
@@ -98,6 +106,7 @@ pnpm electron:start
 - 可为 ASR（音频转写）、总结（文本/聊天）、视觉（视频/图像 OCR）分别指定模型；
 - 提供跳转 [阿里云百炼](https://bailian.console.aliyun.com/) 的入口；
 - 数据与版本说明：客户记录、导入文件、大模型 Key 只保存在本机。
+- 点击左下角头像可修改姓名、职位、公司、手机号、邮箱，保存后同步显示在侧栏并在本机持久化。
 
 ### 6. 从本地微信聊天库提取
 
@@ -114,6 +123,18 @@ pnpm electron:start
 - 后续与普通聊天导入完全一致：客户匹配、客户 360 时间线、需求抽取。
 - 实现依据：微信 4.x SQLCipher 4 页面解密（PBKDF2-SHA512 256000 轮、AES-256-CBC、HMAC-SHA512、4096 字节页），以及 WCDB `session.db / contact.db / message_*.db` 的会话与消息读取逻辑；参考开源项目 [LifeArchiveProject/WeChatDataAnalysis](https://github.com/LifeArchiveProject/WeChatDataAnalysis)。
 - 逆向与集成细节：[docs/reverse-wechat/ANALYSIS.md](<docs/reverse-wechat/ANALYSIS.md>)。
+
+### 7. 销售工作闭环（P1）
+
+- 「待办」统一管理销售动作，保存客户、项目、关联需求、来源原文、负责人、截止日期与完成状态；可从需求或摘要创建，并返回来源查看。
+- 「待归档」支持批量确认客户、项目和负责人，关联需求与待办同步更新；每批最多 200 条，校验失败整批回滚。
+- 客户 360 展示下一步动作、风险来源、最近沟通、今日到期与逾期提醒；首页增加今日跟进提醒。提醒显示在应用内。
+- 本地服务就绪后自动重新加载跟进数据，加载失败可重试；若提示服务版本较旧，请完整重启 ClientHub。开发模式还需确认 8765 端口未被旧 Sidecar 占用。
+- 点击侧栏「全局搜索」或按 `Ctrl/Cmd+K`，统一检索客户、项目、聊天、转写与需求；支持类型筛选和结果跳转，每类最多显示 20 条。
+- 旧数据库自动补充字段；销售待办与 AI 处理任务分开保存，并随本地备份导出/恢复。负责人为姓名，AI 给出的相对日期需要手动确认。
+- 首页的“核心产品指标”从同一次 `/api/dashboard` 请求返回，默认统计近 7 天；`/api/metrics?days=1..90` 可单独读取窗口数据。每项都返回样本数，暂无可验证样本时显示“—”。客户自动匹配准确率只统计带自动建议、人工确认结果的审计记录，人工归档不会被计入。
+
+验证命令：`python -m unittest discover -s services/ai -p test_sales.py -v`。测试使用临时数据库，详细数据关系与 API 见 [HANDOFF.md](HANDOFF.md)。
 
 ## 项目结构
 
@@ -148,6 +169,10 @@ pnpm electron:start
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
+| GET | `/api/dashboard` | 首页聚合数据与近 7 天核心产品指标 |
+| GET | `/api/metrics?days=7` | 指定窗口的导入、解析、匹配、需求和销售闭环指标 |
+| GET | `/api/profile` | 获取本机个人资料 |
+| POST | `/api/profile` | 保存姓名、职位、公司、手机号、邮箱 |
 | GET | `/api/imports` | 导入记录列表 |
 | POST | `/api/imports` | 创建导入记录；音频自动走真实 ASR + 摘要 |
 | POST | `/api/imports/paste` | 粘贴文本导入（自动识别聊天格式并建聊天记录） |
@@ -221,12 +246,20 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前 `v0.2.5` 安装包约 **287.5 MB**（`v0.2.4` / `v0.2.3` 约 287.5 MB，`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
+当前 `v0.2.6` 本机安装包约 **289.3 MB**（CI 使用的 FFmpeg 版本可能带来少量差异；`v0.2.5` 约 287.5 MB，`v0.2.4` / `v0.2.3` 约 287.5 MB，`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；
 - NSIS 使用 LZMA 压缩；
 - 微信引擎、FFmpeg、Sidecar 仍全部内置，不牺牲功能。
+
+**v0.2.6 更新内容：**
+
+- Sidecar 使用 PID 文件和进程名校验管理，启动和退出时只清理当前 ClientHub 实例；
+- 自动更新定时器在退出时清理，检查失败不会产生未处理错误；
+- 发布构建不再携带本机 `services/ai/.env`，避免 API Key 进入安装包；
+- Windows 微信引擎过滤开发文件、macOS 原生目录和测试夹具；
+- Sidecar 构建统一校验 PDF、Word、Excel 解析依赖，安装器名称自动跟随版本号。
 
 **v0.2.5 更新内容：**
 
@@ -243,7 +276,7 @@ https://github.com/Dingh0208/basu-custom-platform/releases
 - 首页工作台上线（统计、最近导入、项目阶段分布、最新需求、快捷入口）；
 - 设置页精简（移除「通用设置」）与右侧空白布局优化。
 
-完整说明：[v0.2.5 更新内容](<docs/RELEASE-NOTES-v0.2.5.md>) · [v0.2.4 更新内容](<docs/RELEASE-NOTES-v0.2.4.md>)
+完整说明：[v0.2.6 更新内容](<docs/RELEASE-NOTES-v0.2.6.md>) · [v0.2.5 更新内容](<docs/RELEASE-NOTES-v0.2.5.md>) · [v0.2.4 更新内容](<docs/RELEASE-NOTES-v0.2.4.md>)
 
 体积主要来自必须内置的 `wechat-engine`（约 192 MB）和 Electron 运行时（约 180 MB）；如果还需要更小，可以再做“微信引擎首次使用时下载”的 Lite 版本（安装包约 100 MB 级别）。
 
@@ -311,19 +344,18 @@ git push origin v0.2.0
 - **音频导入已接真实链路**：前端上传音频 → Sidecar 内置 `ffmpeg` 压缩/切片 → 聚合 ASR 模型转写 → 文本模型结构化摘要；
 - 安装包已做轻量化：只内置 `ffmpeg.exe`（`ffprobe` 已由 ffmpeg 时长探测替代），Electron 只保留中文/英文语言包；
 - 音频播放仍是模拟进度，不读取真实音频播放；
-- 其他文件类型（PDF/Word/Excel/图片/压缩包）仍走模拟解析；
+- PDF、DOCX、XLSX、EML 已接入文本层解析；扫描 PDF、图片 OCR、旧版 DOC/XLS 和 PPT 仍未接入；
 - 说话人区分尚未实现，真实转写统一标记为“说话人”，后续接 diarization；
 - 长音频已按 60 秒切片，6 分钟对话实测通过；数小时级别音频仍需任务队列与分批调度；
 - 文件 SHA-256 对音频按真实字节计算，其他文件按元数据计算；
 - 客户识别目前是文件名/文本关键词规则，真实手机号/微信号匹配待接入；
 - 微信库提取引擎已内置到 `services/wechat-engine/`，不再依赖用户安装 WeChatDataAnalysis；首次使用需要微信已登录并保持运行以完成密钥获取/解密；
-- 微信图片/语音/视频/文件消息会进入附件索引，实际媒体文件的离线复制与语音转写仍可继续扩展；
+- 微信图片/语音/视频/文件消息会进入附件索引，附件支持本地预览、下载和语音转写任务；自动说话人分离与图片 OCR 仍需扩展；
 - 安装包已接入 GitHub Releases 自动更新，仓库为 `Dingh0208/basu-custom-platform`；
-- 其他文件类型（PDF/Word/Excel/图片/压缩包）仍走模拟解析。
 
 ## 下一步
 
 1. 长音频切片与并发转写（ffmpeg segment + Qwen ASR）；
 2. 说话人分离（ASR diarization 或本地声纹）；
-3. 其他文件类型解析：PDF/Word/Excel/图片 OCR；
-4. 按 PRD Sprint 2 接聊天解析与客户 360。
+3. 扫描 PDF、图片 OCR、旧版 Office 和 PPT 解析；
+4. 按 PRD Sprint 2 继续完善多用户协作与系统通知。

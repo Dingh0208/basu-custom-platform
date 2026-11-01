@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ChatParticipant, ChatRecord } from '../types';
-import { API_BASE, reanalyzeChat, updateChatParticipants } from '../api/client';
+import type { ChatParticipant, ChatRecord, TodoRecord } from '../types';
+import { API_BASE, createCustomerRequirement, fetchChat, reanalyzeChat, updateChatParticipants } from '../api/client';
+import AttachmentList from './AttachmentList';
+import TodoModal from './TodoModal';
 import {
   IconChat,
   IconDownload,
-  IconFile,
-  IconMic,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -19,6 +19,7 @@ type ChatWorkspaceProps = {
   onBack: () => void;
   onToast: (message: string) => void;
   onChatUpdate?: (chat: ChatRecord) => void;
+  onRequirement: (customer: string, id: string) => void;
 };
 
 function roleLabel(role: string) {
@@ -32,7 +33,8 @@ function timeOf(value: string) {
   return parts.length > 1 ? parts[1].slice(0, 5) : value;
 }
 
-export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, onChatUpdate }: ChatWorkspaceProps) {
+export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, onChatUpdate, onRequirement }: ChatWorkspaceProps) {
+  const [todoSeed, setTodoSeed] = useState<Partial<TodoRecord> | null>(null);
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'summary' | 'qa' | 'requirements'>('summary');
   const [participants, setParticipants] = useState<ChatParticipant[]>(record.participants);
@@ -71,6 +73,8 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
       onToast('重新分析请求失败，请检查 Sidecar');
       return;
     }
+    const refreshed = await fetchChat(record.id);
+    if (refreshed) onChatUpdate?.(refreshed);
     onToast('已开始重新分析，完成后刷新即可看到新解析结果');
   }
 
@@ -107,7 +111,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
         <div className="top-actions">
           <button className="btn" onClick={handleReanalyze}><IconRefresh size={15} />重新分析</button>
           <button className="btn" onClick={() => onToast('聊天记录导出已生成（原型模拟）')}><IconDownload size={15} />导出记录</button>
-          <button className="btn primary" onClick={() => onToast(`已添加待办：跟进 ${customerName} 的后续沟通`)}><IconPlus size={15} />添加待办</button>
+          <button className="btn primary" onClick={() => setTodoSeed({ customer: record.customer, project: record.project, sourceType: 'chat', sourceId: record.id, sourceQuote: analysis.summary })}><IconPlus size={15} />添加待办</button>
         </div>
       </header>
 
@@ -146,31 +150,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
           <section className="card">
             <div className="card-head"><div className="card-title">附件索引</div><span className="badge done">{attachments.length}</span></div>
             <div className="card-body">
-              {attachments.length === 0 ? (
-                <div className="empty-hint">暂无图片、语音或文件附件</div>
-              ) : (
-                <div className="attachment-list">
-                  {attachments.map((attachment) => (
-                    <button
-                      className="attachment-item"
-                      key={attachment.id}
-                      onClick={() => attachment.storedName ? window.open(`${API_BASE}/api/files/${encodeURIComponent(attachment.storedName)}`, '_blank') : attachment.externalUrl ? window.open(String(attachment.externalUrl), '_blank') : onToast(`${attachment.label || attachment.name}：原始文件未保留`)}
-                    >
-                      {attachment.kind === 'image' && (attachment.storedName || attachment.externalUrl) ? (
-                        <img className="attachment-thumb" src={attachment.storedName ? `${API_BASE}/api/files/${encodeURIComponent(attachment.storedName)}` : String(attachment.externalUrl)} alt={attachment.name} />
-                      ) : (
-                        <span className="attachment-ico">
-                          {attachment.kind === 'voice' ? <IconMic size={15} /> : attachment.kind === 'file' || attachment.kind === 'video' ? <IconFile size={15} /> : <IconChat size={15} />}
-                        </span>
-                      )}
-                      <span className="attachment-main">
-                        <span className="attachment-name">{attachment.name}</span>
-                        <span className="attachment-label">{attachment.label || attachment.kind}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <AttachmentList sourceId={record.id} sourceType="chat" attachments={attachments} sidecarOnline={sidecarOnline} onToast={onToast} />
             </div>
           </section>
         </aside>
@@ -178,12 +158,13 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
         <section className="chat-center">
           <div className="card chat-card">
             <div className="chat-head">
-              <div><div className="card-title">聊天记录</div><div className="card-sub">{record.messageCount} 条消息 · {record.startedAt} — {record.endedAt}</div></div>
+              <div><div className="card-title">{participants.length > 2 ? '群聊记录' : '聊天记录'} · {participants.length} 位成员</div><div className="card-sub">{record.messageCount} 条消息 · {record.startedAt} — {record.endedAt}</div></div>
               <div className="search-box" style={{ marginLeft: 'auto' }}>
                 <IconSearch size={15} />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索聊天内容" />
               </div>
             </div>
+            {record.corrections?.length ? <details className="evidence-note"><summary>查看 {record.corrections.length} 项成员或角色人工校正</summary>{record.corrections.map((item, index) => <div key={index}><strong>{item.createdAt}</strong><div>修改前：{item.before}</div><div>修改后：{item.after}</div></div>)}</details> : null}
             <div className="chat-body">
               {messages.map((message) => {
                 const role = roleMap[message.sender] ?? 'customer';
@@ -263,7 +244,13 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                     <div className="requirement-item" key={index}>
                       <div className="requirement-title">{req.title}</div>
                       {req.description && <div className="summary-value" style={{ marginTop: 4 }}>{req.description}</div>}
-                      <div className="requirement-meta"><span className="pill amber">{req.priority || 'P1'}</span><span>{req.status || '待确认'}</span></div>
+                       <div className="requirement-meta"><span className="pill amber">{req.priority || 'P1'}</span><span>{req.status || '待确认'}</span><span>{req.evidenceVerified ? '已核对原文' : '建议 · 原文待核对'}</span></div>
+                       {req.evidence && <div className="quote">{req.evidence}</div>}
+                      <button className="btn ghost" onClick={async () => {
+                        const result = await createCustomerRequirement(record.customer, { title: req.title, description: req.description, priority: req.priority, status: req.status, project: record.project, sourceType: 'chat', sourceId: record.id, sourceQuote: req.evidence || '', sourceTime: record.importedAt });
+                        if (result) onRequirement(record.customer, result.id);
+                        else onToast('需求保存失败，请先确认客户归属');
+                      }}>查看并跟进需求</button>
                     </div>
                   ))}
                   {analysis.commitments.map((commitment, index) => (
@@ -276,12 +263,13 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                     <div className="requirement-item" key={`n-${index}`}>
                       <div className="requirement-title">下一步：{action.action}</div>
                       <div className="requirement-meta"><span className="pill">{action.owner || '待定'}</span><span>{action.due || '未约定时间'}</span></div>
+                      <button className="btn ghost" onClick={() => setTodoSeed({ customer: record.customer, project: record.project, title: action.action, owner: action.owner || '', sourceType: 'chat', sourceId: record.id, sourceQuote: action.evidence || action.action })}>确认并创建待办</button>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-            <div className="evidence-note">聊天解析由 qwen3.8-flash 生成 · {record.messageCount} 条消息</div>
+            <div className="evidence-note">{analysis.confidence !== undefined ? `原文证据覆盖 ${Math.round(analysis.confidence * 100)}% · 已核对 ${analysis.evidenceCount || 0} 条` : '历史解析 · 原文证据待核对'} · {record.messageCount} 条消息</div>
           </div>
         </aside>
       </div>
@@ -291,6 +279,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
         <div>客户信息聚合工作台 · Sprint 2</div>
       </footer>
 
+      <TodoModal seed={todoSeed} onClose={() => setTodoSeed(null)} onSaved={() => onToast('待办已保存，可在待办页追踪')} />
       <Modal open={roleEditorOpen} title="调整聊天角色" subtitle="修改后会同步气泡方向、客户名称与 AI 解析中的参与者角色" onClose={() => setRoleEditorOpen(false)}>
         <div className="modal-body">
           <div className="role-editor-list">

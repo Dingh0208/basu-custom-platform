@@ -9,6 +9,7 @@ ClientHub sidecar a small, typed API over it.
 from __future__ import annotations
 
 import atexit
+import mimetypes
 import json
 import os
 import subprocess
@@ -383,6 +384,8 @@ def normalize_messages(
         if render_type in ("image", "emoji", "voice", "video", "file"):
             external_url = (
                 item.get("imageUrl")
+                or item.get("emojiUrl")
+                or item.get("voiceUrl")
                 or item.get("videoUrl")
                 or item.get("videoThumbUrl")
                 or item.get("thumbUrl")
@@ -399,6 +402,37 @@ def normalize_messages(
                 "renderType": render_type,
             })
     return messages, attachments
+
+
+def copy_local_media(attachments: list[dict], upload_dir: Path) -> None:
+    """Persist only media exposed by the managed loopback WeChat backend."""
+    remaining = 200 * 1024 * 1024
+    for attachment in attachments:
+        url = str(attachment.get("externalUrl") or "")
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.port != _BACKEND_PORT or not parsed.path.startswith("/api/chat/media/"):
+            continue
+        try:
+            with urllib.request.urlopen(url, timeout=15) as response:
+                target = urllib.parse.urlparse(response.geturl())
+                if target.hostname != "127.0.0.1" or target.port != _BACKEND_PORT or not target.path.startswith("/api/chat/media/"):
+                    continue
+                if int(response.headers.get("Content-Length") or 0) > min(25 * 1024 * 1024, remaining):
+                    continue
+                content = response.read(min(25 * 1024 * 1024, remaining) + 1)
+                if not content or len(content) > min(25 * 1024 * 1024, remaining):
+                    continue
+                mime = response.headers.get_content_type()
+            extension = mimetypes.guess_extension(mime) or Path(str(attachment.get("name") or "")).suffix.lower()
+            if extension not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".ogg", ".mp4", ".m4a", ".amr", ".silk", ".pdf"):
+                extension = ".bin"
+            stored_name = f"wx-media-{uuid.uuid4().hex}{extension}"
+            (upload_dir / stored_name).write_bytes(content)
+            attachment["storedName"] = stored_name
+            attachment["externalUrl"] = None
+            remaining -= len(content)
+        except (OSError, ValueError, urllib.error.URLError):
+            continue
 
 
 def _account_self_name(account: str) -> str:
@@ -458,14 +492,12 @@ def import_conversation(
     if not messages:
         raise ValueError("当前日期范围/记录类型下没有可导出的消息")
     self_name = _account_self_name(account)
-    participants = [
-        {"name": self_name, "role": "me"},
-        {"name": session_name, "role": "customer"},
-    ]
+    participants = [{"name": sender, "role": "me" if sender == self_name or sender == "我" else "customer"} for sender in dict.fromkeys(message["sender"] for message in messages)]
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     safe_name = "".join(ch for ch in session_name if ch not in r'\/:*?"<>|').strip() or "微信会话"
     file_name = f"微信聊天_{safe_name}_{stamp}.json"
     progress(55, "正在创建聊天记录…")
+    copy_local_media(attachments, main_module.UPLOAD_DIR)
     stored = store_chat_record(
         messages,
         participants,

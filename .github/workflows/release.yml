@@ -43,8 +43,9 @@ jobs:
       - name: Build Python sidecar
         shell: pwsh
         run: |
-          pip install pyinstaller
+          pip install pyinstaller -r services/ai/requirements.txt
           powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python python
+          if (Test-Path "release/ai-sidecar/.env") { throw "Refusing to package services/ai/.env into a release" }
 
       - name: Build and publish NSIS installer
         env:

@@ -108,7 +108,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   }, [open]);
 
   useEffect(() => {
-    if (!open || !status || status.available || prepareJob?.status === 'running') return;
+    if (!open || loading || status?.available || prepareJob?.status === 'running') return;
     let mounted = true;
     const timer = window.setTimeout(async () => {
       if (mounted) await refreshEngine();
@@ -117,7 +117,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       mounted = false;
       window.clearTimeout(timer);
     };
-  }, [open, status?.available, prepareJob?.status]);
+  }, [loading, open, status?.available, prepareJob?.status]);
 
   useEffect(() => {
     if (!open || prepareJob?.status !== 'running') return;

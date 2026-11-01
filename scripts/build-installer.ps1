@@ -31,10 +31,14 @@ foreach ($exe in $packagedExes) {
 }
 
 Write-Host "4/4 Building selectable-path NSIS installer..."
-$nsisDir = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+$nsisDir = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue |
+  Where-Object { Test-Path (Join-Path $_.FullName "Bin\makensis.exe") } |
+  Sort-Object Name -Descending | Select-Object -First 1
 if (-not $nsisDir) { throw "NSIS cache not found; run electron-builder once first" }
 $makensis = Join-Path $nsisDir.FullName "Bin\makensis.exe"
-$installer = Join-Path $root "release\ClientHub Setup 0.1.0.exe"
+$version = (& node -p "require('./package.json').version").Trim()
+if (-not $version) { throw "Unable to read package version" }
+$installer = Join-Path $root "release\ClientHub Setup $version.exe"
 & $makensis "/DAPP_DIR=$root\release\win-unpacked" "/DOUT_FILE=$installer" "/V2" (Join-Path $PSScriptRoot "installer.nsi")
 if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
 
