@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PersonalProfile } from '../types';
 import {
   IconHome,
@@ -41,22 +41,40 @@ const workItems = [
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
+const CURRENT_VERSION = '0.2.6';
+const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
+
 export default function Sidebar({ profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' });
+  const [versionOpen, setVersionOpen] = useState(false);
+  const versionMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: UpdateState) => void) => (() => void) | void } }).clientHub;
+    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: UpdateState) => void) => (() => void) | void; getUpdateState?: () => Promise<UpdateState | null> } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
-    return bridge.onUpdateStatus((payload) => setUpdate(payload));
+    const cleanup = bridge.onUpdateStatus((payload) => setUpdate((current) => ({ ...current, ...payload })));
+    void bridge.getUpdateState?.().then((payload) => { if (payload) setUpdate((current) => ({ ...current, ...payload })); });
+    return cleanup;
   }, []);
 
-  function mb(value?: number) {
-    return value ? `${(value / 1024 / 1024).toFixed(1)} MB` : '';
-  }
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (versionMenuRef.current && !versionMenuRef.current.contains(event.target as Node)) setVersionOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
 
   async function installUpdate() {
     const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
     await bridge?.installUpdate?.();
+  }
+
+  async function downloadUpdate() {
+    const bridge = (window as unknown as { clientHub?: { downloadUpdate?: () => Promise<{ status: string }> } }).clientHub;
+    setUpdate((current) => ({ ...current, status: 'progress', percent: 0 }));
+    const result = await bridge?.downloadUpdate?.();
+    if (!result || result.status === 'error') setUpdate((current) => ({ ...current, status: 'error' }));
   }
 
   async function checkUpdates() {
@@ -71,19 +89,7 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
     else if (result.status === 'error') setUpdate({ status: 'error' });
   }
 
-  const updateTitle = update.status === 'downloaded'
-    ? `新版本 ${update.version || ''} 已就绪`
-    : update.status === 'progress'
-      ? '正在下载更新'
-      : update.status === 'available'
-        ? `发现新版本 ${update.version || ''}`
-        : update.status === 'checking'
-          ? '正在检查更新…'
-          : update.status === 'none'
-            ? '当前已是最新版本'
-            : update.status === 'error'
-              ? '更新检查失败，请重试'
-              : '查看版本与安装状态';
+  const hasUpdate = ['available', 'progress', 'downloaded'].includes(update.status);
 
   const isActive = (key: string) =>
     (active === 'home' && key === 'home') || (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
@@ -95,20 +101,21 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
         <div>
           <div className="brand-name">ClientHub</div>
           <div className="brand-sub">客户情报工作台</div>
-        </div>
-      </div>
-      <div className={`update-indicator update-indicator-global update-status-${update.status}`}>
-        <div className="update-indicator-heading"><strong>更新中心</strong><button className="update-settings-link" onClick={() => onNavigate('设置')}>设置</button></div>
-        <div className="update-indicator-title" aria-live="polite">{updateTitle}</div>
-        {update.status === 'progress' && (
-          <>
-            <div className="update-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div>
-            <div className="update-progress-text">{mb(update.transferred)} / {mb(update.total)}</div>
-          </>
-        )}
-        <div className="update-indicator-actions">
-          {update.status === 'downloaded' && <button className="btn primary update-install-btn" onClick={installUpdate}>重启并安装</button>}
-          {(update.status === 'idle' || update.status === 'none' || update.status === 'error') && <button className="btn update-check-btn" onClick={() => void checkUpdates}>检查更新</button>}
+          <div className="brand-version-wrap" ref={versionMenuRef}>
+            <button className={`brand-version ${hasUpdate ? 'has-update' : ''}`} onClick={() => setVersionOpen((open) => !open)} aria-expanded={versionOpen} aria-haspopup="dialog">v{CURRENT_VERSION}{hasUpdate && <span className="brand-version-dot" />}</button>
+            {versionOpen && (
+              <div className="version-popover" role="dialog" aria-label="应用更新">
+                <div className="version-popover-head"><span>当前版本</span><button className="version-refresh" onClick={() => void checkUpdates()} aria-label="检查更新">↻</button></div>
+                <div className="version-popover-current">v{CURRENT_VERSION}</div>
+                <div className={`version-popover-status ${hasUpdate ? 'has-update' : ''}`}>{hasUpdate && update.version ? `最新版本 v${update.version}` : update.status === 'checking' ? '正在检查更新…' : update.status === 'error' ? '更新检查失败，请重试' : '当前已是最新版本'}</div>
+                {update.status === 'available' && <button className="btn primary version-action" onClick={() => void downloadUpdate()}>下载更新</button>}
+                {update.status === 'progress' && <><div className="version-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div><div className="version-progress-text">正在下载 {Math.round(update.percent || 0)}%</div></>}
+                {update.status === 'downloaded' && <button className="btn primary version-action" onClick={() => void installUpdate()}>重启该应用</button>}
+                {(update.status === 'idle' || update.status === 'none' || update.status === 'error') && <button className="btn version-action" onClick={() => void checkUpdates()}>检查更新</button>}
+                <div className="version-popover-links"><a className="version-history-link" href={RELEASES_URL} target="_blank" rel="noreferrer">查看历史更新 ↗</a><button className="version-settings-link" onClick={() => { setVersionOpen(false); onNavigate('设置'); }}>更新设置</button></div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="nav">

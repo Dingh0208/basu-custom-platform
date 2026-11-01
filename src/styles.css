@@ -564,6 +564,10 @@ button{font-family:inherit}
 .settings-external-link{height:28px;padding:0 8px;font-size:10.5px;text-decoration:none;display:inline-flex;align-items:center;flex:0 0 auto}
 .settings-llm-actions .danger-text{margin-left:auto}
 .settings-feedback{margin-top:10px;padding:7px 9px;border-radius:7px;background:#fafbfc;border:1px solid #eef1f3;color:#475467}
+.settings-update-actions{align-items:center}
+.settings-update-progress{margin-top:12px;padding:9px 10px;border:1px solid #d8ebe8;border-radius:8px;background:#f5fbfa}
+.settings-update-progress>div:first-child{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:10.5px}
+.settings-update-progress strong{color:var(--accent);font-size:11px}
 .settings-actions-spaced{margin-top:12px}
 .settings-meta-grid-wide{grid-template-columns:repeat(4,minmax(0,1fr))}
 .settings-meta-grid-wide strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -684,22 +688,29 @@ button{font-family:inherit}
 .project-workspace .table th{font-size:10px}
 
 /* ---------- Update indicator ---------- */
-.update-indicator{margin:0 12px 8px;padding:10px;border:1px solid #cfe9e6;border-radius:10px;background:#f4fbf9}
-.update-indicator-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}
-.update-indicator-heading strong{font-size:10.5px;color:#344054}
-.update-settings-link{border:0;background:transparent;color:var(--accent);font:inherit;font-size:9.5px;padding:0;cursor:pointer}
-.update-settings-link:hover{text-decoration:underline}
-.update-indicator-title{font-size:10.5px;font-weight:600;color:#0f766e;line-height:1.45;margin-top:4px}
-.update-indicator-actions{display:flex;gap:6px;margin-top:7px}
-.update-check-btn{height:25px!important;padding:0 8px!important;font-size:10px!important}
-.update-progress{height:5px;border-radius:999px;background:#d9eeeb;overflow:hidden;margin-top:7px}
-.update-progress span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .3s}
-.update-progress-text{font-size:9px;color:var(--muted-2);margin-top:3px}
-.update-install-btn{width:100%;height:26px!important;margin-top:7px;font-size:10px!important}
-.update-status-error{border-color:#f3c8c4;background:#fff8f7}
-.update-status-error .update-indicator-title{color:var(--red)}
-.update-status-downloaded{border-color:#a9dfbe;background:#f2fbf5}
-.update-status-downloaded .update-indicator-title{color:var(--green)}
+.brand-version-wrap{position:relative;margin-top:3px;display:inline-flex}
+.brand-version{display:inline-flex;align-items:center;gap:4px;height:19px;padding:0 6px;border:1px solid transparent;border-radius:5px;background:#f2f4f7;color:var(--muted);font:inherit;font-size:9.5px;line-height:1;cursor:pointer}
+.brand-version:hover{border-color:#d0d5dd;background:#eaecf0;color:var(--ink)}
+.brand-version.has-update{border-color:#f5d08a;background:#fff4d6;color:#b54708;font-weight:700}
+.brand-version-dot{width:5px;height:5px;border-radius:50%;background:#98a2b3}
+.brand-version.has-update .brand-version-dot{background:#f79009;box-shadow:0 0 0 2px rgba(247,144,9,.14)}
+.version-popover{position:absolute;z-index:20;top:calc(100% + 9px);left:-5px;width:230px;padding:12px 14px;border:1px solid #dfe4ea;border-radius:10px;background:#fff;box-shadow:0 14px 32px rgba(16,24,40,.16);color:var(--ink)}
+.version-popover:before{content:"";position:absolute;top:-5px;left:17px;width:9px;height:9px;background:#fff;border-left:1px solid #dfe4ea;border-top:1px solid #dfe4ea;transform:rotate(45deg)}
+.version-popover-head{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:10.5px}
+.version-refresh{width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}
+.version-refresh:hover{background:#f2f4f7;color:var(--ink)}
+.version-popover-current{text-align:center;font-size:22px;font-weight:700;letter-spacing:-.03em;margin:11px 0 2px}
+.version-popover-status{text-align:center;color:var(--muted-2);font-size:10px;min-height:16px}
+.version-popover-status.has-update{color:#b54708;font-weight:600}
+.version-action{width:100%;height:30px!important;justify-content:center;margin-top:11px;font-size:11px!important}
+.version-progress{height:6px;border-radius:999px;background:#e8f4f2;overflow:hidden;margin-top:12px}
+.version-progress span{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .3s ease}
+.version-progress-text{text-align:center;color:var(--muted-2);font-size:9.5px;margin-top:5px}
+.version-popover-links{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px}
+.version-history-link,.version-settings-link{color:var(--muted-2);font:inherit;font-size:10px;text-decoration:none}
+.version-history-link:hover{color:var(--accent);text-decoration:underline}
+.version-settings-link{border:0;padding:0;background:transparent;cursor:pointer}
+.version-settings-link:hover{color:var(--accent);text-decoration:underline}
 
 /* ---------- Home dashboard ---------- */
 .home-workspace{padding:16px 18px;display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow:auto}

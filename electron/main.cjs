@@ -9,6 +9,7 @@ let mainWindow = null;
 let sidecarProc = null;
 let updateTimer = null;
 let updateCheck = null;
+let latestUpdateStatus = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -164,7 +165,7 @@ function configureAutoUpdater({ enabled = true, intervalHours = 3 } = {}) {
 
 function setupAutoUpdater() {
   if (isDev) return;
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
   autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
@@ -183,8 +184,9 @@ function setupAutoUpdater() {
 }
 
 function sendUpdateStatus(status, version = '', extra = {}) {
+  latestUpdateStatus = { status, version, ...extra };
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('clienthub:update-status', { status, version, ...extra });
+  mainWindow.webContents.send('clienthub:update-status', latestUpdateStatus);
 }
 
 function createWindow() {
@@ -227,6 +229,18 @@ ipcMain.handle('clienthub:check-updates', async () => {
   try {
     const result = await autoUpdater.checkForUpdates();
     return { status: 'checked', version: result && result.updateInfo && result.updateInfo.version };
+  } catch (error) {
+    return { status: 'error', error: String(error && error.message || error) };
+  }
+});
+
+ipcMain.handle('clienthub:get-update-state', () => latestUpdateStatus);
+
+ipcMain.handle('clienthub:download-update', async () => {
+  if (isDev) return { status: 'dev' };
+  try {
+    await autoUpdater.downloadUpdate();
+    return { status: 'started' };
   } catch (error) {
     return { status: 'error', error: String(error && error.message || error) };
   }

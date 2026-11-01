@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('clientHub', {
     node: process.versions.node,
   },
   checkForUpdates: () => ipcRenderer.invoke('clienthub:check-updates'),
+  getUpdateState: () => ipcRenderer.invoke('clienthub:get-update-state'),
+  downloadUpdate: () => ipcRenderer.invoke('clienthub:download-update'),
   installUpdate: () => ipcRenderer.invoke('clienthub:install-update'),
   configureUpdates: (settings) => ipcRenderer.invoke('clienthub:configure-updates', settings),
   restartSidecar: () => ipcRenderer.invoke('clienthub:restart-sidecar'),

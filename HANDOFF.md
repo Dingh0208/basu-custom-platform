@@ -66,7 +66,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - `services/wechat-engine/**` 使用 **Git LFS**（约 201MB）；
 - `.github/workflows/release.yml`：推送 `v*` tag 自动构建 Windows NSIS 并发布 Release；
 - 工作流使用 `npm`（不要再用 pnpm，GitHub Actions 上 pnpm 报过 `packages field missing or empty`）；
-- `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；侧边栏头像附近显示更新/下载进度和“重启并安装”；
+- `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；左上角版本徽标在有新版本时变黄，弹窗支持检查、下载、进度、重启安装和历史更新；设置页提供同一套更新操作；
 - 当前正式 Release 为 `v0.2.6`，CI 安装包约 **294.2MB**；本机 CPython 3.12 构建包约 **289.3MB**，体积会随 FFmpeg 下载版本略有变化；
 - v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
 
@@ -78,6 +78,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - 新增 `GET /api/diagnostics`，展示 Sidecar API 修订、数据目录、数据库占用、备份数量、FFmpeg、微信引擎和密钥存储方式；打包版支持从设置页重启 Sidecar。
 - API Key 支持从 Windows DPAPI 存储中删除；应用设置支持默认项目、负责人、自动识别、自动处理和更新频率。
 - 设置页会在进入时读取诊断和备份信息，保存更新频率后同步 Electron 的后台检查定时器。
+- 更新检查与下载分离：发现版本后由用户点击“下载更新”，下载完成后点击“重启该应用”完成安装；无更新时左上角只显示当前版本号。
 - 验证：前端构建、Python 编译、Electron 语法检查、34 项 SQLite/API 回归测试和临时数据库设置诊断 smoke test 通过。尚未重新打包 v0.2.7。
 
 ### 2026-10-31：界面与数据一致性修复（工作区已实现，未发布）
