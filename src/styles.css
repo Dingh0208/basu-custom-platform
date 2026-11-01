@@ -684,12 +684,22 @@ button{font-family:inherit}
 .project-workspace .table th{font-size:10px}
 
 /* ---------- Update indicator ---------- */
-.update-indicator{margin:8px 14px 0;padding:9px 10px;border:1px solid #cfe9e6;border-radius:9px;background:#f4fbf9}
-.update-indicator-title{font-size:10.5px;font-weight:600;color:#0f766e;line-height:1.45}
+.update-indicator{margin:0 12px 8px;padding:10px;border:1px solid #cfe9e6;border-radius:10px;background:#f4fbf9}
+.update-indicator-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.update-indicator-heading strong{font-size:10.5px;color:#344054}
+.update-settings-link{border:0;background:transparent;color:var(--accent);font:inherit;font-size:9.5px;padding:0;cursor:pointer}
+.update-settings-link:hover{text-decoration:underline}
+.update-indicator-title{font-size:10.5px;font-weight:600;color:#0f766e;line-height:1.45;margin-top:4px}
+.update-indicator-actions{display:flex;gap:6px;margin-top:7px}
+.update-check-btn{height:25px!important;padding:0 8px!important;font-size:10px!important}
 .update-progress{height:5px;border-radius:999px;background:#d9eeeb;overflow:hidden;margin-top:7px}
 .update-progress span{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .3s}
 .update-progress-text{font-size:9px;color:var(--muted-2);margin-top:3px}
 .update-install-btn{width:100%;height:26px!important;margin-top:7px;font-size:10px!important}
+.update-status-error{border-color:#f3c8c4;background:#fff8f7}
+.update-status-error .update-indicator-title{color:var(--red)}
+.update-status-downloaded{border-color:#a9dfbe;background:#f2fbf5}
+.update-status-downloaded .update-indicator-title{color:var(--green)}
 
 /* ---------- Home dashboard ---------- */
 .home-workspace{padding:16px 18px;display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow:auto}

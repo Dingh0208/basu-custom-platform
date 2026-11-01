@@ -20,6 +20,14 @@ type SidebarProps = {
   onNavigate: (label: string) => void;
 };
 
+type UpdateState = {
+  status: string;
+  version?: string;
+  percent?: number;
+  transferred?: number;
+  total?: number;
+};
+
 const mainItems = [
   { key: 'home', label: '首页', icon: IconHome },
   { key: 'customers', label: '客户', icon: IconUsers },
@@ -34,10 +42,10 @@ const workItems = [
 ];
 
 export default function Sidebar({ profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
-  const [update, setUpdate] = useState<{ status: string; version?: string; percent?: number; transferred?: number; total?: number } | null>(null);
+  const [update, setUpdate] = useState<UpdateState>({ status: 'idle' });
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number; transferred?: number; total?: number }) => void) => (() => void) | void } }).clientHub;
+    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: UpdateState) => void) => (() => void) | void } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
     return bridge.onUpdateStatus((payload) => setUpdate(payload));
   }, []);
@@ -51,6 +59,32 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
     await bridge?.installUpdate?.();
   }
 
+  async function checkUpdates() {
+    const bridge = (window as unknown as { clientHub?: { checkForUpdates?: () => Promise<{ status: string }> } }).clientHub;
+    setUpdate({ status: 'checking' });
+    if (!bridge?.checkForUpdates) {
+      setUpdate({ status: 'error' });
+      return;
+    }
+    const result = await bridge.checkForUpdates();
+    if (result.status === 'dev') setUpdate({ status: 'none' });
+    else if (result.status === 'error') setUpdate({ status: 'error' });
+  }
+
+  const updateTitle = update.status === 'downloaded'
+    ? `新版本 ${update.version || ''} 已就绪`
+    : update.status === 'progress'
+      ? '正在下载更新'
+      : update.status === 'available'
+        ? `发现新版本 ${update.version || ''}`
+        : update.status === 'checking'
+          ? '正在检查更新…'
+          : update.status === 'none'
+            ? '当前已是最新版本'
+            : update.status === 'error'
+              ? '更新检查失败，请重试'
+              : '查看版本与安装状态';
+
   const isActive = (key: string) =>
     (active === 'home' && key === 'home') || (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
 
@@ -61,6 +95,20 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
         <div>
           <div className="brand-name">ClientHub</div>
           <div className="brand-sub">客户情报工作台</div>
+        </div>
+      </div>
+      <div className={`update-indicator update-indicator-global update-status-${update.status}`}>
+        <div className="update-indicator-heading"><strong>更新中心</strong><button className="update-settings-link" onClick={() => onNavigate('设置')}>设置</button></div>
+        <div className="update-indicator-title" aria-live="polite">{updateTitle}</div>
+        {update.status === 'progress' && (
+          <>
+            <div className="update-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div>
+            <div className="update-progress-text">{mb(update.transferred)} / {mb(update.total)}</div>
+          </>
+        )}
+        <div className="update-indicator-actions">
+          {update.status === 'downloaded' && <button className="btn primary update-install-btn" onClick={installUpdate}>重启并安装</button>}
+          {(update.status === 'idle' || update.status === 'none' || update.status === 'error') && <button className="btn update-check-btn" onClick={() => void checkUpdates}>检查更新</button>}
         </div>
       </div>
       <div className="nav">
@@ -99,20 +147,6 @@ export default function Sidebar({ profile, onProfile, active, inboxCount, onNavi
           设置
         </button>
       </div>
-      {update && update.status !== 'none' && update.status !== 'checking' && (
-        <div className="update-indicator">
-          <div className="update-indicator-title">
-            {update.status === 'downloaded' ? `新版本 ${update.version || ''} 已就绪` : update.status === 'progress' ? '正在下载更新' : update.status === 'available' ? `发现新版本 ${update.version || ''}` : '更新检查失败'}
-          </div>
-          {update.status === 'progress' && (
-            <>
-              <div className="update-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div>
-              <div className="update-progress-text">{mb(update.transferred)} / {mb(update.total)}</div>
-            </>
-          )}
-          {update.status === 'downloaded' && <button className="btn primary update-install-btn" onClick={installUpdate}>重启并安装</button>}
-        </div>
-      )}
       <button className="user-card" onClick={onProfile} aria-label="编辑个人信息" title="编辑个人信息">
         <span className="avatar">{profile.name.slice(0, 1)}</span>
         <div>
