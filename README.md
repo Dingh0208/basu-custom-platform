@@ -255,12 +255,20 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前 `v0.2.6` 本机安装包约 **289.3 MB**（CI 使用的 FFmpeg 版本可能带来少量差异；`v0.2.5` 约 287.5 MB，`v0.2.4` / `v0.2.3` 约 287.5 MB，`v0.2.1` 约 322.8 MB），已经做了这些轻量化：
+当前正式版本为 [v0.2.7](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.2.7)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.2.7/ClientHub-Setup-0.2.7.exe)，大小 **393,894,524 字节（约 393.9 MB / 375.6 MiB）**。新增离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发；历史 `v0.2.6` 本机包约 289.3 MB、CI 包约 294.2 MB。已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；
 - NSIS 使用 LZMA 压缩；
 - 微信引擎、FFmpeg、Sidecar 仍全部内置，不牺牲功能。
+
+**v0.2.7 更新内容：**
+
+- 长音频切片、最多 3 个并发 Qwen ASR 请求、片段缓存和重试恢复；
+- 扫描 PDF、图片及多页 TIFF 离线 OCR，DOC/XLS/PPT/PPTX 解析；
+- 通知中心、到期提醒、免打扰与待办定位，保持单机单用户；
+- 设置页布局和版本更新弹窗，修复打包版 OCR 运行库冲突；
+- [发布构建](https://github.com/Dingh0208/basu-custom-platform/actions/runs/41322933804) 与 47 项回归通过，安装器、差分更新文件和 `latest.yml` 已公开发布。
 
 **v0.2.6 更新内容：**
 

@@ -68,19 +68,22 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - `.github/workflows/release.yml`：推送 `v*` tag 自动构建 Windows NSIS 并发布 Release；
 - 工作流使用 `npm`（不要再用 pnpm，GitHub Actions 上 pnpm 报过 `packages field missing or empty`）；
 - `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；左上角版本徽标在有新版本时变黄，弹窗支持检查、下载、进度、重启安装和历史更新；设置页提供同一套更新操作；
-- 当前正式 Release 为 `v0.2.6`，CI 安装包约 **294.2MB**；本机 CPython 3.12 构建包约 **289.3MB**，体积会随 FFmpeg 下载版本略有变化；
-- v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
+- 当前正式 Release 为 [`v0.2.7`](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.2.7)，已设为最新版；CI 安装包 **393,894,524 字节（约 393.9 MB / 375.6 MiB）**，新增离线 OCR 模型与原生解析依赖随包分发；
+- v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.6 / v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
 
 ## 3. 当前卡点 / 状态
 
-### 2026-11-01：v0.2.7 发布准备
+### 2026-11-01：v0.2.7 已发布
 
 - 用户已授权将本轮改动推送 GitHub，并构建发布新的 Release。`package.json`、侧栏、设置页和 Sidecar 版本统一为 `0.2.7`。
 - 本版本包含本轮长音频/OCR/通知功能，以及此前尚未推送的设置布局和版本更新弹窗改动。发布说明：`docs/RELEASE-NOTES-v0.2.7.md`。
 - 远端 v0.2.6 的两笔提交与本地对应提交内容相同、SHA 不同；通过正常合并保留双方提交历史，不强制推送。
-- 推送 `v0.2.7` 标签后，由 `.github/workflows/release.yml` 执行回归、Windows Sidecar 构建、NSIS 打包和 Release 资产上传。
+- `main` 和 `v0.2.7` 标签已推送；发布标签指向 `01cf75c1ce39626b9ac7bb9458c875696a3ed6c5`，后续发布记录作为文档提交更新，不移动标签。
+- [GitHub Actions 构建](https://github.com/Dingh0208/basu-custom-platform/actions/runs/41322933804) 成功：47 项回归、前端构建、Windows Sidecar 构建、NSIS 打包和资产上传全部通过。
+- Release 已正式公开并设为最新版，包含 `ClientHub-Setup-0.2.7.exe`、`.exe.blockmap` 和 `latest.yml`；更新元数据中的版本、文件名和安装器大小一致。
+- 安装器 SHA-256：`e85987a9321a03fcaf1616a1c27ce1771ecb1c46be855c8d371930be86ef4d0b`。
 
-### 2026-11-01：长音频、OCR 与系统通知（本轮工作区实现，未发布）
+### 2026-11-01：长音频、OCR 与系统通知（已随 v0.2.7 发布）
 
 - 用户明确确认继续使用**单机单用户**，不增加账号、团队权限或共享服务器；自动说话人分离不在本轮范围。PRD 原有单用户边界继续生效。
 - 长音频由 `audio_pipeline.py` 使用 FFmpeg segment 切为约 55 秒 MP3，为 Qwen 60 秒限制留编码余量；线程池和全局信号量将 ASR 并发限定为 3。结果按原序合并，保留实际片段起止，句子时间仍是片内估计。ASR 配置在一次转写内固定，避免处理中改模型污染缓存。
@@ -91,7 +94,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - 设置页新增通知分区：系统通知开关、免打扰起止时间；开始等于结束表示关闭免打扰。设置和通知表进入 SQLite 备份，旧库/备份恢复幂等迁移。Sidecar API revision 升为 **5**。
 - 依赖开发环境使用 **Python 3.11–3.12，推荐 3.12**，当前 RapidOCR 1.4 不支持 3.13。`requirements-dev.txt` 增加仅测试使用的 xlwt。发布 CI 先执行全部回归，再打包。
 - 修复实测安装版崩溃：PyInstaller 曾从 PATH 中 Java 目录收集旧版 VC++ DLL，源码 OCR 正常但 exe 在 MSVCP140.dll 崩溃。构建时临时优先 System32，收集一致的已安装运行库；打包加入 RapidOCR 模型、ONNX Runtime 和 PDFium 原生依赖。
-- 验证：47 项隔离回归通过（含真实 FFmpeg 短尾片、并发排序/缓存/取消、真实离线 OCR、旧 Word/PPT 样本、通知/API/备份恢复）。前端构建通过；1280×800 浏览器实测通知定位、设置保存及 PNG/扫描 PDF/DOC/PPT 上传闭环，无页面错误。打包后的 `release/ai-sidecar/clienthub-ai.exe` 实测四类文件均解析成功，大小约 112 MiB；未打完整 NSIS、未发布新版本，未调用真实 Qwen ASR 计费接口。Windows 原生烟测中当前执行环境的 `Notification.isSupported()` 返回 false，已确认回退到应用内提醒且不误标已送达；原生弹窗与点击激活仍需在正常安装后的交互式 Windows 会话验证。
+- 验证：47 项隔离回归通过（含真实 FFmpeg 短尾片、并发排序/缓存/取消、真实离线 OCR、旧 Word/PPT 样本、通知/API/备份恢复）。前端构建通过；1280×800 浏览器实测通知定位、设置保存及 PNG/扫描 PDF/DOC/PPT 上传闭环，无页面错误。打包后的 `release/ai-sidecar/clienthub-ai.exe` 实测四类文件均解析成功，大小约 112 MiB；完整 NSIS 已由 CI 构建并发布，未调用真实 Qwen ASR 计费接口。Windows 原生烟测中当前执行环境的 `Notification.isSupported()` 返回 false，已确认回退到应用内提醒且不误标已送达；原生弹窗与点击激活仍需在正常安装后的交互式 Windows 会话验证。
 
 ```text
 GET  /api/notifications
@@ -102,14 +105,14 @@ python -m pip install -r services/ai/requirements-dev.txt
 python -m unittest discover -s services/ai -p "test_*.py" -v
 ```
 
-### 2026-11-01：设置中心扩展（工作区已实现，未重新发布）
+### 2026-11-01：设置中心扩展（已随 v0.2.7 发布）
 
 - 设置页拆为大模型、数据与备份、本地服务诊断、导入默认值、更新设置、隐私与关于六个分区。
 - 新增 `GET /api/diagnostics`，展示 Sidecar API 修订、数据目录、数据库占用、备份数量、FFmpeg、微信引擎和密钥存储方式；打包版支持从设置页重启 Sidecar。
 - API Key 支持从 Windows DPAPI 存储中删除；应用设置支持默认项目、负责人、自动识别、自动处理和更新频率。
 - 设置页会在进入时读取诊断和备份信息，保存更新频率后同步 Electron 的后台检查定时器。
 - 更新检查与下载分离：发现版本后由用户点击“下载更新”，下载完成后点击“重启该应用”完成安装；无更新时左上角只显示当前版本号。
-- 验证：前端构建、Python 编译、Electron 语法检查、34 项 SQLite/API 回归测试和临时数据库设置诊断 smoke test 通过。尚未重新打包 v0.2.7。
+- 验证：前端构建、Python 编译、Electron 语法检查、34 项 SQLite/API 回归测试和临时数据库设置诊断 smoke test 通过；v0.2.7 发布时扩展至 47 项回归并通过 CI 打包。
 
 ### 2026-10-31：界面与数据一致性修复（工作区已实现，未发布）
 
