@@ -1,6 +1,6 @@
 {
   "name": "clienthub",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
   "main": "electron/main.cjs",
@@ -49,7 +49,14 @@
     "extraResources": [
       {
         "from": "services/wechat-engine",
-        "to": "wechat-engine"
+        "to": "wechat-engine",
+        "filter": [
+          "**/*",
+          "!README.md",
+          "!native/__init__.py",
+          "!native/macos/**",
+          "!native/weflow_wasm/sns_image_fixture.json"
+        ]
       },
       {
         "from": "services/ffmpeg",

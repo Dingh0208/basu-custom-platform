@@ -7,6 +7,7 @@ const { autoUpdater } = require('electron-updater');
 const isDev = !app.isPackaged;
 let mainWindow = null;
 let sidecarProc = null;
+let updateTimer = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -36,15 +37,61 @@ function killProcessTree(pid) {
   }
 }
 
+function sidecarPidPath() {
+  return path.join(app.getPath('userData'), 'clienthub-ai.pid');
+}
+
+function readSidecarPid() {
+  try {
+    const pid = Number(fs.readFileSync(sidecarPidPath(), 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function removeSidecarPid(expectedPid = null) {
+  try {
+    const current = readSidecarPid();
+    if (expectedPid === null || current === expectedPid) fs.rmSync(sidecarPidPath(), { force: true });
+  } catch {
+    // The user data directory may be unavailable during shutdown.
+  }
+}
+
+function portListenerPid(port) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const output = execFileSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8', windowsHide: true });
+    const line = output.split(/\r?\n/).find((entry) => entry.includes(`:${port}`) && entry.includes('LISTENING'));
+    const pid = Number(line && line.trim().split(/\s+/).pop());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isClientHubSidecar(pid) {
+  if (process.platform !== 'win32' || !pid) return false;
+  try {
+    const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+    return output.toLowerCase().includes('clienthub-ai.exe');
+  } catch {
+    return false;
+  }
+}
+
 function killStaleSidecars() {
   if (process.platform !== 'win32') return;
-  // A previous ClientHub run may have left a PyInstaller one-file sidecar
-  // behind (its bootloader child is not always reaped by kill()). Clear it
-  // before binding port 8765 so the new app never talks to old code.
-  try {
-    execFileSync('taskkill', ['/IM', 'clienthub-ai.exe', '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  } catch {
-    // No stale sidecar.
+  // Prefer the PID recorded by this installation. The port fallback handles
+  // old builds that did not write a PID file, but only when the listener is
+  // actually ClientHub's sidecar.
+  const recordedPid = readSidecarPid();
+  if (recordedPid) killProcessTree(recordedPid);
+  removeSidecarPid(recordedPid);
+  const listenerPid = portListenerPid(8765);
+  if (listenerPid && listenerPid !== process.pid && isClientHubSidecar(listenerPid)) {
+    killProcessTree(listenerPid);
   }
 }
 
@@ -73,13 +120,35 @@ function startPackagedSidecar() {
       WECHAT_DATA_ANALYSIS_PORT: '10393',
     },
   });
-  sidecarProc.on('exit', () => { sidecarProc = null; });
+  try {
+    fs.mkdirSync(path.dirname(sidecarPidPath()), { recursive: true });
+    fs.writeFileSync(sidecarPidPath(), String(sidecarProc.pid), 'utf8');
+  } catch {
+    // The sidecar remains usable if the PID file cannot be written.
+  }
+  const spawned = sidecarProc;
+  spawned.on('error', () => {
+    removeSidecarPid(spawned.pid);
+    if (sidecarProc === spawned) sidecarProc = null;
+  });
+  spawned.on('exit', () => {
+    removeSidecarPid(spawned.pid);
+    if (sidecarProc === spawned) sidecarProc = null;
+  });
 }
 
 function stopPackagedSidecar() {
   const proc = sidecarProc;
   sidecarProc = null;
   if (proc) killProcessTree(proc.pid);
+  removeSidecarPid(proc ? proc.pid : null);
+}
+
+function stopAutoUpdaterTimer() {
+  if (updateTimer) {
+    clearInterval(updateTimer);
+    updateTimer = null;
+  }
 }
 
 function setupAutoUpdater() {
@@ -96,9 +165,11 @@ function setupAutoUpdater() {
   }));
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
   autoUpdater.on('error', (err) => sendUpdateStatus('error', String(err && err.message || err)));
-  autoUpdater.checkForUpdatesAndNotify();
+  const check = () => autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  check();
   // Requirement: background update check every three hours.
-  setInterval(() => autoUpdater.checkForUpdatesAndNotify(), 3 * 60 * 60 * 1000);
+  updateTimer = setInterval(check, 3 * 60 * 60 * 1000);
+  updateTimer.unref?.();
 }
 
 function sendUpdateStatus(status, version = '', extra = {}) {
@@ -168,10 +239,12 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  stopAutoUpdaterTimer();
   stopPackagedSidecar();
 });
 
 app.on('will-quit', () => {
+  stopAutoUpdaterTimer();
   stopPackagedSidecar();
 });
 

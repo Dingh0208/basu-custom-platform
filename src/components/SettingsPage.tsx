@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LlmConfig, LlmModelsResult } from '../types';
-import { fetchLlmConfig, pullLlmModels, saveLlmConfig, testLlmConfig } from '../api/client';
+import { downloadBackup, fetchLlmConfig, pullLlmModels, restoreBackup, saveLlmConfig, testLlmConfig } from '../api/client';
 
 type SettingsPageProps = {
   onToast: (message: string) => void;
@@ -20,9 +20,12 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
   const [busy, setBusy] = useState<'test' | 'pull' | 'save' | 'app' | null>(null);
   const [message, setMessage] = useState<string>('');
   const [updateStatus, setUpdateStatus] = useState<string>('');
+  const [backupBusy, setBackupBusy] = useState<'export' | 'restore' | null>(null);
+  const [backupMessage, setBackupMessage] = useState('');
+  const backupInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string }) => void) => void } }).clientHub;
+    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string }) => void) => (() => void) | void } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
     return bridge.onUpdateStatus((payload) => {
       if (payload.status === 'checking') setUpdateStatus('正在检查更新…');
@@ -106,6 +109,55 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     setMessage('保存成功，新的分析任务将使用该配置');
   }
 
+  async function exportBackup() {
+    setBackupBusy('export');
+    setBackupMessage('');
+    const blob = await downloadBackup();
+    if (!blob) {
+      setBackupBusy(null);
+      setBackupMessage('备份导出失败，请确认 Sidecar 已连接');
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `clienthub-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setBackupBusy(null);
+    setBackupMessage('备份已导出，并保存在本机数据目录');
+  }
+
+  function readFileAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const value = String(reader.result || '');
+        resolve(value.includes(',') ? value.split(',', 2)[1] : value);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function importBackup(file: File) {
+    setBackupBusy('restore');
+    setBackupMessage('正在校验并恢复备份…');
+    try {
+      const result = await restoreBackup(await readFileAsBase64(file));
+      if (!result) {
+        setBackupMessage('备份恢复失败，请确认文件有效且没有任务正在处理');
+        setBackupBusy(null);
+        return;
+      }
+      setBackupMessage('恢复成功，正在刷新本地数据…');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch {
+      setBackupMessage('备份文件读取失败');
+      setBackupBusy(null);
+    }
+  }
+
   function modelInput(value: string, setter: (v: string) => void, placeholder: string, listId: string) {
     return (
       <>
@@ -171,6 +223,16 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
           <div className="settings-actions" style={{ marginTop: 12 }}>
             <button className="btn" onClick={checkUpdates}>检查更新</button>
             {updateStatus && <span className="llm-result" style={{ marginTop: 0 }}>{updateStatus}</span>}
+          </div>
+          <div className="backup-panel">
+            <div className="backup-panel-title">本地备份</div>
+            <div className="small-note">包含客户、项目、需求、转写、聊天和附件；API Key 使用系统加密存储，不写入备份文件。</div>
+            <div className="settings-actions" style={{ marginTop: 9 }}>
+              <button className="btn" onClick={exportBackup} disabled={backupBusy !== null}>{backupBusy === 'export' ? '导出中…' : '导出备份'}</button>
+              <button className="btn" onClick={() => backupInput.current?.click()} disabled={backupBusy !== null}>{backupBusy === 'restore' ? '恢复中…' : '从备份恢复'}</button>
+              <input ref={backupInput} className="file-input-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void importBackup(file); }} />
+            </div>
+            {backupMessage && <div className="llm-result">{backupMessage}</div>}
           </div>
         </section>
       </div>

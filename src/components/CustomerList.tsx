@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, RequirementItemRecord } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CustomerProfile, CustomerProject, CustomerTimelineEntry, ImportRecord, RequirementItemRecord, TodoRecord } from '../types';
 import {
   createCustomer,
   createCustomerProject,
@@ -22,8 +22,14 @@ import CustomerProfileModal from './CustomerProfileModal';
 import ProjectModal from './ProjectModal';
 import RequirementModal from './RequirementModal';
 import Modal from './Modal';
+import TodoWorkspace from './TodoWorkspace';
+import TodoModal from './TodoModal';
 
 type CustomerListProps = {
+  online: boolean;
+  initialCustomer?: string;
+  initialRequirement?: string;
+  onSource: (id: string) => void;
   imports: ImportRecord[];
   onOpenRecord: (record: ImportRecord) => void;
   onToast: (message: string) => void;
@@ -59,9 +65,12 @@ function fallbackProfiles(imports: ImportRecord[]): CustomerProfile[] {
   return Array.from(map.values()).sort((a, b) => b.recordCount - a.recordCount);
 }
 
-export default function CustomerList({ imports, onOpenRecord, onToast, onRefreshImports }: CustomerListProps) {
+export default function CustomerList({ online, initialCustomer, initialRequirement, onSource, imports, onOpenRecord, onToast, onRefreshImports }: CustomerListProps) {
   const [query, setQuery] = useState('');
-  const [selectedName, setSelectedName] = useState<string | null>(() => new URLSearchParams(window.location.search).get('customer'));
+  const [selectedName, setSelectedName] = useState<string | null>(initialCustomer || null);
+  const openedRequirement = useRef(false);
+  const [todoSeed, setTodoSeed] = useState<Partial<TodoRecord> | null>(null);
+  const [followupRevision, setFollowupRevision] = useState(0);
   const [customers, setCustomers] = useState<CustomerProfile[]>(() => fallbackProfiles(imports));
   const [timeline, setTimeline] = useState<CustomerTimelineEntry[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -106,6 +115,12 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
   const selectedRecords = selected ? imports.filter((record) => record.customer === selected.name) : [];
 
   useEffect(() => {
+    if (!initialRequirement || openedRequirement.current) return;
+    const requirement = requirements.find((r) => r.id === initialRequirement);
+    if (requirement) { openedRequirement.current = true; setEditingRequirement(requirement); setRequirementOpen(true); }
+  }, [initialRequirement, requirements]);
+
+  useEffect(() => {
     if (!selected) {
       setTimeline([]);
       return;
@@ -135,7 +150,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
       setTimelineLoading(false);
     });
     return () => { mounted = false; };
-  }, [selected?.name]);
+  }, [selected?.name, imports]);
 
   useEffect(() => {
     if (!selected) {
@@ -196,6 +211,8 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
       return false;
     }
     await refreshProjects();
+    await refreshRequirements();
+    setFollowupRevision((v) => v + 1);
     onToast(editingProject ? '项目已更新' : '项目已创建');
     return true;
   }
@@ -208,6 +225,8 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
       return;
     }
     await refreshProjects();
+    await refreshRequirements();
+    setFollowupRevision((v) => v + 1);
     onToast('项目已删除，关联记录保留在客户时间线');
   }
 
@@ -228,6 +247,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     }
     await refreshRequirements();
     await refreshProjects();
+    setFollowupRevision((v) => v + 1);
     onToast(editingRequirement ? '需求已更新' : '需求已创建');
     return true;
   }
@@ -242,6 +262,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     await refreshRequirements();
     await refreshProjects();
     onToast('需求已删除');
+    setFollowupRevision((v) => v + 1);
   }
 
   async function mergeSelectedRequirements() {
@@ -249,12 +270,13 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     const [targetId, ...sourceIds] = selectedRequirementIds;
     const result = await mergeCustomerRequirements(targetId, sourceIds);
     if (!result) {
-      onToast('需求合并失败');
+      onToast('需求合并失败，请只选择同一项目下的需求');
       return;
     }
     setSelectedRequirementIds([]);
     await refreshRequirements();
     await refreshProjects();
+    setFollowupRevision((v) => v + 1);
     onToast('已合并所选需求');
   }
 
@@ -308,7 +330,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
     setSelectedName(null);
     await refreshCustomers();
     await onRefreshImports();
-    onToast(`已删除「${selected.name}」及 ${result.records} 条记录`);
+    onToast(`已删除「${selected.name}」、${result.projects} 个关联项目及 ${result.records} 条记录`);
   }
 
   const callCount = timeline.filter((entry) => entry.kind === 'audio').length;
@@ -401,6 +423,11 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
                 <div><span>负责人</span><strong>{selected.owner || '—'}</strong></div>
                 {selected.notes && <div className="customer-notes"><span>备注</span><strong>{selected.notes}</strong></div>}
               </div>
+              <TodoWorkspace key={selected.name} online={online} customer={selected.name} revision={followupRevision} onSource={onSource} onRequirement={(_customer, id) => {
+                const req = requirements.find((r) => r.id === id);
+                if (req) { setEditingRequirement(req); setRequirementOpen(true); }
+                else onToast('关联需求已不存在，请刷新后重试');
+              }} />
               <div className="customer-side-section">
                 <div className="customer-side-label project-section-label">
                   <span>项目</span>
@@ -476,10 +503,16 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
                         {requirement.description && <div className="requirement-description">{requirement.description}</div>}
                         <div className="requirement-meta">
                           <span>{requirement.project}</span>
+                          <span>负责人：{requirement.owner || '待确认'}</span>
+                          <span>截止：{requirement.dueDate || '待确认'}</span>
                           <span>{requirement.sourceType === 'audio' ? '通话' : requirement.sourceType === 'chat' ? '聊天' : requirement.sourceType === 'email' ? '邮件' : '手动'}</span>
                           {requirement.sourceTime && <span>{requirement.sourceTime}</span>}
                         </div>
                         {requirement.sourceQuote && <div className="requirement-quote">原文：{requirement.sourceQuote}</div>}
+                        <div className="sales-row-actions">
+                          {requirement.sourceId && <button className="btn ghost" onClick={() => onSource(requirement.sourceId)}>查看来源摘要</button>}
+                          <button className="btn ghost" onClick={() => setTodoSeed({ customer: requirement.customer, project: requirement.project, requirementId: requirement.id, title: requirement.title, owner: requirement.owner, dueDate: requirement.dueDate, sourceId: requirement.sourceId, sourceType: requirement.sourceType, sourceQuote: requirement.sourceQuote })}>创建关联待办</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -554,6 +587,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
         onSave={saveRequirement}
         onDelete={editingRequirement ? removeRequirement : undefined}
       />
+      <TodoModal seed={todoSeed} onClose={() => setTodoSeed(null)} onSaved={() => { setFollowupRevision((v) => v + 1); onToast('待办已保存，可在下一步提醒与待办页追踪'); }} />
 
       <Modal open={mergeOpen} title="合并客户" subtitle="合并后源客户的所有沟通记录会迁移到目标客户" onClose={() => setMergeOpen(false)}>
         <div className="modal-body">
@@ -577,7 +611,7 @@ export default function CustomerList({ imports, onOpenRecord, onToast, onRefresh
       <Modal open={deleteOpen} title="删除客户" subtitle="此操作不可撤销" onClose={() => setDeleteOpen(false)}>
         <div className="modal-body">
           <div className="customer-merge-source">确定删除客户：<strong>{selected?.name}</strong>？</div>
-          <div className="small-note" style={{ marginTop: 10 }}>会同时删除该客户名下的所有导入记录、聊天记录和转写稿。若只是重复客户，请优先使用“合并客户”。</div>
+          <div className="small-note" style={{ marginTop: 10 }}>会同时删除该客户名下的全部项目、需求、销售待办、导入记录、聊天记录和转写稿，关联项目也会从项目列表中消失。若只是重复客户，请优先使用“合并客户”。</div>
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={() => setDeleteOpen(false)}>取消</button>

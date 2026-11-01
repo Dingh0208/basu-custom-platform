@@ -16,7 +16,7 @@ const priorities = ['P0', 'P1', 'P2'];
 const statuses = ['待确认', '已确认', '已报价', '已实现'];
 
 export default function RequirementModal({ open, customerName, projects, requirement, onClose, onSave, onDelete }: RequirementModalProps) {
-  const [form, setForm] = useState({ title: '', description: '', priority: 'P1', status: '待确认', project: '—' });
+  const [form, setForm] = useState({ title: '', description: '', priority: 'P1', status: '待确认', project: '—', owner: '', dueDate: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -27,6 +27,8 @@ export default function RequirementModal({ open, customerName, projects, require
       priority: requirement?.priority || 'P1',
       status: requirement?.status || '待确认',
       project: requirement?.project || '—',
+      owner: requirement?.owner || '',
+      dueDate: requirement?.dueDate || '',
     });
   }, [open, requirement?.id]);
 
@@ -43,6 +45,8 @@ export default function RequirementModal({ open, customerName, projects, require
       priority: form.priority,
       status: form.status,
       project: form.project,
+      owner: form.owner.trim(),
+      dueDate: form.dueDate,
     });
     setSaving(false);
     if (ok) onClose();
@@ -66,11 +70,13 @@ export default function RequirementModal({ open, customerName, projects, require
           </select></label>
           <label>优先级<select value={form.priority} onChange={(e) => set('priority', e.target.value)}>{priorities.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
           <label>状态<select value={form.status} onChange={(e) => set('status', e.target.value)}>{statuses.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>负责人<input value={form.owner} onChange={(e) => set('owner', e.target.value)} placeholder="负责需求跟进的人" /></label>
+          <label>截止时间<input type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} /></label>
         </div>
         <label className="customer-form-wide">需求描述<textarea value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="需求目标、范围、验收标准……" /></label>
         {requirement && (
           <div className="requirement-source">
-            <div><span>来源</span><strong>{requirement.sourceType === 'audio' ? '通话摘要' : requirement.sourceType === 'chat' ? '聊天解析' : requirement.sourceType === 'email' ? '邮件' : '手动录入'}</strong></div>
+            <div><span>来源</span><strong>{requirement.sourceType === 'audio' ? '通话摘要' : requirement.sourceType === 'chat' ? '聊天解析' : requirement.sourceType === 'email' ? '邮件' : requirement.sourceType === 'file' ? '文件' : '手动录入'}</strong></div>
             {requirement.sourceTime && <div><span>时间</span><strong>{requirement.sourceTime}</strong></div>}
             {requirement.sourceQuote && <div className="requirement-source-quote"><span>原文</span><strong>{requirement.sourceQuote}</strong></div>}
           </div>

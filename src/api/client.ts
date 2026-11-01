@@ -1,6 +1,30 @@
-import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
+
+export async function fetchTodos(customer = '') {
+  return fetchJson<import('../types').TodoRecord[]>(`/api/todos?customer=${encodeURIComponent(customer)}`, undefined, 5000);
+}
+
+export async function saveTodo(data: Partial<import('../types').TodoRecord>, id?: string) {
+  return fetchJson<import('../types').TodoRecord>(id ? `/api/todos/${encodeURIComponent(id)}` : '/api/todos', {
+    method: id ? 'PATCH' : 'POST', body: JSON.stringify(data),
+  }, 5000);
+}
+
+export async function fetchFollowup(customer: string) {
+  return fetchJson<import('../types').FollowupData>(`/api/customers/${encodeURIComponent(customer)}/followup`, undefined, 5000);
+}
+
+export async function searchAll(query: string) {
+  return fetchJson<import('../types').SearchResponse>(`/api/search?q=${encodeURIComponent(query)}`, undefined, 5000);
+}
+
+export async function archiveImports(ids: string[], customer: string, project: string, owner: string) {
+  return fetchJson<{ updated: string[] }>('/api/imports/archive', {
+    method: 'POST', body: JSON.stringify({ ids, customer, project, owner }),
+  }, 10000);
+}
 
 async function fetchJson<T>(path: string, init?: RequestInit, timeoutMs = 2000): Promise<T | null> {
   const controller = new AbortController();
@@ -20,7 +44,22 @@ async function fetchJson<T>(path: string, init?: RequestInit, timeoutMs = 2000):
   }
 }
 
-export type Health = { status: string; service: string; mode: string; version: string };
+export type Health = { status: string; service: string; mode: string; version: string; apiRevision?: number };
+
+export async function fetchPersonalProfile() {
+  return fetchJson<import('../types').PersonalProfile>('/api/profile', undefined, 5000);
+}
+
+export async function savePersonalProfile(data: import('../types').PersonalProfile) {
+  return fetchJson<import('../types').PersonalProfile>('/api/profile', { method: 'POST', body: JSON.stringify(data) }, 5000);
+}
+
+export async function salesLoadError() {
+  const health = await getHealth();
+  return health && (health.apiRevision ?? 0) < 3
+    ? '本地服务版本较旧，请重启 ClientHub 后重试'
+    : '跟进数据加载失败，请检查本地服务连接后重试';
+}
 
 export async function getHealth(): Promise<Health | null> {
   return fetchJson<Health>('/api/health', undefined, 1200);
@@ -34,6 +73,39 @@ export async function fetchImports(): Promise<ImportRecord[] | null> {
   return fetchJson<ImportRecord[]>('/api/imports', undefined, 2200);
 }
 
+export async function fetchTasks(): Promise<TaskRecord[] | null> {
+  return fetchJson<TaskRecord[]>('/api/tasks?limit=100', undefined, 5000);
+}
+
+export async function retryTask(id: string): Promise<TaskRecord | null> {
+  return fetchJson<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST', body: '{}' }, 10000);
+}
+
+export async function cancelTask(id: string): Promise<TaskRecord | null> {
+  return fetchJson<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }, 10000);
+}
+
+export async function downloadBackup(): Promise<Blob | null> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 120000);
+  try {
+    const response = await fetch(`${API_BASE}/api/backup/export`, { signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function restoreBackup(archiveBase64: string): Promise<{ status: string; createdAt?: string; secretsExcluded?: boolean } | null> {
+  return fetchJson('/api/backup/restore', {
+    method: 'POST',
+    body: JSON.stringify({ archiveBase64 }),
+  }, 120000);
+}
+
 export async function createImport(payload: {
   fileName: string;
   type: string;
@@ -42,12 +114,13 @@ export async function createImport(payload: {
   project: string;
   kind?: string;
   audioBase64?: string;
+  contentBase64?: string;
   mimeType?: string;
 }): Promise<{ id: string; status: string; duplicate?: boolean } | null> {
   return fetchJson('/api/imports', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, 120000);
 }
 
 export async function pasteImport(text: string, meta?: { project?: string; customer?: string }): Promise<{ id: string; status: string } | null> {
@@ -61,8 +134,28 @@ export async function fetchTranscript(id: string): Promise<TranscriptRecord | nu
   return fetchJson<TranscriptRecord>(`/api/transcripts/${encodeURIComponent(id)}`, undefined, 2200);
 }
 
+export async function regenerateTranscriptSummary(id: string) {
+  return fetchJson<TranscriptRecord>(`/api/transcripts/${encodeURIComponent(id)}/regenerate-summary`, { method: 'POST', body: '{}' }, 610000);
+}
+
+export async function updateTranscriptSummary(id: string, summary: import('../types').SummaryData) {
+  return fetchJson<TranscriptRecord>(`/api/transcripts/${encodeURIComponent(id)}/summary`, { method: 'PATCH', body: JSON.stringify({ summary }) }, 5000);
+}
+
+export async function updateTranscriptSegments(id: string, segments: import('../types').TranscriptSegment[]) {
+  return fetchJson<TranscriptRecord>(`/api/transcripts/${encodeURIComponent(id)}/segments`, { method: 'PATCH', body: JSON.stringify({ segments }) }, 10000);
+}
+
 export async function fetchChat(id: string): Promise<ChatRecord | null> {
   return fetchJson<ChatRecord>(`/api/chats/${encodeURIComponent(id)}`, undefined, 2200);
+}
+
+export async function transcribeAttachment(sourceType: 'chat' | 'transcript', id: string, attachmentId: string) {
+  return fetchJson<{ status: string }>(`/api/${sourceType === 'chat' ? 'chats' : 'transcripts'}/${encodeURIComponent(id)}/attachments/transcribe`, { method: 'POST', body: JSON.stringify({ attachmentId }) }, 5000);
+}
+
+export async function previewAttachment(storedName: string) {
+  return fetchJson<{ text: string }>(`/api/files/${encodeURIComponent(storedName)}/preview`, undefined, 15000);
 }
 
 export async function updateChatParticipants(id: string, participants: Array<{ name: string; role: 'me' | 'customer' }>): Promise<ChatRecord | null> {
@@ -126,7 +219,7 @@ export async function mergeCustomers(source: string, target: string): Promise<Cu
   });
 }
 
-export async function deleteCustomer(name: string): Promise<{ deleted: string; records: number } | null> {
+export async function deleteCustomer(name: string): Promise<{ deleted: string; records: number; projects: number } | null> {
   return fetchJson(`/api/customers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
@@ -136,6 +229,10 @@ export async function fetchCustomerTimeline(customer: string): Promise<{ custome
 
 export async function fetchDashboard(): Promise<DashboardSummary | null> {
   return fetchJson<DashboardSummary>('/api/dashboard', undefined, 5000);
+}
+
+export async function fetchMetrics(days = 7) {
+  return fetchJson<import('../types').ProductMetrics>(`/api/metrics?days=${days}`, undefined, 5000);
 }
 
 export async function fetchProjects(): Promise<ProjectListItem[] | null> {

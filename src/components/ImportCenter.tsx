@@ -1,10 +1,13 @@
-import { useRef, useState } from 'react';
-import type { ImportRecord, ProjectListItem } from '../types';
-import { IconChat, IconFile, IconMic, IconUpload } from './Icons';
+import { useEffect, useRef, useState } from 'react';
+import type { ImportRecord, ProjectListItem, TaskRecord } from '../types';
+import { cancelTask, fetchTasks, retryTask } from '../api/client';
+import { IconChat, IconFile, IconMic, IconRefresh, IconUpload } from './Icons';
 import Modal from './Modal';
 import WeChatImportModal from './WeChatImportModal';
+import { needsArchive } from './InboxArchive';
 
 type ImportCenterProps = {
+  onInbox: () => void;
   imports: ImportRecord[];
   sidecarOnline: boolean;
   onAddFiles: (files: File[]) => void;
@@ -24,7 +27,7 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, selectedProject, onProjectChange }: ImportCenterProps) {
+export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, selectedProject, onProjectChange }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -34,10 +37,56 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
   const [autoMatch, setAutoMatch] = useState(true);
   const [autoProcess, setAutoProcess] = useState(true);
   const [aiMode, setAiMode] = useState<'aliyun' | 'mock'>('aliyun');
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
 
   const done = imports.filter((x) => x.status === 'done').length;
   const processing = imports.filter((x) => x.status === 'processing').length;
-  const inbox = imports.filter((x) => x.status === 'inbox').length;
+  const inbox = imports.filter(needsArchive).length;
+
+  useEffect(() => {
+    if (!sidecarOnline) {
+      setTasks([]);
+      return;
+    }
+    let mounted = true;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const data = await fetchTasks();
+        if (mounted && data) setTasks(data);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [sidecarOnline]);
+
+  async function changeTask(task: TaskRecord, action: 'retry' | 'cancel') {
+    const result = action === 'retry' ? await retryTask(task.id) : await cancelTask(task.id);
+    if (!result) {
+      onToast(action === 'retry' ? '任务重试失败' : '任务取消失败');
+      return;
+    }
+    setTasks((current) => action === 'retry'
+      ? [result, ...current.filter((item) => item.id !== task.id && item.id !== result.id)]
+      : current.map((item) => item.id === result.id ? result : item));
+    onToast(action === 'retry' ? '任务已重新排队' : '任务已取消');
+  }
+
+  function taskStatus(task: TaskRecord) {
+    if (task.status === 'running') return '处理中';
+    if (task.status === 'queued') return '排队中';
+    if (task.status === 'failed') return '失败';
+    if (task.status === 'cancelled') return '已取消';
+    return '已完成';
+  }
 
   function acceptFiles(files: File[]) {
     if (!files.length) return;
@@ -90,10 +139,10 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
           <svg className="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           <div><div className="kpi-num">{processing}</div><div className="kpi-label">处理中</div></div>
         </div>
-        <div className="kpi">
+        <button className="kpi kpi-inbox" onClick={onInbox} aria-label={`处理 ${inbox} 条待归档资料`}>
           <svg className="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
           <div><div className="kpi-num">{inbox}</div><div className="kpi-label">待归档</div></div>
-        </div>
+        </button>
         <div className="kpi" style={{ marginLeft: 'auto' }}>
           <IconMic className="icon" />
           <div><div className="kpi-num">32:18</div><div className="kpi-label">最近一条录音</div></div>
@@ -123,10 +172,37 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
             </div>
           </section>
 
+          {sidecarOnline && tasks.length > 0 && (
+            <section className="card task-queue-card">
+              <div className="card-head">
+                <div><div className="card-title">处理任务</div><div className="card-sub">任务会持久化保存；失败后可重试，运行中可取消</div></div>
+                <IconRefresh size={15} className="muted-icon" />
+              </div>
+              <div className="task-queue-list">
+                {tasks.slice(0, 8).map((task) => {
+                  const record = imports.find((item) => item.id === task.importId);
+                  return (
+                    <div className="task-queue-row" key={task.id}>
+                      <div className="task-queue-main">
+                        <strong>{record?.fileName ?? (task.kind === 'chat_analysis' ? '聊天解析任务' : '导入任务')}</strong>
+                        <span>{taskStatus(task)} · 尝试 {task.attempt}/{task.maxAttempts} · {task.progress}%</span>
+                        {task.error && <em>{task.error}</em>}
+                      </div>
+                      <div className="task-queue-actions">
+                        {(task.status === 'failed' || task.status === 'cancelled') && <button className="btn ghost" onClick={() => void changeTask(task, 'retry')}>重试</button>}
+                        {(task.status === 'queued' || task.status === 'running') && <button className="btn ghost danger-text" onClick={() => void changeTask(task, 'cancel')}>取消</button>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <section className="card recent-card">
             <div className="card-head">
               <div><div className="card-title">最近导入</div><div className="card-sub">处理完成后自动进入客户时间线</div></div>
-              <button className="btn ghost" style={{ height: 28, padding: '0 8px', fontSize: 11 }} onClick={() => onToast('完整导入历史将在 Sprint 2 提供')}>查看全部</button>
+              <span className="badge done">{imports.length} 条记录</span>
             </div>
             <div style={{ overflow: 'auto' }}>
               <table className="table">
@@ -162,12 +238,15 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
                           <span className="badge done">已完成</span>
                         ) : record.status === 'failed' ? (
                           <span className="badge" style={{ background: '#fef3f2', color: '#b42318' }}>处理失败</span>
+                        ) : record.status === 'cancelled' ? (
+                          <span className="badge warn">已取消</span>
                         ) : (
                           <span className="badge warn">待归档</span>
                         )}
                       </td>
                       <td>{record.importedAt}</td>
                       <td>
+                        {needsArchive(record) && <button className="btn import-archive-btn" onClick={(e) => { e.stopPropagation(); onOpenRecord(record); }}>确认归属</button>}
                         <button
                           className="btn danger-btn import-delete-btn"
                           onClick={(e) => { e.stopPropagation(); onDeleteRecord(record); }}
@@ -181,7 +260,7 @@ export default function ImportCenter({ imports, sidecarOnline, onAddFiles, onPas
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderTop: '1px solid #f2f4f7', color: '#667085', fontSize: 10.5, background: '#fafbfc' }}>
               <span style={{ fontWeight: 600, color: '#344054' }}>处理流程</span>
               <span className="pill">识别客户</span><span>→</span><span className="pill">转写 / 解析</span><span>→</span><span className="pill">生成摘要与需求</span>
-              <span style={{ marginLeft: 'auto', color: '#98a2b3' }}>失败项自动进入待归档，不会丢失</span>
+              <span style={{ marginLeft: 'auto', color: '#98a2b3' }}>未确认客户的资料可在「待归档」中确认归属</span>
             </div>
           </section>
         </div>

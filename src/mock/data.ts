@@ -1,4 +1,4 @@
-import type { ImportRecord, SummaryData, TranscriptRecord } from '../types';
+import type { ImportRecord, SummaryData, SummaryFieldKey, TranscriptRecord } from '../types';
 
 export const initialImports: ImportRecord[] = [
   {
@@ -94,7 +94,7 @@ export const transcriptRecord: TranscriptRecord = {
   ],
 };
 
-export const evidenceTimes: Record<keyof SummaryData, number> = {
+export const evidenceTimes: Record<SummaryFieldKey, number> = {
   oneLine: 41,
   needs: 0,
   budget: 41,
@@ -103,12 +103,10 @@ export const evidenceTimes: Record<keyof SummaryData, number> = {
   objections: 138,
   nextActions: 90,
   paymentMethod: 0,
-  confidence: 0,
-  evidenceCount: 0,
 };
 
 export const summaryFields: Array<{
-  key: keyof SummaryData;
+  key: SummaryFieldKey;
   label: string;
   multiline?: boolean;
 }> = [

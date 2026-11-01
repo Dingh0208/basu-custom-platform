@@ -1,6 +1,14 @@
-export type View = 'home' | 'import' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects';
+export type View = 'home' | 'import' | 'inbox' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos';
 
-export type ImportStatus = 'processing' | 'done' | 'inbox' | 'failed';
+export interface PersonalProfile {
+  name: string;
+  role: string;
+  company: string;
+  phone: string;
+  email: string;
+}
+
+export type ImportStatus = 'processing' | 'done' | 'inbox' | 'failed' | 'cancelled';
 
 export interface ImportRecord {
   id: string;
@@ -13,6 +21,26 @@ export interface ImportRecord {
   progress: number;
   importedAt: string;
   transcriptId?: string;
+  owner?: string;
+}
+
+export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | string;
+
+export interface TaskRecord {
+  id: string;
+  kind: string;
+  importId?: string | null;
+  entityId?: string | null;
+  status: TaskStatus;
+  progress: number;
+  attempt: number;
+  maxAttempts: number;
+  error: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface TranscriptSegment {
@@ -49,6 +77,16 @@ export interface SummaryData {
   paymentMethod: string;
   confidence: number;
   evidenceCount: number;
+  evidence?: Record<string, string>;
+}
+
+export type SummaryFieldKey = Exclude<keyof SummaryData, 'confidence' | 'evidenceCount' | 'evidence'>;
+
+export interface CorrectionRecord {
+  field: string;
+  before: string;
+  after: string;
+  createdAt: string;
 }
 
 export interface TranscriptRecord {
@@ -64,6 +102,8 @@ export interface TranscriptRecord {
   source: string;
   segments: TranscriptSegment[];
   summary: SummaryData;
+  attachments?: ChatAttachment[];
+  corrections?: CorrectionRecord[];
   requirements?: RequirementItem[];
   citations?: CitationItem[];
 }
@@ -81,14 +121,17 @@ export interface ChatMessage {
 }
 
 export interface ChatAnalysis {
+  confidence?: number;
+  evidenceCount?: number;
   summary: string;
   topic: string;
   project?: string;
   participants: Array<{ name: string; role: string; evidence?: string }>;
   keyQa: Array<{ question: string; answer: string; time?: string; evidence?: string }>;
-  requirements: Array<{ title: string; description?: string; status?: string; priority?: string; evidence?: string }>;
+  requirements: Array<{ title: string; description?: string; status?: string; priority?: string; evidence?: string; evidenceVerified?: boolean }>;
   commitments: Array<{ content: string; owner?: string; due?: string; evidence?: string }>;
   nextActions: Array<{ action: string; owner?: string; due?: string; evidence?: string }>;
+  risks?: Array<{ content: string; evidence?: string }>;
   tags: string[];
 }
 
@@ -101,6 +144,9 @@ export interface ChatAttachment {
   messageId?: string | null;
   externalUrl?: string | null;
   renderType?: string;
+  transcript?: string;
+  transcriptStatus?: 'processing' | 'done' | 'failed' | string;
+  transcriptError?: string;
 }
 
 export interface ChatRecord {
@@ -113,6 +159,7 @@ export interface ChatRecord {
   participants: ChatParticipant[];
   messages: ChatMessage[];
   analysis: ChatAnalysis;
+  corrections?: CorrectionRecord[];
   attachments?: ChatAttachment[];
   status: string;
   messageCount: number;
@@ -160,6 +207,50 @@ export interface RequirementItemRecord {
   sourceQuote: string;
   createdAt: string;
   updatedAt: string;
+  owner: string;
+  dueDate: string;
+}
+
+export interface TodoRecord {
+  id: string;
+  customer: string;
+  project: string;
+  requirementId: string;
+  title: string;
+  owner: string;
+  dueDate: string;
+  status: 'todo' | 'doing' | 'done' | 'cancelled';
+  sourceType: string;
+  sourceId: string;
+  sourceQuote: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface FollowupData {
+  todos: TodoRecord[];
+  suggestions: Array<Partial<TodoRecord> & { title: string; dueText: string }>;
+  risks: Array<{ text: string; sourceId: string; sourceType: string; project: string }>;
+  overdue: number;
+  dueToday: number;
+  lastContactAt: string;
+  daysSinceContact: number | null;
+}
+
+export interface SearchResult {
+  kind: 'customer' | 'project' | 'requirement' | 'chat' | 'transcript';
+  id: string;
+  title: string;
+  customer: string;
+  project: string;
+  snippet: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+  counts: Record<SearchResult['kind'], number>;
 }
 
 export interface ProjectListItem extends CustomerProject {
@@ -183,6 +274,30 @@ export interface DashboardSummary {
   recentImports: ImportRecord[];
   recentRequirements: DashboardRequirement[];
   stageCounts: Array<{ stage: string; count: number }>;
+  metrics: ProductMetrics;
+}
+
+export interface ProductMetric {
+  value: number | null;
+  numerator: number;
+  denominator: number;
+  unit: 'ratio' | 'seconds' | 'minutes' | 'count' | string;
+  available: boolean;
+  note: string;
+}
+
+export interface ProductMetrics {
+  windowDays: number;
+  windowStart: string;
+  generatedAt: string;
+  importsSuccessRate: ProductMetric;
+  parseCompletionRate: ProductMetric;
+  parseP95Seconds: ProductMetric;
+  customerMatchAccuracy: ProductMetric;
+  requirementEffectiveness: ProductMetric;
+  nextActionLatencyMinutes: ProductMetric;
+  weeklyActiveCustomers: ProductMetric;
+  weeklyActiveProjects: ProductMetric;
 }
 
 export interface AppSettings {

@@ -17,6 +17,7 @@ import argparse
 import base64
 import ctypes
 import hashlib
+import io
 import json
 import mimetypes
 import os
@@ -25,11 +26,15 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
+import sales
+import document_ingest
 from contextlib import contextmanager
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -65,10 +70,13 @@ load_env_file()
 DATA_DIR = Path(os.getenv("CLIENTHUB_DATA_DIR", str(BASE_DIR / "data")))
 UPLOAD_DIR = DATA_DIR / "uploads"
 EXPORT_DIR = DATA_DIR / "wechat-exports"
+BACKUP_DIR = DATA_DIR / "backups"
 DB_PATH = DATA_DIR / "clienthub.db"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_LOCK = threading.RLock()
 
 MAAS_BASE_URL = os.getenv("MAAS_BASE_URL", "https://maas.qianwenaiapi.com/compatible-mode/v1").rstrip("/")
 MAAS_API_KEY = os.getenv("MAAS_API_KEY", "").strip()
@@ -123,12 +131,13 @@ DEFAULT_TRANSCRIPT = {
 
 
 def now_time() -> str:
-    return datetime.now().strftime("%H:%M")
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -145,6 +154,9 @@ def db():
 
 def init_db() -> None:
     with db() as conn:
+        existing_database = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='imports'").fetchone() is not None
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS imports (
@@ -236,16 +248,50 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                import_id TEXT,
+                entity_id TEXT,
+                status TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                error TEXT DEFAULT '',
+                payload_json TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS corrections (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                before_text TEXT NOT NULL,
+                after_text TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
-        # Lightweight migration for databases created before attachment indexing.
-        try:
-            conn.execute("ALTER TABLE chats ADD COLUMN attachments_json TEXT DEFAULT '[]'")
-        except sqlite3.OperationalError:
-            pass
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_imports_status ON imports(status);
+            CREATE INDEX IF NOT EXISTS idx_imports_customer_project ON imports(customer, project);
+            CREATE INDEX IF NOT EXISTS idx_imports_imported_at ON imports(imported_at);
+            CREATE INDEX IF NOT EXISTS idx_chats_status ON chats(status);
+            CREATE INDEX IF NOT EXISTS idx_requirements_customer_project ON requirements(customer, project);
+            CREATE INDEX IF NOT EXISTS idx_requirements_updated_at ON requirements(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_import_id ON tasks(import_id);
+            CREATE INDEX IF NOT EXISTS idx_corrections_source ON corrections(source_id, created_at);
+            """
+        )
+        migrate_ingest(conn)
         # Seed once so the UI has a realistic starting state.
+        sales.migrate(conn)
         count = conn.execute("SELECT COUNT(*) AS n FROM imports").fetchone()["n"]
-        if count == 0:
+        if not existing_database and count == 0:
             seed = [
                 ("imp-001", "2026-10-28_张三_会员小程序_通话录音.m4a", "音频", "42.8 MB", "张三", "会员小程序商城", "done", 100, "10:31", "tr-001", "seed-001"),
                 ("imp-002", "微信聊天_张三_20261027.txt", "聊天记录", "1.2 MB", "张三", "会员小程序商城", "processing", 60, "10:28", None, "seed-002"),
@@ -256,7 +302,7 @@ def init_db() -> None:
                 seed,
             )
         tcount = conn.execute("SELECT COUNT(*) AS n FROM transcripts").fetchone()["n"]
-        if tcount == 0:
+        if not existing_database and tcount == 0:
             t = DEFAULT_TRANSCRIPT
             conn.execute(
                 "INSERT INTO transcripts (id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -280,7 +326,165 @@ def row_to_import(row: sqlite3.Row) -> dict:
         "progress": row["progress"],
         "importedAt": row["imported_at"],
         "transcriptId": row["transcript_id"],
+        "owner": row["owner"] or "",
     }
+
+
+class TaskCancelled(Exception):
+    """Raised inside a worker when the user cancels a persisted task."""
+
+
+TASK_ACTIVE = {"queued", "running"}
+TASK_TERMINAL = {"succeeded", "failed", "cancelled"}
+
+
+def task_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def row_to_task(row: sqlite3.Row, *, include_payload: bool = False) -> dict:
+    payload = json.loads(row["payload_json"] or "{}")
+    task = {
+        "id": row["id"],
+        "kind": row["kind"],
+        "importId": row["import_id"],
+        "entityId": row["entity_id"],
+        "status": row["status"],
+        "progress": int(row["progress"] or 0),
+        "attempt": int(row["attempt"] or 0),
+        "maxAttempts": int(row["max_attempts"] or 3),
+        "error": row["error"] or "",
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "startedAt": row["started_at"],
+        "finishedAt": row["finished_at"],
+    }
+    if include_payload:
+        task["payload"] = payload
+    return task
+
+
+def create_task(kind: str, *, import_id: str = "", entity_id: str = "", payload: dict | None = None) -> str:
+    task_id = f"task-{uuid.uuid4().hex[:12]}"
+    now = task_now()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO tasks (id,kind,import_id,entity_id,status,progress,attempt,max_attempts,error,payload_json,created_at,updated_at,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (task_id, kind, import_id or None, entity_id or None, "queued", 0, 0, 3, "", json.dumps(payload or {}, ensure_ascii=False), now, now, None, None),
+        )
+    return task_id
+
+
+def get_task(task_id: str) -> dict | None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    return row_to_task(row) if row else None
+
+
+def list_tasks(limit: int = 100) -> list[dict]:
+    limit = max(1, min(int(limit or 100), 500))
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM tasks ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'failed' THEN 2 ELSE 3 END, updated_at DESC LIMIT ?", (limit,)).fetchall()
+    return [row_to_task(row) for row in rows]
+
+
+def task_status(task_id: str) -> str:
+    with db() as conn:
+        row = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+    return str(row["status"]) if row else ""
+
+
+def has_active_replacement(task_id: str) -> bool:
+    with db() as conn:
+        row = conn.execute("SELECT import_id,entity_id FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            return False
+        if row["import_id"]:
+            return conn.execute(
+                "SELECT 1 FROM tasks WHERE id<>? AND import_id=? AND status IN ('queued','running') LIMIT 1",
+                (task_id, row["import_id"]),
+            ).fetchone() is not None
+        if row["entity_id"]:
+            return conn.execute(
+                "SELECT 1 FROM tasks WHERE id<>? AND entity_id=? AND status IN ('queued','running') LIMIT 1",
+                (task_id, row["entity_id"]),
+            ).fetchone() is not None
+    return False
+
+
+def ensure_task_active(task_id: str | None) -> None:
+    if task_id and task_status(task_id) == "cancelled":
+        raise TaskCancelled()
+
+
+def set_task_running(task_id: str) -> bool:
+    now = task_now()
+    with db() as conn:
+        row = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None or row["status"] == "cancelled":
+            return False
+        conn.execute(
+            "UPDATE tasks SET status='running', attempt=attempt+1, updated_at=?, started_at=?, finished_at=NULL WHERE id=?",
+            (now, now, task_id),
+        )
+    return True
+
+
+def set_task_progress(task_id: str | None, progress: int) -> None:
+    if not task_id:
+        return
+    with db() as conn:
+        conn.execute(
+            "UPDATE tasks SET progress=?, updated_at=? WHERE id=? AND status='running'",
+            (max(0, min(100, int(progress))), task_now(), task_id),
+        )
+
+
+def finish_task(task_id: str | None, status: str, *, progress: int | None = None, error: str = "") -> None:
+    if not task_id:
+        return
+    now = task_now()
+    with db() as conn:
+        if progress is None:
+            conn.execute(
+                "UPDATE tasks SET status=?, error=?, updated_at=?, finished_at=? WHERE id=?",
+                (status, error[:1000], now, now if status in TASK_TERMINAL else None, task_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE tasks SET status=?, progress=?, error=?, updated_at=?, finished_at=? WHERE id=?",
+                (status, max(0, min(100, int(progress))), error[:1000], now, now if status in TASK_TERMINAL else None, task_id),
+            )
+
+
+def set_import_status(import_id: str, status: str, progress: int = 0) -> None:
+    if not import_id:
+        return
+    with db() as conn:
+        conn.execute("UPDATE imports SET status=?, progress=? WHERE id=?", (status, progress, import_id))
+
+
+def cancel_task(task_id: str) -> dict | None:
+    now = task_now()
+    attachment_task = None
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] in TASK_TERMINAL:
+            return row_to_task(row)
+        conn.execute("UPDATE tasks SET status='cancelled', error='', updated_at=?, finished_at=? WHERE id=?", (now, now, task_id))
+        if row["import_id"]:
+            conn.execute("UPDATE imports SET status='cancelled' WHERE id=? AND status IN ('processing','queued')", (row["import_id"],))
+        if row["entity_id"] and row["kind"] == "chat_analysis":
+            conn.execute("UPDATE chats SET status='cancelled' WHERE id=? AND status='processing'", (row["entity_id"],))
+        if row["kind"] == "attachment_voice":
+            attachment_task = (json.loads(row["payload_json"] or "{}"), row["entity_id"])
+        updated = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if attachment_task:
+        payload, source_id = attachment_task
+        update_attachment(payload.get("sourceType", "chat"), source_id, payload.get("attachmentId", ""), {"transcriptStatus": "failed", "transcriptError": "转写已取消，可以重试"})
+    return row_to_task(updated)
 
 
 def delete_import(import_id: str) -> dict:
@@ -289,9 +493,20 @@ def delete_import(import_id: str) -> dict:
         row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
         if row is None:
             raise ValueError("导入记录不存在")
-        if row["status"] == "processing":
+        active_task = conn.execute(
+            "SELECT 1 FROM tasks WHERE (import_id=? OR (entity_id=? AND kind='attachment_voice')) AND status IN ('queued','running') LIMIT 1",
+            (import_id, row["transcript_id"]),
+        ).fetchone()
+        if row["status"] == "processing" or active_task:
             raise ValueError("文件仍在处理中，请等待处理完成后再删除")
         transcript_id = str(row["transcript_id"] or "")
+        other = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE transcript_id=? AND id<>?", (transcript_id, import_id)).fetchone()["n"] if transcript_id else 0
+        deleted_sources = [import_id]
+        if transcript_id and (transcript_id.startswith("chat-") or not other):
+            deleted_sources.append(transcript_id)
+        placeholders = ",".join("?" for _ in deleted_sources)
+        conn.execute(f"DELETE FROM todos WHERE source_id IN ({placeholders}) OR requirement_id IN (SELECT id FROM requirements WHERE source_id IN ({placeholders}))",
+                     (*deleted_sources, *deleted_sources))
         customer = str(row["customer"] or "")
         chat = None
         if transcript_id.startswith("chat-"):
@@ -305,12 +520,15 @@ def delete_import(import_id: str) -> dict:
                 conn.execute("DELETE FROM requirements WHERE source_type='chat' AND source_id=?", (transcript_id,))
                 conn.execute("DELETE FROM chats WHERE id=?", (transcript_id,))
         elif transcript_id:
-            other = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE transcript_id=? AND id<>?", (transcript_id, import_id)).fetchone()["n"]
             if not other:
-                conn.execute("DELETE FROM requirements WHERE source_type='audio' AND source_id IN (?,?)", (import_id, transcript_id))
+                conn.execute("DELETE FROM requirements WHERE source_id IN (?,?)", (import_id, transcript_id))
                 conn.execute("DELETE FROM transcripts WHERE id=?", (transcript_id,))
         # Also remove requirements created directly from this import id.
         conn.execute("DELETE FROM requirements WHERE source_id=?", (import_id,))
+        conn.execute("DELETE FROM tasks WHERE import_id=?", (import_id,))
+        if transcript_id:
+            conn.execute("UPDATE tasks SET status='cancelled',error='来源记录已删除',updated_at=?,finished_at=? WHERE entity_id=? AND status IN ('queued','running')", (task_now(), task_now(), transcript_id))
+        conn.execute("DELETE FROM corrections WHERE source_id IN (?,?)", (import_id, transcript_id))
         conn.execute("DELETE FROM imports WHERE id=?", (import_id,))
     files_to_remove.extend(UPLOAD_DIR.glob(f"{import_id}*"))
     for path in files_to_remove:
@@ -320,6 +538,18 @@ def delete_import(import_id: str) -> dict:
         except OSError:
             pass
     return {"deleted": import_id, "customer": customer, "chatDeleted": bool(chat)}
+
+
+def migrate_ingest(conn: sqlite3.Connection) -> None:
+    for table in ("chats", "transcripts"):
+        columns = {column[1] for column in conn.execute(f"PRAGMA table_info({table})")}
+        if "attachments_json" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN attachments_json TEXT DEFAULT '[]'")
+    conn.execute("""CREATE TABLE IF NOT EXISTS corrections (
+        id TEXT PRIMARY KEY, source_id TEXT NOT NULL, field TEXT NOT NULL,
+        before_text TEXT NOT NULL, after_text TEXT NOT NULL, created_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_corrections_source ON corrections(source_id, created_at)")
 
 
 def row_to_transcript(row: sqlite3.Row) -> dict:
@@ -336,7 +566,20 @@ def row_to_transcript(row: sqlite3.Row) -> dict:
         "source": row["source"],
         "segments": json.loads(row["segments_json"]),
         "summary": json.loads(row["summary_json"]),
+        "attachments": json.loads(row["attachments_json"] or "[]"),
+        "corrections": list_corrections(row["id"]),
     }
+
+
+def list_corrections(source_id: str) -> list[dict]:
+    with db() as conn:
+        rows = conn.execute("SELECT field,before_text,after_text,created_at FROM corrections WHERE source_id=? ORDER BY created_at DESC LIMIT 30", (source_id,)).fetchall()
+    return [{"field": row["field"], "before": row["before_text"], "after": row["after_text"], "createdAt": row["created_at"]} for row in rows]
+
+
+def record_correction(conn: sqlite3.Connection, source_id: str, field: str, before: str, after: str) -> None:
+    if before != after:
+        conn.execute("INSERT INTO corrections VALUES (?,?,?,?,?,?)", (f"fix-{uuid.uuid4().hex[:12]}", source_id, field, before, after, datetime.now().isoformat(timespec="seconds")))
 
 
 CHAT_TIMESTAMP_RE = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$")
@@ -430,6 +673,7 @@ def analyze_chat_messages(messages: list[dict], me_name: str) -> dict:
   "requirements": [{{"title": "", "description": "", "status": "待确认", "priority": "P1", "evidence": ""}}],
   "commitments": [{{"content": "", "owner": "", "due": "", "evidence": ""}}],
   "nextActions": [{{"action": "", "owner": "", "due": "", "evidence": ""}}],
+  "risks": [{{"content": "聊天中明确提到的风险或异议；没有则空数组", "evidence": "原文"}}],
   "tags": []
 }}
 要求：
@@ -451,38 +695,78 @@ def analyze_chat_messages(messages: list[dict], me_name: str) -> dict:
     data = json.loads(content)
     for key, default in (
         ("summary", ""), ("topic", ""), ("project", ""), ("participants", []), ("keyQa", []),
-        ("requirements", []), ("commitments", []), ("nextActions", []), ("tags", []),
+        ("requirements", []), ("commitments", []), ("nextActions", []), ("risks", []), ("tags", []),
     ):
         if key not in data or data[key] is None:
             data[key] = default
+    for key in ("keyQa", "requirements", "commitments", "nextActions", "risks"):
+        if not isinstance(data[key], list):
+            raise ValueError("聊天分析结果格式不正确，请重试")
+        for item in data[key]:
+            if not isinstance(item, dict):
+                raise ValueError("聊天分析结果格式不正确，请重试")
+            quote = item.get("evidence")
+            item["evidenceVerified"] = isinstance(quote, str) and bool(quote.strip()) and quote.strip() in transcript
+    checked = [item for key in ("keyQa", "requirements", "commitments", "nextActions", "risks") for item in data[key]]
+    data["evidenceCount"] = sum(item["evidenceVerified"] for item in checked)
+    data["confidence"] = round(data["evidenceCount"] / len(checked), 2) if checked else 0
     return data
 
 
-def process_chat_analysis(import_id: str, chat_id: str) -> None:
+def process_chat_analysis(import_id: str, chat_id: str, task_id: str | None = None) -> None:
     try:
+        ensure_task_active(task_id)
+        set_task_progress(task_id, 5)
         with db() as conn:
             row = conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
         if row is None:
+            finish_task(task_id, "failed", error="聊天记录不存在")
             return
         messages = json.loads(row["messages_json"])
         me_name = next((p["name"] for p in json.loads(row["participants_json"]) if p.get("role") == "me"), "")
+        ensure_task_active(task_id)
+        set_task_progress(task_id, 20)
         analysis = analyze_chat_messages(messages, me_name)
+        ensure_task_active(task_id)
+        set_task_progress(task_id, 85)
         project_name = str(analysis.get("project") or "").strip() or "—"
         with db() as conn:
-            conn.execute(
-                "UPDATE chats SET analysis_json=?, status='done', project=? WHERE id=?",
+            ensure_task_active(task_id)
+            chat_update = conn.execute(
+                "UPDATE chats SET analysis_json=?, status='done', project=? WHERE id=? AND status='processing'",
                 (json.dumps(analysis, ensure_ascii=False), project_name, chat_id),
             )
-            conn.execute(
-                "UPDATE imports SET progress=100, status='done', transcript_id=?, project=? WHERE id=?",
-                (chat_id, project_name, import_id),
-            )
+            if chat_update.rowcount != 1:
+                if task_id and task_status(task_id) == "cancelled":
+                    raise TaskCancelled()
+                raise RuntimeError("聊天记录状态已改变，任务未完成")
+            if import_id:
+                import_update = conn.execute(
+                    "UPDATE imports SET progress=100, status='done', transcript_id=?, project=? WHERE id=? AND status='processing'",
+                    (chat_id, project_name, import_id),
+                )
+                if import_update.rowcount != 1:
+                    if task_id and task_status(task_id) == "cancelled":
+                        raise TaskCancelled()
+                    raise RuntimeError("导入记录状态已改变，任务未完成")
         insert_requirements_from_chat(chat_id, str(row["customer"]), project_name, analysis, source_time=str(row["imported_at"] or ""))
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        print(f"[ai-sidecar] chat analysis cancelled {chat_id}", flush=True)
+        if task_id and task_status(task_id) == "running":
+            return
+        if task_id and has_active_replacement(task_id):
+            return
+        with db() as conn:
+            conn.execute("UPDATE chats SET status='cancelled' WHERE id=?", (chat_id,))
+            conn.execute("UPDATE imports SET status='cancelled' WHERE id=?", (import_id,))
+        finish_task(task_id, "cancelled", progress=0)
     except Exception as exc:
         print(f"[ai-sidecar] chat analysis error {chat_id}: {exc}", flush=True)
         with db() as conn:
             conn.execute("UPDATE chats SET status='failed' WHERE id=?", (chat_id,))
             conn.execute("UPDATE imports SET status='failed' WHERE id=?", (import_id,))
+        finish_task(task_id, "failed", progress=0, error=str(exc))
 
 
 def store_chat_record(
@@ -588,8 +872,9 @@ def store_chat_record(
                 json.dumps(attachment_index, ensure_ascii=False),
             ),
         )
-    threading.Thread(target=process_chat_analysis, args=(import_id, chat_id), daemon=True).start()
-    return {"importId": import_id, "chatId": chat_id, "messageCount": len(messages), "participants": normalized_participants}
+    task_id = create_task("chat_analysis", import_id=import_id, entity_id=chat_id, payload={"importId": import_id, "chatId": chat_id})
+    start_task(task_id, process_chat_analysis, import_id, chat_id)
+    return {"importId": import_id, "chatId": chat_id, "taskId": task_id, "messageCount": len(messages), "participants": normalized_participants}
 
 
 def create_chat_record(text: str, file_name: str, customer: str = "", project: str = "", me_name: str = "") -> dict | None:
@@ -665,6 +950,7 @@ def row_to_chat(row: sqlite3.Row) -> dict:
         "messages": json.loads(row["messages_json"]),
         "analysis": json.loads(row["analysis_json"]),
         "attachments": json.loads(row["attachments_json"] or "[]") if "attachments_json" in row.keys() else [],
+        "corrections": list_corrections(row["id"]),
         "status": row["status"],
         "messageCount": row["message_count"],
         "startedAt": row["started_at"],
@@ -715,7 +1001,7 @@ def dashboard_summary() -> dict:
             "customers": conn.execute("SELECT COUNT(*) AS n FROM customers").fetchone()["n"],
             "projects": conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"],
             "requirements": conn.execute("SELECT COUNT(*) AS n FROM requirements").fetchone()["n"],
-            "inbox": conn.execute("SELECT COUNT(*) AS n FROM imports WHERE status='inbox'").fetchone()["n"],
+            "inbox": conn.execute("SELECT COUNT(*) AS n FROM imports WHERE status='inbox' OR customer IN ('','待归档','待确认')").fetchone()["n"],
             "processing": conn.execute("SELECT COUNT(*) AS n FROM imports WHERE status='processing'").fetchone()["n"],
         }
         recent_imports = conn.execute("SELECT * FROM imports ORDER BY imported_at DESC, rowid DESC LIMIT 6").fetchall()
@@ -725,6 +1011,7 @@ def dashboard_summary() -> dict:
         stage_rows = conn.execute(
             "SELECT stage, COUNT(*) AS n FROM projects GROUP BY stage ORDER BY CASE stage WHEN '需求' THEN 0 WHEN '报价' THEN 1 WHEN '方案' THEN 2 WHEN '签约' THEN 3 WHEN '交付' THEN 4 ELSE 5 END"
         ).fetchall()
+        product_metrics = sales.metrics(conn, days=7)
     return {
         "stats": {key: int(value or 0) for key, value in stats.items()},
         "recentImports": [row_to_import(row) for row in recent_imports],
@@ -742,6 +1029,7 @@ def dashboard_summary() -> dict:
             for row in recent_requirements
         ],
         "stageCounts": [{"stage": row["stage"] or "需求", "count": int(row["n"] or 0)} for row in stage_rows],
+        "metrics": product_metrics,
     }
 
 
@@ -806,6 +1094,10 @@ def update_customer(name: str, data: dict) -> dict | None:
             conn.execute("UPDATE chats SET customer=? WHERE customer=?", (new_name, name))
             conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (new_name, name))
             conn.execute("UPDATE requirements SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE projects SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE todos SET customer=? WHERE customer=?", (new_name, name))
+            conn.execute("UPDATE customer_match_audits SET suggested_customer=? WHERE suggested_customer=?", (new_name, name))
+            conn.execute("UPDATE customer_match_audits SET confirmed_customer=? WHERE confirmed_customer=?", (new_name, name))
             conn.execute("UPDATE customers SET name=? WHERE name=?", (new_name, name))
             name = new_name
         fields = {
@@ -850,6 +1142,15 @@ def merge_customers(source: str, target: str) -> dict:
         conn.execute("UPDATE chats SET customer=? WHERE customer=?", (target, source))
         conn.execute("UPDATE transcripts SET customer=? WHERE customer=?", (target, source))
         conn.execute("UPDATE requirements SET customer=? WHERE customer=?", (target, source))
+        conn.execute("UPDATE customer_match_audits SET suggested_customer=? WHERE suggested_customer=?", (target, source))
+        conn.execute("UPDATE customer_match_audits SET confirmed_customer=? WHERE confirmed_customer=?", (target, source))
+        for project in conn.execute("SELECT * FROM projects WHERE customer=?", (source,)).fetchall():
+            conflict = conn.execute("SELECT id FROM projects WHERE customer=? AND name=?", (target, project["name"])).fetchone()
+            if conflict:
+                conn.execute("DELETE FROM projects WHERE id=?", (project["id"],))
+            else:
+                conn.execute("UPDATE projects SET customer=? WHERE id=?", (target, project["id"]))
+        conn.execute("UPDATE todos SET customer=? WHERE customer=?", (target, source))
         # Fill target profile gaps from source, preserving explicit target values.
         for column in ("company", "position", "phone", "wechat", "email", "source_channel", "owner", "notes"):
             current = str(target_row[column] or "").strip()
@@ -870,12 +1171,18 @@ def delete_customer(name: str) -> dict:
         if row is None:
             raise ValueError("客户不存在")
         import_count = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE customer=?", (name,)).fetchone()["n"]
+        project_count = conn.execute("SELECT COUNT(*) AS n FROM projects WHERE customer=?", (name,)).fetchone()["n"]
+        conn.execute("UPDATE tasks SET status='cancelled',error='客户已删除',updated_at=?,finished_at=? WHERE (import_id IN (SELECT id FROM imports WHERE customer=?) OR entity_id IN (SELECT id FROM chats WHERE customer=? UNION SELECT id FROM transcripts WHERE customer=?)) AND status IN ('queued','running')", (task_now(), task_now(), name, name, name))
+        conn.execute("DELETE FROM customer_match_audits WHERE import_id IN (SELECT id FROM imports WHERE customer=?)", (name,))
         conn.execute("DELETE FROM imports WHERE customer=?", (name,))
+        conn.execute("DELETE FROM corrections WHERE source_id IN (SELECT id FROM chats WHERE customer=?) OR source_id IN (SELECT id FROM transcripts WHERE customer=?)", (name, name))
         conn.execute("DELETE FROM chats WHERE customer=?", (name,))
         conn.execute("DELETE FROM transcripts WHERE customer=?", (name,))
         conn.execute("DELETE FROM requirements WHERE customer=?", (name,))
+        conn.execute("DELETE FROM todos WHERE customer=?", (name,))
+        conn.execute("DELETE FROM projects WHERE customer=?", (name,))
         conn.execute("DELETE FROM customers WHERE name=?", (name,))
-    return {"deleted": name, "records": int(import_count)}
+    return {"deleted": name, "records": int(import_count), "projects": int(project_count)}
 
 
 def _project_defaults(customer: str, name: str, owner: str = "王总") -> dict:
@@ -950,7 +1257,6 @@ def _project_record(row: sqlite3.Row) -> dict:
 
 def list_projects(customer: str) -> list[dict]:
     with db() as conn:
-        _ensure_customer(conn, customer)
         _sync_projects_from_records(conn)
         rows = conn.execute("SELECT * FROM projects WHERE customer=? ORDER BY updated_at DESC, name ASC", (customer,)).fetchall()
         result = []
@@ -1049,6 +1355,7 @@ def update_project(project_id: str, data: dict) -> dict | None:
             conn.execute("UPDATE chats SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
             conn.execute("UPDATE transcripts SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
             conn.execute("UPDATE requirements SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
+            conn.execute("UPDATE todos SET project=? WHERE customer=? AND project=?", (new_name, row["customer"], row["name"]))
         now = datetime.now().isoformat(timespec="seconds")
         target_launch = data.get("targetLaunchDate", row["target_launch_date"])
         description = data.get("description", row["description"])
@@ -1078,6 +1385,7 @@ def delete_project(project_id: str) -> dict:
         conn.execute("UPDATE chats SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("UPDATE transcripts SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("UPDATE requirements SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
+        conn.execute("UPDATE todos SET project='—' WHERE customer=? AND project=?", (row["customer"], row["name"]))
         conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
     return {"deleted": project_id}
 
@@ -1109,6 +1417,8 @@ def _requirement_row(row: sqlite3.Row) -> dict:
         "sourceId": row["source_id"] or "",
         "sourceTime": row["source_time"] or "",
         "sourceQuote": row["source_quote"] or "",
+        "owner": row["owner"] or "",
+        "dueDate": row["due_date"] or "",
         "createdAt": row["created_at"] or "",
         "updatedAt": row["updated_at"] or "",
     }
@@ -1127,6 +1437,8 @@ def _add_requirement(
     source_id: str = "",
     source_time: str = "",
     source_quote: str = "",
+    owner: str = "",
+    due_date: str = "",
 ) -> sqlite3.Row | None:
     title = str(title or "").strip()
     if not title:
@@ -1140,19 +1452,20 @@ def _add_requirement(
     now = datetime.now().isoformat(timespec="seconds")
     requirement_id = f"req-{uuid.uuid4().hex[:10]}"
     conn.execute(
-        "INSERT INTO requirements (id,customer,project,title,description,priority,status,source_type,source_id,source_time,source_quote,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO requirements (id,customer,project,title,description,priority,status,source_type,source_id,source_time,source_quote,created_at,updated_at,owner,due_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             requirement_id, customer, project or "—", title, description or "",
             _normalize_priority(priority), _normalize_status(status),
-            source_type or "manual", source_id or "", source_time or "", source_quote or "", now, now,
+            source_type or "manual", source_id or "", source_time or "", source_quote or "", now, now, owner, sales.due_date(due_date),
         ),
     )
     return conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
 
 
-def insert_requirements_from_audio(import_id: str, customer: str, project: str, summary: dict, source_time: str = "") -> None:
+def insert_requirements_from_audio(import_id: str, customer: str, project: str, summary: dict, source_time: str = "", source_type: str = "audio") -> None:
     needs = str(summary.get("needs") or "").strip()
-    if not needs or needs in ("未提及", "—", "无"):
+    evidence = summary.get("evidence") if isinstance(summary.get("evidence"), dict) else {}
+    if not needs or needs in ("未提及", "—", "无") or not str(evidence.get("needs") or "").strip() or float(summary.get("confidence") or 0) < 0.6:
         return
     titles = [part.strip() for part in re.split(r"[；;。、，,]", needs) if len(part.strip()) >= 2][:8]
     if not titles:
@@ -1164,10 +1477,10 @@ def insert_requirements_from_audio(import_id: str, customer: str, project: str, 
                 customer=customer,
                 project=project or "—",
                 title=title,
-                description=f"来自通话摘要：{needs}",
+                description=f"来自{'通话摘要' if source_type == 'audio' else '邮件' if source_type == 'email' else '文件'}：{needs}",
                 priority="P1",
                 status="待确认",
-                source_type="audio",
+                source_type=source_type,
                 source_id=import_id,
                 source_time=source_time,
                 source_quote=needs,
@@ -1181,6 +1494,8 @@ def insert_requirements_from_chat(chat_id: str, customer: str, project: str, ana
     with db() as conn:
         for item in items:
             if not isinstance(item, dict):
+                continue
+            if item.get("evidenceVerified") is not True:
                 continue
             title = str(item.get("title") or "").strip()
             if not title:
@@ -1218,6 +1533,7 @@ def list_requirements(customer: str, project: str = "") -> list[dict]:
 def create_requirement(customer: str, data: dict) -> dict | None:
     with db() as conn:
         _ensure_customer(conn, customer)
+        _ensure_project(conn, customer, str(data.get("project") or "—"))
         row = _add_requirement(
             conn,
             customer=customer,
@@ -1230,6 +1546,8 @@ def create_requirement(customer: str, data: dict) -> dict | None:
             source_id=str(data.get("sourceId") or ""),
             source_time=str(data.get("sourceTime") or datetime.now().strftime("%Y-%m-%d %H:%M")),
             source_quote=str(data.get("sourceQuote") or ""),
+            owner=str(data.get("owner") or ""),
+            due_date=str(data.get("dueDate") or ""),
         )
     return _requirement_row(row) if row else None
 
@@ -1243,18 +1561,24 @@ def update_requirement(requirement_id: str, data: dict) -> dict | None:
         if not title:
             raise ValueError("需求标题不能为空")
         project = str(data.get("project", row["project"]) or "—")
+        _ensure_project(conn, row["customer"], project)
         conn.execute(
-            "UPDATE requirements SET project=?, title=?, description=?, priority=?, status=?, source_time=?, source_quote=?, updated_at=? WHERE id=?",
+            "UPDATE requirements SET project=?, title=?, description=?, priority=?, status=?, source_time=?, source_quote=?, owner=?, due_date=?, updated_at=? WHERE id=?",
             (
                 project, title, str(data.get("description", row["description"]) or ""),
                 _normalize_priority(data.get("priority", row["priority"])),
                 _normalize_status(data.get("status", row["status"])),
                 str(data.get("sourceTime", row["source_time"]) or ""),
                 str(data.get("sourceQuote", row["source_quote"]) or ""),
+                str(data.get("owner", row["owner"]) or ""),
+                sales.due_date(data.get("dueDate", row["due_date"])),
                 datetime.now().isoformat(timespec="seconds"), requirement_id,
             ),
         )
         updated = conn.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,)).fetchone()
+        conn.execute("UPDATE todos SET project=?,owner=CASE WHEN ? AND ?<>'' THEN ? ELSE owner END,due_date=CASE WHEN ? AND ?<>'' THEN ? ELSE due_date END WHERE requirement_id=?",
+                     (project, updated["owner"] != row["owner"], updated["owner"], updated["owner"],
+                      updated["due_date"] != row["due_date"], updated["due_date"], updated["due_date"], requirement_id))
     return _requirement_row(updated)
 
 
@@ -1264,6 +1588,7 @@ def delete_requirement(requirement_id: str) -> dict:
         if row is None:
             raise ValueError("需求不存在")
         conn.execute("DELETE FROM requirements WHERE id=?", (requirement_id,))
+        conn.execute("UPDATE todos SET requirement_id='' WHERE requirement_id=?", (requirement_id,))
     return {"deleted": requirement_id}
 
 
@@ -1277,6 +1602,8 @@ def merge_requirements(target_id: str, source_ids: list[str]) -> dict | None:
             for source_id in source_ids if source_id != target_id
         ]
         sources = [row for row in sources if row is not None]
+        if any(row["customer"] != target["customer"] or row["project"] != target["project"] for row in sources):
+            raise ValueError("只能合并同一客户、同一项目的需求")
         descriptions = list(dict.fromkeys([str(target["description"] or ""), *[str(row["description"] or "") for row in sources]]))
         quotes = list(dict.fromkeys([str(target["source_quote"] or ""), *[str(row["source_quote"] or "") for row in sources]]))
         priorities = [str(target["priority"] or "P1"), *[str(row["priority"] or "P1") for row in sources]]
@@ -1286,6 +1613,7 @@ def merge_requirements(target_id: str, source_ids: list[str]) -> dict | None:
             ("\n\n".join([item for item in descriptions if item]), best_priority, "\n\n".join([item for item in quotes if item]), datetime.now().isoformat(timespec="seconds"), target_id),
         )
         for source in sources:
+            conn.execute("UPDATE todos SET requirement_id=? WHERE requirement_id=?", (target_id, source["id"]))
             conn.execute("DELETE FROM requirements WHERE id=?", (source["id"],))
         updated = conn.execute("SELECT * FROM requirements WHERE id=?", (target_id,)).fetchone()
     return _requirement_row(updated)
@@ -1384,12 +1712,14 @@ def update_chat_participants(chat_id: str, participants: list[dict]) -> dict | N
         allowed_names = {p["name"] for p in existing}
         normalized = []
         for item in participants:
+            if not isinstance(item, dict):
+                return None
             name = str(item.get("name") or "").strip()
             role = str(item.get("role") or "").strip()
             if name not in allowed_names or role not in ("me", "customer"):
                 continue
             normalized.append({"name": name, "role": role})
-        if len(normalized) != len(existing) or not any(p["role"] == "me" for p in normalized) or not any(p["role"] == "customer" for p in normalized):
+        if len(normalized) != len(existing) or {p["name"] for p in normalized} != allowed_names or not any(p["role"] == "me" for p in normalized) or not any(p["role"] == "customer" for p in normalized):
             return None
         analysis = json.loads(row["analysis_json"] or "{}")
         role_map = {p["name"]: ("我" if p["role"] == "me" else "客户") for p in normalized}
@@ -1397,14 +1727,91 @@ def update_chat_participants(chat_id: str, participants: list[dict]) -> dict | N
             for participant in analysis["participants"]:
                 if participant.get("name") in role_map:
                     participant["role"] = role_map[participant["name"]]
-        customer_name = next((p["name"] for p in normalized if p["role"] == "customer"), row["customer"])
+        customer_name = row["customer"] if len(normalized) > 2 and row["customer"] in {p["name"] for p in normalized if p["role"] == "customer"} else next((p["name"] for p in normalized if p["role"] == "customer"), row["customer"])
+        _ensure_customer(conn, customer_name)
+        if customer_name != row["customer"]:
+            _ensure_project(conn, customer_name, row["project"])
+            for table in ("requirements", "todos"):
+                linked = "source_id=? OR source_id IN (SELECT id FROM imports WHERE transcript_id=?)"
+                for project in conn.execute(f"SELECT DISTINCT project FROM {table} WHERE {linked}", (chat_id, chat_id)).fetchall():
+                    _ensure_project(conn, customer_name, project["project"])
+                conn.execute(f"UPDATE {table} SET customer=? WHERE {linked}", (customer_name, chat_id, chat_id))
         conn.execute(
             "UPDATE chats SET participants_json=?, analysis_json=?, customer=? WHERE id=?",
             (json.dumps(normalized, ensure_ascii=False), json.dumps(analysis, ensure_ascii=False), customer_name, chat_id),
         )
+        record_correction(conn, chat_id, "participants", json.dumps(existing, ensure_ascii=False), json.dumps(normalized, ensure_ascii=False))
         conn.execute("UPDATE imports SET customer=? WHERE transcript_id=?", (customer_name, chat_id))
         updated = conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
     return row_to_chat(updated)
+
+
+def _secure_key_path() -> Path:
+    return DATA_DIR / "llm-api-key.dpapi"
+
+
+def _dpapi_protect(value: str) -> bytes:
+    if os.name != "nt":
+        raise RuntimeError("Windows DPAPI is unavailable")
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+    raw = value.encode("utf-8")
+    source = (ctypes.c_ubyte * len(raw)).from_buffer_copy(raw)
+    data_in = Blob(len(raw), ctypes.cast(source, ctypes.POINTER(ctypes.c_ubyte)))
+    data_out = Blob()
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    if not crypt32.CryptProtectData(ctypes.byref(data_in), None, None, None, None, 0, ctypes.byref(data_out)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(data_out.pbData, data_out.cbData)
+    finally:
+        kernel32.LocalFree(data_out.pbData)
+
+
+def _dpapi_unprotect(value: bytes) -> str:
+    if os.name != "nt":
+        raise RuntimeError("Windows DPAPI is unavailable")
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+    source = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
+    data_in = Blob(len(value), ctypes.cast(source, ctypes.POINTER(ctypes.c_ubyte)))
+    data_out = Blob()
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    if not crypt32.CryptUnprotectData(ctypes.byref(data_in), None, None, None, None, 0, ctypes.byref(data_out)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(data_out.pbData, data_out.cbData).decode("utf-8")
+    finally:
+        kernel32.LocalFree(data_out.pbData)
+
+
+def _read_secure_api_key() -> str:
+    path = _secure_key_path()
+    if os.name != "nt" or not path.exists():
+        return ""
+    try:
+        return _dpapi_unprotect(path.read_bytes()).strip()
+    except Exception:
+        return ""
+
+
+def _write_secure_api_key(value: str) -> bool:
+    if os.name != "nt":
+        return False
+    path = _secure_key_path()
+    path.write_bytes(_dpapi_protect(value))
+    return True
+
+
+def _delete_plaintext_api_key() -> None:
+    with db() as conn:
+        conn.execute("DELETE FROM settings WHERE key='llm.api_key'")
 
 
 def _llm_setting_rows() -> dict[str, str]:
@@ -1417,6 +1824,16 @@ def _llm_setting_rows() -> dict[str, str]:
 
 def get_llm_config() -> dict:
     rows = _llm_setting_rows()
+    plaintext_key = rows.get("llm.api_key", "").strip()
+    secure_key = _read_secure_api_key()
+    if plaintext_key and os.name == "nt":
+        try:
+            _write_secure_api_key(plaintext_key)
+            _delete_plaintext_api_key()
+            secure_key = plaintext_key
+        except Exception:
+            # Keep compatibility if DPAPI is unavailable in a restricted host.
+            secure_key = plaintext_key
 
     def pick(key: str, default: str) -> str:
         value = rows.get(key, "").strip()
@@ -1424,7 +1841,7 @@ def get_llm_config() -> dict:
 
     return {
         "baseUrl": pick("llm.base_url", MAAS_BASE_URL).rstrip("/"),
-        "apiKey": pick("llm.api_key", MAAS_API_KEY),
+        "apiKey": secure_key or plaintext_key or MAAS_API_KEY,
         "asrModel": pick("llm.asr_model", MAAS_ASR_MODEL),
         "summaryModel": pick("llm.summary_model", MAAS_SUMMARY_MODEL),
         "visionModel": pick("llm.vision_model", MAAS_VISION_MODEL),
@@ -1450,12 +1867,22 @@ def save_llm_config(data: dict) -> dict:
     # Do not wipe an existing key when the UI leaves the password field blank.
     if not updates["llm.api_key"]:
         updates.pop("llm.api_key")
+    api_key = updates.pop("llm.api_key", "")
     with db() as conn:
         for key, value in updates.items():
             conn.execute(
                 "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, value),
             )
+    if api_key:
+        if not _write_secure_api_key(api_key):
+            with db() as conn:
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    ("llm.api_key", api_key),
+                )
+        else:
+            _delete_plaintext_api_key()
     return get_llm_config()
 
 
@@ -1466,6 +1893,32 @@ APP_SETTING_DEFAULTS = {
     "autoProcess": True,
     "updateIntervalHours": 3,
 }
+
+
+PROFILE_DEFAULTS = {"name": "王总", "role": "产品负责人", "company": "", "phone": "", "email": ""}
+
+
+def get_profile() -> dict:
+    with db() as conn:
+        rows = conn.execute("SELECT key,value FROM settings WHERE key LIKE 'profile.%'").fetchall()
+    saved = {row["key"].removeprefix("profile."): row["value"] for row in rows}
+    return {key: saved.get(key, value) for key, value in PROFILE_DEFAULTS.items()}
+
+
+def save_profile(data: dict) -> dict:
+    updates = {}
+    for key in PROFILE_DEFAULTS:
+        if key not in data:
+            continue
+        if not isinstance(data[key], str) or len(data[key]) > 120:
+            raise ValueError("个人信息须为 120 字以内的文本")
+        value = data[key].strip()
+        if key == "name" and not value:
+            raise ValueError("姓名不能为空")
+        updates[f"profile.{key}"] = value
+    with db() as conn:
+        conn.executemany("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", updates.items())
+    return get_profile()
 
 
 def get_app_settings() -> dict:
@@ -1736,7 +2189,8 @@ def summarize_transcript(transcript: str) -> dict:
 要求：
 1. 不得编造转写中没有的信息；没有提到的字段填“未提及”。
 2. 输出严格 JSON，字段固定。
-3. 字段格式：
+3. 每个非空字段在 evidence 中提供一句转写原文；不要猜测可信概率。
+4. 字段格式：
 {{
   "oneLine": "",
   "needs": "",
@@ -1745,10 +2199,11 @@ def summarize_transcript(transcript: str) -> dict:
   "decisionMakers": "",
   "objections": "",
   "nextActions": "",
-  "paymentMethod": ""
+  "paymentMethod": "",
+  "evidence": {{"needs": "原文", "budget": "原文", "timeline": "原文", "decisionMakers": "原文", "objections": "原文", "nextActions": "原文", "paymentMethod": "原文"}}
 }}
 转写：
-{transcript[:12000]}"""
+        {transcript if len(transcript) <= 12000 else transcript[:6000] + "\n[中间内容略]" + transcript[-6000:]}"""
     payload = {
         "model": get_llm_config()["summaryModel"],
         "messages": [{"role": "user", "content": prompt}],
@@ -1764,12 +2219,96 @@ def summarize_transcript(transcript: str) -> dict:
         "oneLine": "未提及", "needs": "未提及", "budget": "未提及", "timeline": "未提及",
         "decisionMakers": "未提及", "objections": "未提及", "nextActions": "未提及", "paymentMethod": "未提及",
     }
+    if not isinstance(data, dict) or any(key in data and not isinstance(data[key], str) for key in defaults):
+        raise ValueError("摘要结果格式不正确，请重试")
     for key, value in defaults.items():
         if not data.get(key):
             data[key] = value
-    data["confidence"] = float(data.get("confidence") or 0.9)
-    data["evidenceCount"] = int(data.get("evidenceCount") or 0)
+    evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+    checked = [key for key in defaults if key != "oneLine" and data[key] != "未提及"]
+    verified = {key: quote for key in checked if isinstance((quote := evidence.get(key)), str) and quote.strip() and quote.strip() in transcript}
+    data["evidence"] = verified
+    data["evidenceCount"] = len(verified)
+    data["confidence"] = round(len(verified) / len(checked), 2) if checked else 0
     return data
+
+
+def process_document(import_id: str, path: Path, task_id: str | None = None) -> None:
+    try:
+        ensure_task_active(task_id)
+        set_task_progress(task_id, 15)
+        text, attachments = document_ingest.extract(path)
+        if not text.strip():
+            raise ValueError("文档未提取到可读内容")
+        ensure_task_active(task_id)
+        set_task_progress(task_id, 55)
+        summary = summarize_transcript(text) if get_llm_config()["apiKey"] else {
+            "oneLine": "已提取原文，配置模型后可生成摘要", "needs": "未提及", "budget": "未提及", "timeline": "未提及",
+            "decisionMakers": "未提及", "objections": "未提及", "nextActions": "未提及", "paymentMethod": "未提及",
+            "confidence": 0, "evidenceCount": 0, "evidence": {},
+        }
+        ensure_task_active(task_id)
+        with db() as conn:
+            row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
+            if row is None:
+                return
+            transcript_id = f"tr-{import_id}"
+            segments = [{"id": f"p{index + 1}", "start": index, "end": index + 1, "speaker": "unknown", "text": text[index * 2000:(index + 1) * 2000]} for index in range((len(text) + 1999) // 2000)]
+            saved_attachments = [{"id": f"{import_id}-source", "name": row["file_name"], "kind": "file", "storedName": path.name, "label": "原始文件"}]
+            for index, (name, content) in enumerate(attachments):
+                stored_name = f"{import_id}-attachment-{index}{Path(name).suffix.lower()[:12]}"
+                (UPLOAD_DIR / stored_name).write_bytes(content)
+                mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+                kind = "voice" if mime.startswith("audio/") else "image" if mime.startswith("image/") else "video" if mime.startswith("video/") else "file"
+                saved_attachments.append({"id": f"{import_id}-attachment-{index}", "name": name, "kind": kind, "storedName": stored_name})
+            conn.execute("INSERT OR REPLACE INTO transcripts (id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json,attachments_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (transcript_id, row["file_name"], row["file_name"], row["size"], 0, row["imported_at"], row["customer"], "—", row["project"], "邮件" if path.suffix.lower() == ".eml" else "文件", json.dumps(segments, ensure_ascii=False), json.dumps(summary, ensure_ascii=False), json.dumps(saved_attachments, ensure_ascii=False)))
+            if conn.execute("UPDATE imports SET progress=100,status='done',transcript_id=? WHERE id=? AND status='processing'", (transcript_id, import_id)).rowcount != 1:
+                raise TaskCancelled()
+        if summary["confidence"] >= 0.6 and summary.get("evidence", {}).get("needs"):
+            source_type = "email" if path.suffix.lower() == ".eml" else "file"
+            insert_requirements_from_audio(import_id, str(row["customer"]), str(row["project"]), summary, source_time=str(row["imported_at"]), source_type=source_type)
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        finish_task(task_id, "cancelled", progress=0)
+    except Exception as exc:
+        set_import_status(import_id, "failed", 0)
+        finish_task(task_id, "failed", progress=0, error=str(exc))
+
+
+def update_attachment(source_type: str, source_id: str, attachment_id: str, values: dict) -> None:
+    table = "chats" if source_type == "chat" else "transcripts"
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(f"SELECT attachments_json FROM {table} WHERE id=?", (source_id,)).fetchone()
+        if row is None:
+            return
+        attachments = json.loads(row["attachments_json"] or "[]")
+        for attachment in attachments:
+            if attachment.get("id") == attachment_id:
+                attachment.update(values)
+        conn.execute(f"UPDATE {table} SET attachments_json=? WHERE id=?", (json.dumps(attachments, ensure_ascii=False), source_id))
+
+
+def transcribe_saved_voice(source_type: str, source_id: str, attachment_id: str, stored_name: str, task_id: str | None = None) -> None:
+    try:
+        ensure_task_active(task_id)
+        update_attachment(source_type, source_id, attachment_id, {"transcriptStatus": "processing", "transcriptError": ""})
+        path = (UPLOAD_DIR / Path(stored_name).name).resolve()
+        if path.parent != UPLOAD_DIR.resolve() or not path.is_file() or path.stat().st_size > 25 * 1024 * 1024:
+            raise ValueError("本地语音文件不存在或超过 25 MB")
+        text = transcribe_audio_file(path, mimetypes.guess_type(path.name)[0] or "audio/amr")
+        if not text.strip():
+            raise ValueError("语音未识别出可读文字，请检查音频后重试")
+        ensure_task_active(task_id)
+        update_attachment(source_type, source_id, attachment_id, {"transcript": text, "transcriptStatus": "done", "transcriptError": ""})
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        update_attachment(source_type, source_id, attachment_id, {"transcriptStatus": "failed", "transcriptError": "转写已取消，可以重试"})
+        finish_task(task_id, "cancelled", progress=0)
+    except Exception as exc:
+        update_attachment(source_type, source_id, attachment_id, {"transcriptStatus": "failed", "transcriptError": str(exc)[:1000]})
+        finish_task(task_id, "failed", progress=0, error=str(exc))
 
 
 def probe_duration(path: Path) -> float:
@@ -1831,17 +2370,20 @@ def split_transcript(text: str, duration: float) -> list[dict]:
     return segments
 
 
-def process_import_real(import_id: str, audio_path: Path, mime_type: str) -> None:
+def process_import_real(import_id: str, audio_path: Path, mime_type: str, task_id: str | None = None) -> None:
     """Real Sprint 1 pipeline: ffmpeg -> Qwen ASR -> Qwen structured summary."""
     try:
         def progress(value: int) -> None:
+            ensure_task_active(task_id)
             with db() as conn:
                 conn.execute("UPDATE imports SET progress=? WHERE id=? AND status='processing'", (value, import_id))
+            set_task_progress(task_id, value)
 
         progress(10)
         chosen = audio_path
         chosen_mime = mime_type or "audio/mpeg"
         if FFMPEG and audio_path.suffix.lower() not in (".mp3", ".m4a"):
+            ensure_task_active(task_id)
             compressed = compress_audio(audio_path, audio_path.with_suffix(".mp3"))
             if compressed:
                 chosen = compressed
@@ -1851,11 +2393,14 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str) -> Non
         def chunk_progress(index: int, total: int) -> None:
             progress(25 + int(25 * index / max(1, total)))
 
+        ensure_task_active(task_id)
         transcript_text = transcribe_audio_file(chosen, chosen_mime, chunk_progress)
+        ensure_task_active(task_id)
         if not transcript_text:
             raise RuntimeError("ASR returned empty text")
         progress(55)
         summary = summarize_transcript(transcript_text)
+        ensure_task_active(task_id)
         progress(80)
         duration = probe_duration(chosen) or 0.0
         segments = split_transcript(transcript_text, duration)
@@ -1863,6 +2408,7 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str) -> Non
             row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
             if row is None:
                 return
+            ensure_task_active(task_id)
             transcript_id = f"tr-{import_id}"
             conn.execute(
                 "INSERT OR REPLACE INTO transcripts (id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1881,38 +2427,276 @@ def process_import_real(import_id: str, audio_path: Path, mime_type: str) -> Non
                     json.dumps(summary, ensure_ascii=False),
                 ),
             )
-            conn.execute(
-                "UPDATE imports SET progress=100, status='done', transcript_id=? WHERE id=?",
+            import_update = conn.execute(
+                "UPDATE imports SET progress=100, status='done', transcript_id=? WHERE id=? AND status='processing'",
                 (transcript_id, import_id),
             )
-        insert_requirements_from_audio(import_id, str(row["customer"]), str(row["project"] or "—"), summary, source_time=str(row["imported_at"] or ""))
+            if import_update.rowcount != 1:
+                if task_id and task_status(task_id) == "cancelled":
+                    raise TaskCancelled()
+                raise RuntimeError("导入记录状态已改变，任务未完成")
+        if summary["confidence"] >= 0.6 and summary.get("evidence", {}).get("needs"):
+            insert_requirements_from_audio(import_id, str(row["customer"]), str(row["project"] or "—"), summary, source_time=str(row["imported_at"] or ""))
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        print(f"[ai-sidecar] real pipeline cancelled {import_id}", flush=True)
+        if task_id and task_status(task_id) == "running":
+            return
+        if task_id and has_active_replacement(task_id):
+            return
+        set_import_status(import_id, "cancelled", 0)
+        finish_task(task_id, "cancelled", progress=0)
     except Exception as exc:
         print(f"[ai-sidecar] real pipeline error {import_id}: {exc}", flush=True)
-        with db() as conn:
-            conn.execute("UPDATE imports SET status='failed', progress=0 WHERE id=?", (import_id,))
+        set_import_status(import_id, "failed", 0)
+        finish_task(task_id, "failed", progress=0, error=str(exc))
 
 
-def process_import(import_id: str) -> None:
+def process_import(import_id: str, task_id: str | None = None) -> None:
     """Simulate the Sprint 1 pipeline: upload -> transcode -> transcribe -> summarize."""
     try:
         for progress in (20, 40, 60, 80):
+            ensure_task_active(task_id)
             time.sleep(0.55)
             with db() as conn:
                 conn.execute("UPDATE imports SET progress=? WHERE id=? AND status='processing'", (progress, import_id))
+            set_task_progress(task_id, progress)
+        ensure_task_active(task_id)
         time.sleep(0.55)
         with db() as conn:
             row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
             if row is None:
                 return
+            ensure_task_active(task_id)
             transcript_id = row["transcript_id"]
-            if transcript_id is None and row["type"] in ("音频", "视频", "聊天记录"):
+            if transcript_id is None and row["type"] in ("音频", "视频"):
                 transcript_id = "tr-001"
-            conn.execute(
-                "UPDATE imports SET progress=100, status='done', transcript_id=? WHERE id=?",
+            import_update = conn.execute(
+                "UPDATE imports SET progress=100, status='done', transcript_id=? WHERE id=? AND status='processing'",
                 (transcript_id, import_id),
             )
+            if import_update.rowcount != 1:
+                if task_id and task_status(task_id) == "cancelled":
+                    raise TaskCancelled()
+                raise RuntimeError("导入记录状态已改变，任务未完成")
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        print(f"[ai-sidecar] process cancelled {import_id}", flush=True)
+        if task_id and task_status(task_id) == "running":
+            return
+        if task_id and has_active_replacement(task_id):
+            return
+        set_import_status(import_id, "cancelled", 0)
+        finish_task(task_id, "cancelled", progress=0)
     except Exception as exc:  # pragma: no cover - defensive for local prototype
         print(f"[ai-sidecar] process error {import_id}: {exc}", flush=True)
+        set_import_status(import_id, "failed", 0)
+        finish_task(task_id, "failed", progress=0, error=str(exc))
+
+
+def _run_task(task_id: str, runner, *args) -> None:
+    if not set_task_running(task_id):
+        return
+    try:
+        runner(*args, task_id=task_id)
+    except TaskCancelled:
+        finish_task(task_id, "cancelled", progress=0)
+    except Exception as exc:  # pragma: no cover - last-resort worker guard
+        print(f"[ai-sidecar] task error {task_id}: {exc}", flush=True)
+        task = get_task(task_id)
+        if task and task.get("importId"):
+            set_import_status(str(task["importId"]), "failed", 0)
+        finish_task(task_id, "failed", progress=0, error=str(exc))
+
+
+def start_task(task_id: str, runner, *args) -> None:
+    threading.Thread(target=_run_task, args=(task_id, runner, *args), daemon=True).start()
+
+
+def launch_task(task: dict) -> bool:
+    payload = task.get("payload") or {}
+    kind = task.get("kind")
+    import_id = str(task.get("importId") or payload.get("importId") or "")
+    if kind == "attachment_voice":
+        start_task(str(task["id"]), transcribe_saved_voice, payload["sourceType"], payload["sourceId"], payload["attachmentId"], payload["storedName"])
+        return True
+    if kind == "chat_analysis":
+        chat_id = str(task.get("entityId") or payload.get("chatId") or "")
+        if not import_id or not chat_id:
+            finish_task(str(task["id"]), "failed", error="任务缺少聊天记录标识")
+            return False
+        start_task(str(task["id"]), process_chat_analysis, import_id, chat_id)
+        return True
+    if kind == "import_real":
+        path = Path(str(payload.get("path") or ""))
+        if not path.exists():
+            set_import_status(import_id, "failed", 0)
+            finish_task(str(task["id"]), "failed", error="原始音频文件不存在，无法恢复")
+            return False
+        start_task(str(task["id"]), process_import_real, import_id, path, str(payload.get("mimeType") or "audio/mpeg"))
+        return True
+    if kind == "import_document":
+        path = Path(str(payload.get("path") or ""))
+        if not path.is_file():
+            set_import_status(import_id, "failed", 0)
+            finish_task(str(task["id"]), "failed", error="原始文档不存在，无法恢复")
+            return False
+        start_task(str(task["id"]), process_document, import_id, path)
+        return True
+    if kind == "import":
+        if not import_id:
+            finish_task(str(task["id"]), "failed", error="任务缺少导入记录标识")
+            return False
+        start_task(str(task["id"]), process_import, import_id)
+        return True
+    finish_task(str(task["id"]), "failed", error=f"不支持的任务类型：{kind}")
+    return False
+
+
+def retry_task(task_id: str) -> dict | None:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] in TASK_ACTIVE:
+            return row_to_task(row)
+        if row["status"] == "succeeded":
+            return row_to_task(row)
+        payload = json.loads(row["payload_json"] or "{}")
+        new_task_id = f"task-{uuid.uuid4().hex[:12]}"
+        now = task_now()
+        conn.execute(
+            "INSERT INTO tasks (id,kind,import_id,entity_id,status,progress,attempt,max_attempts,error,payload_json,created_at,updated_at,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                new_task_id,
+                row["kind"],
+                row["import_id"],
+                row["entity_id"],
+                "queued",
+                0,
+                0,
+                int(row["max_attempts"] or 3),
+                "",
+                json.dumps(payload, ensure_ascii=False),
+                now,
+                now,
+                None,
+                None,
+            ),
+        )
+        if row["import_id"]:
+            conn.execute("UPDATE imports SET status='processing', progress=0 WHERE id=?", (row["import_id"],))
+        if row["entity_id"] and row["kind"] == "chat_analysis":
+            conn.execute("UPDATE chats SET status='processing' WHERE id=?", (row["entity_id"],))
+        updated = conn.execute("SELECT * FROM tasks WHERE id=?", (new_task_id,)).fetchone()
+    launch_task(row_to_task(updated, include_payload=True))
+    return row_to_task(updated)
+
+
+def create_backup_archive() -> tuple[bytes, str]:
+    """Create a portable local backup without exporting the API key."""
+    with BACKUP_LOCK:
+        # Migrate legacy plaintext keys before copying the database.
+        get_llm_config()
+        temp_fd, temp_name = tempfile.mkstemp(prefix="clienthub-backup-", suffix=".db", dir=str(DATA_DIR))
+        os.close(temp_fd)
+        temp_db = Path(temp_name)
+        try:
+            source = connect()
+            destination = sqlite3.connect(temp_db)
+            try:
+                source.backup(destination)
+                # The archive is portable data only; API keys stay in local secure storage.
+                destination.execute("DELETE FROM settings WHERE key='llm.api_key'")
+                destination.commit()
+            finally:
+                source.close()
+                destination.close()
+
+            created_at = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"clienthub-backup-{created_at}.zip"
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "manifest.json",
+                    json.dumps({
+                        "format": "clienthub-backup",
+                        "version": 1,
+                        "createdAt": datetime.now().isoformat(timespec="seconds"),
+                        "secretsExcluded": True,
+                    }, ensure_ascii=False, indent=2),
+                )
+                archive.write(temp_db, "clienthub.db")
+                for root_name, root in (("uploads", UPLOAD_DIR), ("wechat-exports", EXPORT_DIR)):
+                    if not root.exists():
+                        continue
+                    for path in root.rglob("*"):
+                        if path.is_file():
+                            archive.write(path, str(Path(root_name) / path.relative_to(root)))
+            payload = buffer.getvalue()
+            (BACKUP_DIR / filename).write_bytes(payload)
+            return payload, filename
+        finally:
+            temp_db.unlink(missing_ok=True)
+
+
+def restore_backup_archive(payload: bytes) -> dict:
+    if len(payload) > 600 * 1024 * 1024:
+        raise ValueError("备份文件超过 600 MB，无法恢复")
+    with BACKUP_LOCK:
+        with db() as conn:
+            active = conn.execute("SELECT COUNT(*) AS n FROM tasks WHERE status IN ('queued','running')").fetchone()["n"]
+        if active:
+            raise ValueError("仍有任务正在处理，请等待或取消后再恢复备份")
+
+        restore_root = Path(tempfile.mkdtemp(prefix="clienthub-restore-", dir=str(DATA_DIR)))
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                total_size = sum(info.file_size for info in archive.infolist())
+                if total_size > 1_000 * 1024 * 1024:
+                    raise ValueError("备份解压后超过 1 GB，已拒绝恢复")
+                for info in archive.infolist():
+                    name = Path(info.filename)
+                    if name.is_absolute() or ".." in name.parts or name.parts[0] not in {"manifest.json", "clienthub.db", "uploads", "wechat-exports"}:
+                        raise ValueError("备份包含非法路径")
+                archive.extractall(restore_root)
+
+            manifest_path = restore_root / "manifest.json"
+            database_path = restore_root / "clienthub.db"
+            if not manifest_path.exists() or not database_path.exists():
+                raise ValueError("备份缺少必要文件")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("format") != "clienthub-backup" or int(manifest.get("version", 0)) != 1:
+                raise ValueError("不支持的备份格式")
+            check = sqlite3.connect(database_path)
+            try:
+                check.execute("SELECT 1 FROM imports LIMIT 1").fetchone()
+            finally:
+                check.close()
+
+            # Keep an automatic rollback point before replacing live data.
+            create_backup_archive()
+            source = sqlite3.connect(database_path)
+            target = connect()
+            try:
+                source.backup(target)
+                sales.migrate(target)
+                migrate_ingest(target)
+                target.commit()
+            finally:
+                source.close()
+                target.close()
+
+            for root_name, live_root in (("uploads", UPLOAD_DIR), ("wechat-exports", EXPORT_DIR)):
+                incoming = restore_root / root_name
+                if live_root.exists():
+                    shutil.rmtree(live_root)
+                if incoming.exists():
+                    os.replace(incoming, live_root)
+                live_root.mkdir(parents=True, exist_ok=True)
+            return {"status": "ok", "createdAt": manifest.get("createdAt"), "secretsExcluded": True}
+        finally:
+            shutil.rmtree(restore_root, ignore_errors=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1960,6 +2744,25 @@ class Handler(BaseHTTPRequestHandler):
             values = query.get(name) or []
             return str(values[0]) if values else default
 
+        if path == "/api/search":
+            with db() as conn:
+                result = sales.search(conn, q("q"))
+            self._json(result)
+            return
+        if path == "/api/todos":
+            with db() as conn:
+                result = sales.list_todos(conn, q("customer"))
+            self._json(result)
+            return
+        if path == "/api/profile":
+            self._json(get_profile())
+            return
+        if path.startswith("/api/customers/") and path.endswith("/followup"):
+            customer = unquote(path.split("/")[-2])
+            with db() as conn:
+                result = sales.followup(conn, customer)
+            self._json(result)
+            return
         if path == "/api/wechat/status":
             self._json(wechat_engine.status())
             return
@@ -1998,6 +2801,40 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"status": "error", "error": str(exc)}, 502)
             return
+        if path == "/api/tasks":
+            self._json(list_tasks(int(q("limit", "100") or 100)))
+            return
+        if path.startswith("/api/tasks/"):
+            task_id = unquote(path.split("/")[-1])
+            task = get_task(task_id)
+            if task is None:
+                self._json({"error": "task_not_found"}, 404)
+            else:
+                self._json(task)
+            return
+        if path == "/api/backups":
+            backups = []
+            for backup in sorted(BACKUP_DIR.glob("clienthub-backup-*.zip"), key=lambda item: item.stat().st_mtime, reverse=True)[:20]:
+                try:
+                    stat = backup.stat()
+                    backups.append({"name": backup.name, "size": stat.st_size, "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")})
+                except OSError:
+                    continue
+            self._json(backups)
+            return
+        if path == "/api/backup/export":
+            try:
+                archive, filename = create_backup_archive()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(len(archive)))
+                self._cors()
+                self.end_headers()
+                self.wfile.write(archive)
+            except Exception as exc:
+                self._json({"error": str(exc)}, 500)
+            return
         if path == "/api/settings/llm":
             config = get_llm_config()
             self._json({
@@ -2021,6 +2858,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/dashboard":
             self._json(dashboard_summary())
             return
+        if path == "/api/metrics":
+            try:
+                days = max(1, min(int(q("days", "7") or 7), 90))
+            except ValueError:
+                self._json({"error": "days_invalid"}, 400)
+                return
+            with db() as conn:
+                self._json(sales.metrics(conn, days=days))
+            return
         if path == "/api/health":
             config = get_llm_config()
             self._json({
@@ -2031,6 +2877,7 @@ class Handler(BaseHTTPRequestHandler):
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
                 "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.5"),
+                "apiRevision": 4,
             })
             return
         if path == "/api/imports":
@@ -2083,6 +2930,23 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(customer)
             return
+        if path.startswith("/api/files/") and path.endswith("/preview"):
+            name = Path(unquote(path.split("/")[-2])).name
+            file_path = (UPLOAD_DIR / name).resolve()
+            if file_path.parent != UPLOAD_DIR.resolve() or not file_path.is_file():
+                self._json({"error": "file_not_found"}, 404)
+                return
+            try:
+                if file_path.stat().st_size > 25 * 1024 * 1024:
+                    raise ValueError("附件超过 25 MB，请下载后打开")
+                if file_path.suffix.lower() in (".txt", ".csv"):
+                    text = file_path.read_bytes()[:document_ingest.MAX_TEXT].decode("utf-8-sig", errors="replace")
+                else:
+                    text, _ = document_ingest.extract(file_path)
+                self._json({"text": text})
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if path.startswith("/api/files/"):
             name = Path(unquote(path.split("/")[-1])).name
             file_path = UPLOAD_DIR / name
@@ -2094,6 +2958,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if q("download") == "1" or mime_type in ("text/html", "image/svg+xml", "application/xhtml+xml"):
+                self.send_header("Content-Disposition", "attachment")
             self._cors()
             self.end_headers()
             self.wfile.write(body)
@@ -2102,7 +2969,96 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if int(self.headers.get("Content-Length", "0") or "0") > 135 * 1024 * 1024:
+            self._json({"error": "request_too_large", "message": "请求超过 135 MB，请分批或压缩后重试"}, 413)
+            return
         data = self._read_json()
+
+        if path == "/api/profile":
+            try:
+                self._json(save_profile(data))
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/transcripts/") and path.endswith("/regenerate-summary"):
+            transcript_id = unquote(path.split("/")[3])
+            if not get_llm_config()["apiKey"]:
+                self._json({"error": "请先在设置中配置模型 API Key"}, 400)
+                return
+            with db() as conn:
+                row = conn.execute("SELECT segments_json FROM transcripts WHERE id=?", (transcript_id,)).fetchone()
+            if row is None:
+                self._json({"error": "transcript_not_found"}, 404)
+                return
+            original_segments = str(row["segments_json"])
+            transcript = "\n".join(str(item.get("text") or "") for item in json.loads(original_segments))
+            try:
+                summary = summarize_transcript(transcript)
+            except Exception as exc:
+                self._json({"error": f"摘要生成失败：{exc}"}, 502)
+                return
+            with db() as conn:
+                changed = conn.execute("UPDATE transcripts SET summary_json=? WHERE id=? AND segments_json=?", (json.dumps(summary, ensure_ascii=False), transcript_id, original_segments)).rowcount
+                result = conn.execute("SELECT * FROM transcripts WHERE id=?", (transcript_id,)).fetchone()
+            if not changed:
+                self._json({"error": "转写原文已更新，请重试生成摘要"}, 409)
+                return
+            self._json(row_to_transcript(result))
+            return
+        if (path.startswith("/api/chats/") or path.startswith("/api/transcripts/")) and path.endswith("/attachments/transcribe"):
+            source_id = unquote(path.split("/")[3])
+            source_type = "chat" if path.startswith("/api/chats/") else "transcript"
+            table = "chats" if source_type == "chat" else "transcripts"
+            attachment_id = str(data.get("attachmentId") or "")
+            with db() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (source_id,)).fetchone()
+                attachments = json.loads(row["attachments_json"] or "[]") if row else []
+                attachment = next((item for item in attachments if item.get("id") == attachment_id), None)
+                if not attachment or attachment.get("kind") != "voice" or not attachment.get("storedName"):
+                    self._json({"error": "本地语音附件不存在"}, 400)
+                    return
+                active = conn.execute("SELECT id FROM tasks WHERE kind='attachment_voice' AND entity_id=? AND json_extract(payload_json,'$.attachmentId')=? AND status IN ('queued','running')", (source_id, attachment_id)).fetchone()
+                if active or attachment.get("transcriptStatus") == "done":
+                    self._json({"status": "processing" if active else "done"}, 202 if active else 200)
+                    return
+                task_id = f"task-{uuid.uuid4().hex[:12]}"
+                payload = {"sourceType": source_type, "sourceId": source_id, "attachmentId": attachment_id, "storedName": attachment["storedName"]}
+                now = task_now()
+                conn.execute("INSERT INTO tasks(id,kind,entity_id,status,payload_json,created_at,updated_at) VALUES (?, 'attachment_voice', ?, 'queued', ?, ?, ?)", (task_id, source_id, json.dumps(payload), now, now))
+                attachment.update({"transcriptStatus": "processing", "transcriptError": ""})
+                conn.execute(f"UPDATE {table} SET attachments_json=? WHERE id=?", (json.dumps(attachments, ensure_ascii=False), source_id))
+            start_task(task_id, transcribe_saved_voice, source_type, source_id, attachment_id, str(attachment["storedName"]))
+            self._json({"status": "started", "taskId": task_id, "attachmentId": attachment_id}, 202)
+            return
+        if path in ("/api/todos", "/api/imports/archive"):
+            try:
+                with db() as conn:
+                    result = sales.save_todo(conn, data) if path == "/api/todos" else sales.archive_imports(conn, data)
+                self._json(result, 201 if path == "/api/todos" else 200)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/tasks/") and path.endswith("/retry"):
+            task_id = unquote(path.split("/")[-2])
+            task = retry_task(task_id)
+            if task is None:
+                self._json({"error": "task_not_found"}, 404)
+            else:
+                self._json(task)
+            return
+
+        if path == "/api/backup/restore":
+            encoded = str(data.get("archiveBase64") or "").strip()
+            if not encoded:
+                self._json({"error": "archiveBase64_required"}, 400)
+                return
+            try:
+                archive = base64.b64decode(encoded, validate=True)
+                self._json(restore_backup_archive(archive))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
 
         if path == "/api/settings/llm":
             try:
@@ -2146,8 +3102,10 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute("UPDATE chats SET status='processing' WHERE id=?", (chat_id,))
                 if import_row:
                     conn.execute("UPDATE imports SET status='processing', progress=5 WHERE id=?", (import_row["id"],))
-            threading.Thread(target=process_chat_analysis, args=(import_row["id"] if import_row else "", chat_id), daemon=True).start()
-            self._json({"status": "started", "chatId": chat_id})
+            import_id = import_row["id"] if import_row else ""
+            task_id = create_task("chat_analysis", import_id=import_id, entity_id=chat_id, payload={"importId": import_id, "chatId": chat_id})
+            start_task(task_id, process_chat_analysis, import_id, chat_id)
+            self._json({"status": "started", "chatId": chat_id, "taskId": task_id})
             return
 
         if path.startswith("/api/customers/") and path.endswith("/projects"):
@@ -2203,14 +3161,22 @@ class Handler(BaseHTTPRequestHandler):
             if not file_name:
                 self._json({"error": "fileName_required"}, 400)
                 return
-            audio_b64 = str(data.get("audioBase64") or "").strip()
+            audio_b64 = str(data.get("audioBase64") or data.get("contentBase64") or "").strip()
             audio_bytes: bytes | None = None
             if audio_b64:
                 try:
-                    audio_bytes = base64.b64decode(audio_b64)
+                    audio_bytes = base64.b64decode(audio_b64, validate=True)
                 except Exception:
                     self._json({"error": "invalid_audio_base64"}, 400)
                     return
+                if len(audio_bytes) > 100 * 1024 * 1024:
+                    self._json({"error": "file_too_large"}, 413)
+                    return
+            file_suffix = Path(file_name).suffix.lower()
+            document_file = file_suffix in document_ingest.SUPPORTED
+            if document_file and audio_bytes is None:
+                self._json({"error": "file_content_required"}, 400)
+                return
             if audio_bytes is not None:
                 digest = hashlib.sha256(audio_bytes).hexdigest()
             else:
@@ -2245,15 +3211,20 @@ class Handler(BaseHTTPRequestHandler):
                         digest,
                     ),
                 )
-            if saved_path is not None:
-                threading.Thread(
-                    target=process_import_real,
-                    args=(import_id, saved_path, str(data.get("mimeType") or "audio/mpeg")),
-                    daemon=True,
-                ).start()
+            mime_type = str(data.get("mimeType") or "audio/mpeg")
+            task_kind = "import_document" if document_file else "import_real" if saved_path is not None else "import"
+            task_id = create_task(
+                task_kind,
+                import_id=import_id,
+                payload={"importId": import_id, "path": str(saved_path) if saved_path is not None else "", "mimeType": mime_type},
+            )
+            if document_file and saved_path is not None:
+                start_task(task_id, process_document, import_id, saved_path)
+            elif saved_path is not None:
+                start_task(task_id, process_import_real, import_id, saved_path, mime_type)
             else:
-                threading.Thread(target=process_import, args=(import_id,), daemon=True).start()
-            self._json({"id": import_id, "status": "processing"}, 201)
+                start_task(task_id, process_import, import_id)
+            self._json({"id": import_id, "status": "processing", "taskId": task_id}, 201)
             return
 
         if path == "/api/asr":
@@ -2263,7 +3234,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             tmp_path: Path | None = None
             try:
-                audio = base64.b64decode(audio_b64)
+                audio = base64.b64decode(audio_b64, validate=True)
                 suffix = Path(str(data.get("fileName") or "audio.mp3")).suffix or ".mp3"
                 tmp_path = DATA_DIR / "tmp" / f"asr-{uuid.uuid4().hex}{suffix}"
                 tmp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2317,7 +3288,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "imageBase64_required"}, 400)
                 return
             try:
-                image = base64.b64decode(image_b64)
+                image = base64.b64decode(image_b64, validate=True)
                 stored = extract_chat_screenshot(
                     image,
                     str(data.get("mimeType") or "image/png"),
@@ -2366,27 +3337,7 @@ class Handler(BaseHTTPRequestHandler):
             if chat is not None:
                 self._json({"id": chat["importId"], "status": "processing", "chatId": chat["chatId"], "messageCount": chat["messageCount"]}, 201)
                 return
-            known = ("张三" in text) or ("会员" in text) or ("小程序" in text)
-            import_id = f"imp-{uuid.uuid4().hex[:10]}"
-            with db() as conn:
-                conn.execute(
-                    "INSERT INTO imports (id,file_name,type,size,customer,project,status,progress,imported_at,transcript_id,sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        import_id,
-                        f"粘贴文本_{datetime.now().strftime('%Y-%m-%d')}.txt",
-                        "聊天记录",
-                        f"{len(text)} 字",
-                        "张三" if known else "待归档",
-                        str(data.get("project") or "—"),
-                        "processing",
-                        0,
-                        now_time(),
-                        None,
-                        None,
-                    ),
-                )
-            threading.Thread(target=process_import, args=(import_id,), daemon=True).start()
-            self._json({"id": import_id, "status": "processing"}, 201)
+            self._json({"error": "not_a_recognized_chat"}, 400)
             return
 
         self._json({"error": "not_found"}, 404)
@@ -2395,6 +3346,66 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         data = self._read_json()
         parts = [part for part in path.split("/") if part]
+        if len(parts) == 4 and parts[:2] == ["api", "transcripts"] and parts[3] == "summary":
+            summary = data.get("summary")
+            fields = ("oneLine", "needs", "budget", "timeline", "decisionMakers", "objections", "nextActions", "paymentMethod")
+            if not isinstance(summary, dict) or any(not isinstance(summary.get(key, ""), str) for key in fields):
+                self._json({"error": "invalid_summary"}, 400)
+                return
+            with db() as conn:
+                row = conn.execute("SELECT * FROM transcripts WHERE id=?", (parts[2],)).fetchone()
+                if row:
+                    previous = json.loads(row["summary_json"])
+                    merged = {**previous, **{key: summary[key] for key in fields if key in summary}}
+                    changed = [key for key in fields if key in summary and summary[key] != previous.get(key)]
+                    if changed:
+                        merged.pop("evidence", None)
+                        merged["confidence"] = 0
+                        merged["evidenceCount"] = 0
+                    conn.execute("UPDATE transcripts SET summary_json=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), parts[2]))
+                    for key in fields:
+                        if key in summary:
+                            record_correction(conn, parts[2], key, str(previous.get(key, "")), summary[key])
+                    row = conn.execute("SELECT * FROM transcripts WHERE id=?", (parts[2],)).fetchone()
+            self._json(row_to_transcript(row) if row else {"error": "transcript_not_found"}, 200 if row else 404)
+            return
+        if len(parts) == 4 and parts[:2] == ["api", "transcripts"] and parts[3] == "segments":
+            changes = data.get("segments")
+            if not isinstance(changes, list) or len(changes) > 5000:
+                self._json({"error": "invalid_segments"}, 400)
+                return
+            with db() as conn:
+                row = conn.execute("SELECT * FROM transcripts WHERE id=?", (parts[2],)).fetchone()
+                if row:
+                    segments = json.loads(row["segments_json"])
+                    by_id = {item["id"]: item for item in segments}
+                    if len({change.get("id") for change in changes if isinstance(change, dict)}) != len(changes) or any(not isinstance(change, dict) or not isinstance(change.get("id"), str) or change["id"] not in by_id or change.get("speaker") not in ("me", "customer", "unknown") or not isinstance(change.get("text"), str) or not change["text"].strip() or len(change["text"]) > 10000 for change in changes):
+                        self._json({"error": "invalid_segments"}, 400)
+                        return
+                    text_changed = any(change["text"] != by_id[change["id"]]["text"] for change in changes)
+                    for change in changes:
+                        original = by_id[change["id"]]
+                        for field in ("speaker", "text"):
+                            record_correction(conn, parts[2], f"{original['id']}.{field}", str(original[field]), str(change[field]))
+                            original[field] = change[field]
+                    conn.execute("UPDATE transcripts SET segments_json=? WHERE id=?", (json.dumps(segments, ensure_ascii=False), parts[2]))
+                    if text_changed:
+                        summary = json.loads(row["summary_json"])
+                        summary.pop("evidence", None)
+                        summary["confidence"] = 0
+                        summary["evidenceCount"] = 0
+                        conn.execute("UPDATE transcripts SET summary_json=? WHERE id=?", (json.dumps(summary, ensure_ascii=False), parts[2]))
+                    row = conn.execute("SELECT * FROM transcripts WHERE id=?", (parts[2],)).fetchone()
+            self._json(row_to_transcript(row) if row else {"error": "transcript_not_found"}, 200 if row else 404)
+            return
+        if len(parts) == 3 and parts[:2] == ["api", "todos"]:
+            try:
+                with db() as conn:
+                    result = sales.save_todo(conn, data, parts[2])
+                self._json(result if result else {"error": "todo_not_found"}, 200 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "chats" and parts[3] == "participants":
             chat_id = parts[2]
             participants = data.get("participants")
@@ -2443,6 +3454,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         parts = [part for part in path.split("/") if part]
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "tasks":
+            task = cancel_task(unquote(parts[2]))
+            if task is None:
+                self._json({"error": "task_not_found"}, 404)
+            else:
+                self._json(task)
+            return
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
             try:
                 self._json(delete_customer(unquote(parts[2])))
@@ -2518,15 +3536,25 @@ def main() -> None:
         threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
     init_db()
     backfill_requirements()
-    # Resume any imports left in "processing" from a previous run.
+    # Resume queued/running tasks after a process crash.
     with db() as conn:
+        conn.execute("UPDATE tasks SET status='queued', error='上次进程中断，任务已恢复', updated_at=? WHERE status='running'", (task_now(),))
+        task_rows = conn.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at").fetchall()
         pending = conn.execute("SELECT id,type,transcript_id FROM imports WHERE status='processing'").fetchall()
+    task_import_ids = {str(row["import_id"] or "") for row in task_rows}
+    for row in task_rows:
+        launch_task(row_to_task(row, include_payload=True))
+    # Backfill tasks for records created by older versions before the queue existed.
     for row in pending:
-        import_id = row["id"]
+        import_id = str(row["id"])
+        if import_id in task_import_ids:
+            continue
         if row["type"] == "聊天记录" and str(row["transcript_id"] or "").startswith("chat-"):
-            threading.Thread(target=process_chat_analysis, args=(import_id, row["transcript_id"]), daemon=True).start()
+            task_id = create_task("chat_analysis", import_id=import_id, entity_id=str(row["transcript_id"]), payload={"importId": import_id, "chatId": str(row["transcript_id"])})
+            start_task(task_id, process_chat_analysis, import_id, str(row["transcript_id"]))
         else:
-            threading.Thread(target=process_import, args=(import_id,), daemon=True).start()
+            task_id = create_task("import", import_id=import_id, payload={"importId": import_id})
+            start_task(task_id, process_import, import_id)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[ai-sidecar] listening on http://{args.host}:{args.port}", flush=True)
     try:

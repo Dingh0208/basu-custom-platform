@@ -23,6 +23,7 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 7. 需求清单；
 8. 设置（大模型配置）；
 9. 自动更新。
+10. 销售待办、批量归档与全局搜索。
 
 ## 2. 当前已完成
 
@@ -62,47 +63,119 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - `services/wechat-engine/**` 使用 **Git LFS**（约 201MB）；
 - `.github/workflows/release.yml`：推送 `v*` tag 自动构建 Windows NSIS 并发布 Release；
 - 工作流使用 `npm`（不要再用 pnpm，GitHub Actions 上 pnpm 报过 `packages field missing or empty`）；
-- `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；侧边栏头像附近显示更新/下载进度（`2.1 MB / 287.5 MB`）和“重启并安装”；
-- 最新已发布 Release：`v0.2.5`，安装包约 **287.5MB**；
-- v0.2.5 已包含首页、设置页精简、设置页布局优化与 Sidecar 生命周期修复；v0.2.4 / v0.2.3 为历史版本。
+- `electron-updater` 已接入，启动检查 + 每 3 小时后台检查；侧边栏头像附近显示更新/下载进度和“重启并安装”；
+- 当前待发布版本为 `v0.2.6`，本机安装包约 **289.3MB**；CI 体积会随 FFmpeg 下载版本略有变化；
+- v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
 
 ## 3. 当前卡点 / 状态
 
+### 2026-10-31：界面与数据一致性修复（工作区已实现，未发布）
+
+- 「待归档」独立为资料列表、资料详情、批量归属确认三部分，不再复用导入中心。点击未归档文件直接进入并选中该资料；已解析的资料可预览内容，再确认客户、项目、负责人。
+- 首页纵向内容禁止被 Flex 压缩，保留顶部 Hero 和统计卡片的自然高度；内容超出窗口时滚动。导入中心左栏可滚动，「最近导入」至少 360px，AI 任务列表放在其后，归档表单移到独立页面。
+- 客户详情/销售待办在本地服务连接后重新加载，失败可重试；旧服务缺少销售接口时提示重启。此次实际故障是 8765 端口残留的旧 Python 服务，销售接口返回 404；已备份本地库并启动当前源码服务，实际客户跟进接口返回 200。`/api/health` 当前为 `apiRevision: 4`。
+- 删除客户前明确提示关联项目、需求、待办和沟通资料也会删除；删除响应包含项目数，刷新导入中心项目候选。删除时取消该客户未完成的 AI 任务；读取已删除客户的项目不会创建客户。演示数据只在首次建库时写入，删除后的空库重启不再重新生成客户和项目。
+- 点击左下角头像编辑姓名、职位、公司、手机号、邮箱，保存后侧栏即时更新，刷新后保留。`GET/POST /api/profile` 使用现有 `settings` 表的 `profile.*` 键，纳入既有数据库备份；姓名必填，字段限制 120 字。这是本机个人资料入口。
+- 验证：前端构建、Python 编译、34 项隔离 SQLite/API 回归测试通过。浏览器实测独立归档、客户跟进、待办、客户级联删除与刷新、个人信息保存与刷新；1440×900、1280×800、2492×1415 首页顶部内容完整，导入列表可滚动，未发现页面运行错误。v0.2.6 本机安装包已完成构建，尚未完成 Windows 虚拟机自动更新端到端验证。
+
+### 2026-10-31：P1 销售工作闭环（工作区已实现，未发布）
+
+- 通话摘要/聊天解析的需求可保存并打开客户 360 中的对应需求；需求新增负责人、截止日期，并可创建关联待办。待办保存客户、项目、需求 ID、来源 ID、原文、负责人、截止日期和完成时间，支持编辑、完成、取消与重新开启。
+- 侧栏「待办」可查看待跟进、逾期、已完成和全部事项；「首页」增加今日到期与逾期提醒；项目列表中的客户可点击进入客户 360。
+- 侧栏「待归档」可批量选择已处理记录，一次确认客户、项目、负责人；关联聊天、转写、需求、待办在同一事务中同步，任一校验失败整批回滚。每批最多 200 条；处理中、失败、取消的资料需先完成处理；新客户/项目先创建再刷新候选。
+- 客户 360 增加下一步动作确认、风险原文、最近沟通、今日到期、逾期与超过 7 天未沟通提示。聊天优先用实际结束日期；历史仅有 HH:MM 的记录不猜测日期。AI 中的「下周」等时间由用户确认具体日期后再保存待办。
+- 侧栏「全局搜索」或 `Ctrl/Cmd+K` 打开本地关键词搜索，覆盖客户、项目、聊天全文、转写全文/摘要、需求及来源原文；可按类型筛选，点击跳转对应记录。每类最多返回 20 条并显示完整匹配数量，关键词最多 100 字；不是语义搜索。
+- 客户/项目改名、客户合并、聊天角色修正、需求合并/删除时同步销售待办关系。合并需求后保留待办原始证据；编辑需求描述不覆盖待办独立确认的执行人/日期；完成待办不自动将需求标为「已实现」。
+- 摘要「保存修改」已接入持久化 PATCH，部分字段更新保留其他字段。新增待办已纳入 SQLite 备份与恢复，旧库/旧备份会幂等补充字段。
+
+实现入口：`services/ai/sales.py` 管理销售待办、迁移、批量归档、跟进聚合和搜索；`main.py` 负责 HTTP 路由及既有实体联动。销售 `todos` 与 P0 的 AI 处理队列 `tasks` 分开，避免取消 AI 任务影响业务待办。未引入新依赖。
+
+```text
+GET   /api/todos?customer=
+POST  /api/todos
+PATCH /api/todos/{id}
+POST  /api/imports/archive          {ids,customer,project,owner}
+GET   /api/customers/{name}/followup
+GET   /api/search?q=
+PATCH /api/transcripts/{id}/summary {summary:{...}}
+```
+
+验证：`pnpm build`、Python 编译、`git diff --check` 通过；`services/ai/test_sales.py` 的 21 项隔离 SQLite/API 回归测试通过，覆盖迁移、归档回滚、来源别名、改名/合并/删除、独立执行人/日期、备份恢复与搜索结果数量。浏览器已验证需求/项目搜索定位、项目返回客户 360、确认下一步动作、创建关联待办、完成与刷新持久化、返回来源摘要、批量归档、Ctrl+K/Esc；1024px 待办页无横向溢出，未发现控制台错误。测试数据库与实际用户数据分开。提醒当前呈现在应用内；负责人为姓名字段，尚无多用户账号和系统通知。
+
 1. **设置页右侧空白**：刚把 `.settings-workspace` 从固定 `760px + 420px` 改成 `1.35fr + 0.65fr` 并拉伸卡片高度；需要再截图确认 2503px 宽度下右侧是否仍空。修改在 `src/styles.css`。
 2. **本地开发数据库状态**：`services/ai/data/clienthub.db` 当前只有少量测试数据（2 个客户、4 条导入），不是完整演示数据；不要随意清空，先确认用户数据。
-3. **v0.2.5**：`package.json` 版本 `0.2.5`，已打 `v0.2.5` tag 并发布；设置页「测试连接 / 拉取模型」、退出残留 Sidecar、项目列表同步问题已修复。
+3. **v0.2.6**：`package.json` 版本 `0.2.6`，待提交并推送 `v0.2.6` tag；发布构建不带 `.env`，Sidecar 使用 PID 文件管理。v0.2.5 已发布，设置页「测试连接 / 拉取模型」、退出残留 Sidecar、项目列表同步问题已修复。
 4. **微信真实账号检测**：当前开发机 `GET /api/wechat/status` 返回 `available:true`，但 `accounts:[]`，没有真实微信库可测；需要在登录微信的 Windows VM 上验证。
 5. **大模型 `/models` 接口**：部分聚合平台返回非 JSON 或 401；设置页“测试连接”已改为真实 `/chat/completions` 最小请求，已验证 `{"status":"ok"}`。但“拉取模型”仍依赖 `/models`，若平台不支持会报错，属正常边界。
 6. **自动更新**：代码和 release 工作流已接入，但尚未在真实旧版本安装包上完成一次“下载→进度→重启安装”的端到端实测；需要 VM 验证。
 
+### 2026-10-31：识别质量与附件闭环（工作区已实现，未发布）
+
+- 新增 `services/ai/requirements.txt`，Sidecar 开发与 CI 构建都安装 `pypdf`、`python-docx`、`openpyxl`；Windows 打包前会验证这些库已安装，避免只在开发环境解析成功。
+- PDF 文本层、DOCX 段落/表格、XLSX 工作表/单元格、EML 正文可解析。限制 200 页 PDF、50 张工作表、10,000 行/表、100,000 字；邮件最多保存 20 个附件、每个 25 MB、合计 100 MB。导入文件最大 100 MB。扫描 PDF 明确提示需要 OCR；旧 DOC/XLS 与 PPT 不在当前解析器范围。
+- 文档/邮件及其附件现在写入本地 uploads，API 可提供只读预览与副本下载；文档附件元数据进入 SQLite，源文件及副本进入现有本地备份。现有数据库会补充 `transcripts.attachments_json`，旧备份恢复时也会幂等迁移。
+- 保存语音附件的转写任务写入现有 `tasks` 队列，支持断点恢复、取消和失败后重试；聊天和文档详情均可播放音视频、预览图像/PDF/可提取正文、下载附件。附件转写文本参与全局搜索。
+- 摘要显示原文证据覆盖度。只有模型提供、且可在原文中逐字核对的证据会通过门槛自动创建需求。聊天中的 AI 建议也保留证据核对状态；用户可以人工确认后跟进。
+- 人工修改摘要、逐段校正原文/我方/客户角色、调整聊天成员角色均有 before/after 校正历史；原文变更后清除旧摘要证据和覆盖度。摘要可按已保存的最新原文重新生成，并防止并发原文校正被摘要结果覆盖。
+- 当前 MaaS ASR 只返回纯文本；通话说话人保持未确认，由用户逐段标注，未伪造自动声纹分离结果。微信群聊成员仍来自实际发言人，角色修正不把已选定的客户错误切换为第一位成员。自动说话人分离、扫描件 OCR、旧版 Office 格式仍需后续接入并单独验证。
+- 摘要与解析输入超过 12,000 字时采样首尾段，避免长通话只读取开头；空白 PDF 页会正确跳过；文件导入在前端与 Sidecar 增加大小限制。
+- 本次 Sidecar API 修订为 `4`；请完整重启旧的本地服务后使用新预览/重新生成接口和产品指标。
+
+```text
+GET  /api/files/{storedName}/preview
+POST /api/transcripts/{id}/attachments/transcribe {attachmentId}
+POST /api/chats/{id}/attachments/transcribe {attachmentId}
+POST /api/transcripts/{id}/regenerate-summary
+```
+
+验证：`pnpm build`、Python 编译、`git diff --check` 和 `services/ai/test_sales.py` 的 32 项隔离 SQLite/API 测试通过。覆盖旧库迁移、PDF/DOCX/XLSX/EML 解析边界、邮件附件持久化/预览/备份恢复、两类记录的语音转写队列、无效校正原子拒绝、证据失效/恢复及群聊客户身份保持。没有连接 MaaS 或真实微信账号执行端到端识别，也没有将自动声纹分离或 OCR 标成已支持。
+
+### 2026-10-31：核心产品指标与观测优化（工作区已实现，未发布）
+
+- 新增 `sales.metrics()` 与 `GET /api/metrics?days=1..90`，首页复用 `/api/dashboard` 同一响应中的 `metrics`，避免额外请求；默认窗口为近 7 天。
+- 已实现导入成功率、解析完成率、解析耗时 P95、摘要转需求有效率、沟通结束到创建待办平均耗时、周活跃客户/项目数。每项返回 `value`、分子、分母、单位和说明；没有可验证样本返回 `null`，避免把“未测量”当成 0。
+- 新增 `customer_match_audits` 审计表。当前归档只记录人工确认，自动匹配准确率仅接受 `method='auto'` 且有人工确认结果的样本，开发库没有这类样本时会显示“—”。
+- 为指标查询补充按状态/时间/来源的 SQLite 索引；旧库迁移会检查表和字段后再建可选索引，不影响最小旧库升级。
+- 测试新增指标率、P95、平均耗时、活跃客户/项目和无样本准确率用例；本轮回归共 34 项隔离 SQLite/API 测试通过，前端构建和 Python 编译通过。
+
+```text
+GET /api/dashboard             # 首页统计 + metrics
+GET /api/metrics?days=7        # 独立读取指标
+```
+
 ## 4. 下一步计划
 
-1. 确认设置页布局（右边空白）最终截图；如果仍空，改成一列/加一张状态卡填满。
-2. 用 `pnpm build` + 本地打包验证首页、设置、项目模块。
-3. 在 Windows VM 重新安装 v0.2.5 安装包，验证：
+1. 在 Windows VM 安装 v0.2.6，验证：
    - 微信库更新/账号检测；
    - 音频导入；
    - 聊天解析；
    - 自动更新检查（需要下一次 release）。
-4. 如果用户要发新版：先改 `package.json` version（如 0.2.5），提交 main，打 `v0.2.5` tag；GitHub Actions 自动发布；不要版本号与 tag 不一致（之前出现过 v0.2.1 draft 问题）。
-5. 如需进一步压缩安装包：当前 287.5MB 的瓶颈是 `wechat-engine` 192MB + Electron 180MB；可做“微信引擎首次使用下载”的 Lite 版（约 100MB 级），但会增加首次使用联网依赖。
+2. 验证自动更新下载、进度显示和重启安装。
+3. 如需进一步压缩安装包：当前约 289.3MB 的瓶颈是 `wechat-engine` 192MB、Electron 180MB 和 FFmpeg；可做“微信引擎首次使用下载”的 Lite 版（约 100MB 级），但会增加首次使用联网依赖。
 
 ## 5. 关键文件
 
 ```text
 electron/main.cjs          Electron 主进程、Sidecar 启动、自动更新、安装更新 IPC
 electron/preload.cjs       contextBridge：update 状态/安装
-src/App.tsx                页面路由（home/import/customers/projects/settings/chat/transcript）
+src/App.tsx                页面路由（home/import/inbox/customers/projects/todos/settings/chat/transcript）
 src/components/HomePage.tsx
 src/components/ImportCenter.tsx
 src/components/CustomerList.tsx
 src/components/ProjectPage.tsx
 src/components/SettingsPage.tsx
 src/components/Sidebar.tsx
+src/components/TodoWorkspace.tsx
+src/components/TodoModal.tsx
+src/components/InboxArchive.tsx
+src/components/GlobalSearch.tsx
+src/components/PersonalProfileModal.tsx
 src/api/client.ts
 src/types.ts
 src/styles.css
 services/ai/main.py        Sidecar API / SQLite / MaaS / 客户/项目/需求/设置
+services/ai/sales.py       P1 销售待办 / 批量归档 / 跟进 / 全局搜索
+services/ai/test_sales.py  临时数据库与 HTTP API 回归测试
 services/ai/wechat_engine.py 微信引擎桥接
 services/wechat-engine/    微信后端（Git LFS）
 services/ffmpeg/ffmpeg.exe # 本地构建用，gitignore；CI 下载
@@ -154,6 +227,9 @@ pnpm build
 # Python 语法
 python -m py_compile services/ai/main.py services/ai/wechat_engine.py
 
+# P1 回归测试（使用临时数据库，不接触现有用户数据）
+python -m unittest discover -s services/ai -p test_sales.py -v
+
 # 本地 Sidecar
 python services/ai/main.py --host 127.0.0.1 --port 8765
 
@@ -178,5 +254,5 @@ GET  /api/customers/{name}/requirements
 ## 8. 备注
 
 - 本文件不含任何真实 API Key、密码或客户隐私数据。
-- 最新正式 Release：`v0.2.5`；v0.2.4 / v0.2.3 为历史版本。
+- 最新正式 Release：`v0.2.5`；v0.2.6 已完成本机构建，推送 tag 后由 GitHub Actions 发布；v0.2.4 / v0.2.3 为历史版本。
 - 若新会话需要继续，先读本文件，再检查 `git status` 和 `release/`，不要重新从零猜架构。
