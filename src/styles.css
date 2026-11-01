@@ -533,6 +533,38 @@ button{font-family:inherit}
 .settings-meta-grid strong{font-size:12px;font-weight:600}
 .backup-panel{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .backup-panel-title{font-size:11.5px;font-weight:700;color:#344054;margin-bottom:3px}
+.settings-workspace-expanded{align-items:start;overflow:auto}
+.settings-main-column,.settings-side-column{display:flex;flex-direction:column;gap:16px;min-width:0}
+.settings-workspace-expanded .settings-section{height:auto}
+.settings-side-column .settings-section{padding:14px 16px}
+.settings-actions-spaced{margin-top:12px}
+.settings-meta-grid-wide{grid-template-columns:repeat(4,minmax(0,1fr))}
+.settings-meta-grid-wide strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.settings-last-backup{font-size:10px;color:var(--muted-2);margin-top:9px}
+.settings-form-stack{display:flex;flex-direction:column;gap:11px}
+.settings-form-stack label,.settings-field-inline{display:flex;flex-direction:column;gap:6px;font-size:10.5px;color:#475467}
+.settings-form-stack input,.settings-field-inline select{width:100%;height:31px;border:1px solid var(--line-strong);border-radius:8px;padding:0 9px;background:#fff;color:var(--ink);font:inherit;outline:none}
+.settings-form-stack input:focus,.settings-field-inline select:focus{border-color:#9fd0c9;box-shadow:0 0 0 2px rgba(15,118,110,.08)}
+.settings-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #f2f4f7}
+.settings-toggle-row>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.settings-toggle-row strong{font-size:11px;color:#344054}
+.settings-toggle-row span{font-size:9.5px;color:var(--muted-2);line-height:1.45}
+.settings-save-btn{width:100%;justify-content:center;margin-top:2px}
+.diagnostic-status{display:flex;align-items:center;gap:7px;padding:9px 10px;border:1px solid #d8ebe8;border-radius:8px;background:#f5fbfa;font-size:10.5px;color:#475467}
+.diagnostic-status .status-dot{margin:0;background:#f79009}
+.diagnostic-status .status-dot.online{background:#12b76a}
+.diagnostic-status strong{color:#344054}
+.diagnostic-status span:last-child{margin-left:auto;font-size:9.5px;color:var(--muted-2)}
+.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:11px 0}
+.settings-status-grid>div{display:flex;flex-direction:column;gap:3px;padding:8px 9px;border:1px solid #eef1f2;border-radius:8px;background:#fbfdfd}
+.settings-status-grid span{font-size:9.5px;color:var(--muted-2)}
+.settings-status-grid strong{font-size:11px;color:#344054}
+.settings-ok{color:#027a48!important}
+.settings-warn{color:#b54708!important}
+.privacy-note{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #f2f4f7;font-size:10.5px}
+.privacy-note:last-of-type{border-bottom:0}
+.privacy-note strong{color:#344054}
+.privacy-note span{color:var(--muted-2);text-align:right;overflow-wrap:anywhere}
 .task-queue-card{padding-bottom:6px;flex:0 0 auto;order:2}
 .task-queue-list{display:flex;flex-direction:column}
 .task-queue-row{display:flex;align-items:center;gap:10px;padding:9px 16px;border-top:1px solid #f2f4f7}
@@ -614,6 +646,8 @@ button{font-family:inherit}
 @media(max-width:900px){.sales-archive-form{grid-template-columns:1fr 1fr}.sales-archive-form .btn{width:100%}.sales-workspace{padding:12px}}
 @media(max-width:1050px){.inbox-columns{grid-template-columns:1fr}.inbox-intro{align-items:flex-start;flex-direction:column}.inbox-records{min-height:0}.inbox-details{display:grid;grid-template-columns:1fr 1fr;align-items:start}}
 @media(max-width:600px){.sales-archive-form{grid-template-columns:1fr}.sales-metrics{gap:10px}.sales-suggestion{align-items:flex-start}.global-search-modal .modal-body{padding:12px}.sales-filters{padding:8px}.inbox-details{display:flex}.inbox-workspace{padding:14px}}
+@media(max-width:1100px){.settings-workspace-expanded{grid-template-columns:1fr}.settings-meta-grid-wide{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.settings-workspace{padding:12px}.settings-meta-grid-wide{grid-template-columns:1fr}.settings-actions-spaced{align-items:stretch}.settings-actions-spaced .btn{flex:1}}
 
 /* ---------- Project page ---------- */
 .project-workspace{padding:16px 18px}

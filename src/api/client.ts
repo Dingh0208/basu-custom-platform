@@ -1,4 +1,4 @@
-import type { AppSettings, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, BackupSummary, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -180,6 +180,13 @@ export async function saveLlmConfig(data: Partial<LlmConfig> & { apiKey?: string
   });
 }
 
+export async function clearLlmApiKey(): Promise<LlmConfig | null> {
+  return fetchJson<LlmConfig>('/api/settings/llm', {
+    method: 'POST',
+    body: JSON.stringify({ clearApiKey: true }),
+  });
+}
+
 export async function testLlmConfig(data: Partial<LlmConfig> & { apiKey?: string }): Promise<LlmModelsResult | null> {
   return fetchJson<LlmModelsResult>('/api/settings/llm/test', {
     method: 'POST',
@@ -248,6 +255,14 @@ export async function saveAppSettings(data: Partial<AppSettings>): Promise<AppSe
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+export async function fetchBackups(): Promise<BackupSummary[] | null> {
+  return fetchJson<BackupSummary[]>('/api/backups', undefined, 5000);
+}
+
+export async function fetchDiagnostics(): Promise<Diagnostics | null> {
+  return fetchJson<Diagnostics>('/api/diagnostics', undefined, 3000);
 }
 
 export async function fetchCustomerProjects(customer: string): Promise<CustomerProject[] | null> {

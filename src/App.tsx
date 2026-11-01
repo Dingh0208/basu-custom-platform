@@ -20,6 +20,7 @@ import {
   createImport,
   deleteImport,
   fetchChat,
+  fetchAppSettings,
   fetchImports,
   fetchProjects,
   fetchPersonalProfile,
@@ -112,12 +113,16 @@ export default function App() {
       if (!mounted) return;
       if (health?.status === 'ok') {
         setSidecarOnline(true);
-        const [data, projectData, personal] = await Promise.all([fetchImports(), fetchProjects(), fetchPersonalProfile()]);
+        const [data, projectData, personal, appSettings] = await Promise.all([fetchImports(), fetchProjects(), fetchPersonalProfile(), fetchAppSettings()]);
         if (mounted && personal) setProfile(personal);
         if (mounted && data) setImports(data);
         if (mounted && projectData) {
           setProjects(projectData);
-          setSelectedProject((current) => current && projectData.some((project) => project.name === current) ? current : '');
+          setSelectedProject((current) => {
+            if (current && projectData.some((project) => project.name === current)) return current;
+            const preferred = appSettings?.defaultProject || '';
+            return preferred && projectData.some((project) => project.name === preferred) ? preferred : '';
+          });
         }
         return;
       }

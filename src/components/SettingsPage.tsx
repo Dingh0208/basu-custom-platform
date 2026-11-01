@@ -1,12 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
-import type { LlmConfig, LlmModelsResult } from '../types';
-import { downloadBackup, fetchLlmConfig, pullLlmModels, restoreBackup, saveLlmConfig, testLlmConfig } from '../api/client';
+import type { AppSettings, BackupSummary, Diagnostics, LlmConfig, LlmModelsResult, WeChatStatus } from '../types';
+import {
+  clearLlmApiKey,
+  downloadBackup,
+  fetchAppSettings,
+  fetchBackups,
+  fetchDiagnostics,
+  fetchLlmConfig,
+  getWechatStatus,
+  pullLlmModels,
+  restoreBackup,
+  saveAppSettings,
+  saveLlmConfig,
+  testLlmConfig,
+} from '../api/client';
+import { IconRefresh } from './Icons';
 
 type SettingsPageProps = {
   onToast: (message: string) => void;
 };
 
 const ALIYUN_BAILIAN = 'https://bailian.console.aliyun.com/';
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  defaultProject: '',
+  defaultOwner: '王总',
+  autoMatch: true,
+  autoProcess: true,
+  autoUpdate: true,
+  updateIntervalHours: 3,
+};
+
+function formatBytes(bytes: number) {
+  if (!bytes) return '—';
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatBackupDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function healthLabel(diagnostics: Diagnostics | null) {
+  if (!diagnostics) return '未连接';
+  return diagnostics.status === 'ok' ? '运行正常' : '需要检查';
+}
 
 export default function SettingsPage({ onToast }: SettingsPageProps) {
   const [baseUrl, setBaseUrl] = useState('');
@@ -17,11 +55,19 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
   const [masked, setMasked] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
-  const [busy, setBusy] = useState<'test' | 'pull' | 'save' | 'app' | null>(null);
-  const [message, setMessage] = useState<string>('');
-  const [updateStatus, setUpdateStatus] = useState<string>('');
+  const [busy, setBusy] = useState<'test' | 'pull' | 'save' | 'clear' | null>(null);
+  const [message, setMessage] = useState('');
+  const [updateStatus, setUpdateStatus] = useState('');
   const [backupBusy, setBackupBusy] = useState<'export' | 'restore' | null>(null);
   const [backupMessage, setBackupMessage] = useState('');
+  const [backups, setBackups] = useState<BackupSummary[]>([]);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [appBusy, setAppBusy] = useState(false);
+  const [appMessage, setAppMessage] = useState('');
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [wechatStatus, setWechatStatus] = useState<WeChatStatus | null>(null);
+  const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+  const [diagnosticMessage, setDiagnosticMessage] = useState('');
   const backupInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,6 +82,28 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     });
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([fetchLlmConfig(), fetchAppSettings(), fetchBackups(), fetchDiagnostics(), getWechatStatus()]).then(([llm, app, backupList, diag, wechat]) => {
+      if (!mounted) return;
+      if (llm) {
+        setBaseUrl(llm.baseUrl || '');
+        setAsrModel(llm.asrModel || 'qwen3-asr-flash');
+        setSummaryModel(llm.summaryModel || 'qwen3.8-flash');
+        setVisionModel(llm.visionModel || 'qwen3.8-omni-flash');
+        setMasked(llm.apiKeyMasked || '');
+        setHasKey(!!llm.hasKey);
+      }
+      if (app) setAppSettings({ ...DEFAULT_APP_SETTINGS, ...app });
+      if (backupList) setBackups(backupList);
+      if (diag) setDiagnostics(diag);
+      if (wechat) setWechatStatus(wechat);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const currentConfig: Partial<LlmConfig> & { apiKey?: string } = { baseUrl, apiKey, asrModel, summaryModel, visionModel };
+
   async function checkUpdates() {
     setUpdateStatus('正在检查更新…');
     const bridge = (window as unknown as { clientHub?: { checkForUpdates?: () => Promise<{ status: string }> } }).clientHub;
@@ -45,29 +113,32 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     }
     const result = await bridge.checkForUpdates();
     if (result.status === 'dev') setUpdateStatus('开发模式下暂不提供更新检查');
+    else if (result.status === 'error') setUpdateStatus('更新检查失败，请稍后重试');
   }
 
-  useEffect(() => {
-    let mounted = true;
-    fetchLlmConfig().then((data) => {
-      if (!mounted || !data) return;
-      setBaseUrl(data.baseUrl || '');
-      setAsrModel(data.asrModel || 'qwen3-asr-flash');
-      setSummaryModel(data.summaryModel || 'qwen3.8-flash');
-      setVisionModel(data.visionModel || 'qwen3.8-omni-flash');
-      setMasked(data.apiKeyMasked || '');
-      setHasKey(!!data.hasKey);
-    });
-    return () => { mounted = false; };
-  }, []);
+  async function refreshDiagnostics() {
+    setDiagnosticBusy(true);
+    setDiagnosticMessage('正在读取本地服务状态…');
+    const [diag, wechat, backupList] = await Promise.all([fetchDiagnostics(), getWechatStatus(), fetchBackups()]);
+    if (diag) setDiagnostics(diag);
+    if (wechat) setWechatStatus(wechat);
+    if (backupList) setBackups(backupList);
+    setDiagnosticBusy(false);
+    setDiagnosticMessage(diag ? '状态已刷新' : '本地服务未响应，请确认 Sidecar 已启动');
+  }
 
-  const currentConfig: Partial<LlmConfig> & { apiKey?: string } = {
-    baseUrl,
-    apiKey,
-    asrModel,
-    summaryModel,
-    visionModel,
-  };
+  async function restartSidecar() {
+    setDiagnosticBusy(true);
+    setDiagnosticMessage('正在重启本地服务…');
+    const bridge = (window as unknown as { clientHub?: { restartSidecar?: () => Promise<{ status: string }> } }).clientHub;
+    const result = await bridge?.restartSidecar?.();
+    if (!result || result.status === 'dev') {
+      setDiagnosticBusy(false);
+      setDiagnosticMessage('开发模式请重启 npm / Electron 启动命令');
+      return;
+    }
+    window.setTimeout(() => { void refreshDiagnostics(); }, 800);
+  }
 
   async function run(action: 'test' | 'pull') {
     if (!baseUrl.trim()) {
@@ -109,9 +180,42 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     setMessage('保存成功，新的分析任务将使用该配置');
   }
 
+  async function clearKey() {
+    if (!hasKey || !window.confirm('确定删除本机保存的大模型 Key 吗？删除后新的 AI 任务将回退到 Mock 模式。')) return;
+    setBusy('clear');
+    const result = await clearLlmApiKey();
+    setBusy(null);
+    if (!result) {
+      setMessage('删除失败，请确认 Sidecar 已连接');
+      return;
+    }
+    setApiKey('');
+    setMasked('');
+    setHasKey(false);
+    onToast('已删除本机保存的大模型 Key');
+    setMessage('Key 已从本机安全存储中删除');
+  }
+
+  async function saveApplicationSettings() {
+    setAppBusy(true);
+    setAppMessage('');
+    const result = await saveAppSettings(appSettings);
+    if (!result) {
+      setAppBusy(false);
+      setAppMessage('保存失败，请确认 Sidecar 已连接');
+      return;
+    }
+    setAppSettings(result);
+    const bridge = (window as unknown as { clientHub?: { configureUpdates?: (settings: { enabled: boolean; intervalHours: number }) => Promise<boolean> } }).clientHub;
+    await bridge?.configureUpdates?.({ enabled: result.autoUpdate, intervalHours: result.updateIntervalHours });
+    setAppBusy(false);
+    setAppMessage('导入与更新设置已保存');
+    onToast('应用设置已保存');
+  }
+
   async function exportBackup() {
     setBackupBusy('export');
-    setBackupMessage('');
+    setBackupMessage('正在生成备份…');
     const blob = await downloadBackup();
     if (!blob) {
       setBackupBusy(null);
@@ -125,6 +229,8 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
     link.click();
     URL.revokeObjectURL(url);
     setBackupBusy(null);
+    const backupList = await fetchBackups();
+    if (backupList) setBackups(backupList);
     setBackupMessage('备份已导出，并保存在本机数据目录');
   }
 
@@ -159,82 +265,58 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
   }
 
   function modelInput(value: string, setter: (v: string) => void, placeholder: string, listId: string) {
-    return (
-      <>
-        <input list={listId} value={value} onChange={(e) => setter(e.target.value)} placeholder={placeholder} />
-        <datalist id={listId}>
-          {models.map((model) => <option key={model} value={model} />)}
-        </datalist>
-      </>
-    );
+    return <><input list={listId} value={value} onChange={(e) => setter(e.target.value)} placeholder={placeholder} /><datalist id={listId}>{models.map((model) => <option key={model} value={model} />)}</datalist></>;
   }
 
   return (
     <>
-      <header className="topbar">
-        <div className="crumbs"><strong>设置</strong><span className="badge done">本地配置</span></div>
-        <div className="top-actions" />
-      </header>
+      <header className="topbar"><div className="crumbs"><strong>设置</strong><span className="badge done">本地配置</span></div><div className="top-actions" /></header>
 
-      <div className="settings-workspace">
-        <section className="card settings-section">
-          <div className="card-head">
-            <div>
-              <div className="card-title">大模型配置</div>
-              <div className="card-sub">一个聚合 Key 通配音频 / 文本 / 视频模型</div>
+      <div className="settings-workspace settings-workspace-expanded">
+        <main className="settings-main-column">
+          <section className="card settings-section" id="settings-llm">
+            <div className="card-head"><div><div className="card-title">大模型配置</div><div className="card-sub">为音频、文本和图像分析指定模型</div></div><a className="btn ghost" href={ALIYUN_BAILIAN} target="_blank" rel="noreferrer" style={{ height: 28, padding: '0 8px', fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>前往阿里云百炼 ↗</a></div>
+            <div className="llm-tip">Key 使用 Windows DPAPI 加密保存在本机。发布包不包含任何 API Key，备份文件也会排除密钥。</div>
+            <div className="customer-form-grid">
+              <label className="settings-field-wide">Base URL<input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
+              <label className="settings-field-wide">API Key<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasKey ? `已保存 ${masked}，留空表示不修改` : 'sk-...'} /></label>
+              <label>音频转写模型 {modelInput(asrModel, setAsrModel, 'qwen3-asr-flash', 'asr-models')}</label>
+              <label>文本 / 总结模型 {modelInput(summaryModel, setSummaryModel, 'qwen3.8-flash', 'summary-models')}</label>
+              <label>视频 / 图像模型 {modelInput(visionModel, setVisionModel, 'qwen3.8-omni-flash', 'vision-models')}</label>
             </div>
-            <a className="btn ghost" href={ALIYUN_BAILIAN} target="_blank" rel="noreferrer" style={{ height: 28, padding: '0 8px', fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-              前往阿里云百炼 ↗
-            </a>
-          </div>
+            <div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => run('test')} disabled={busy !== null}>{busy === 'test' ? '测试中…' : '测试连接'}</button><button className="btn" onClick={() => run('pull')} disabled={busy !== null}>{busy === 'pull' ? '拉取中…' : '拉取模型'}</button><button className="btn primary" onClick={save} disabled={busy !== null || !baseUrl.trim()}>{busy === 'save' ? '保存中…' : '保存配置'}</button><button className="btn ghost danger-text" onClick={() => void clearKey()} disabled={busy !== null || !hasKey}>{busy === 'clear' ? '删除中…' : '删除已保存 Key'}</button></div>
+            {message && <div className="llm-result" aria-live="polite">{message}</div>}
+          </section>
 
-          <div className="llm-tip">
-            此功能需要<strong>聚合大模型 Key</strong>。请先在阿里云百炼开通并创建 API-KEY，再把 Base URL 和 Key 填到下面；不同功能可指定不同模型。
-          </div>
+          <section className="card settings-section" id="settings-data">
+            <div className="card-head"><div><div className="card-title">数据与备份</div><div className="card-sub">客户、项目、附件和任务都保存在本机</div></div></div>
+            <div className="settings-meta-grid settings-meta-grid-wide"><div><span>版本</span><strong>0.2.6</strong></div><div><span>数据库</span><strong>{diagnostics ? formatBytes(diagnostics.databaseSize) : '未读取'}</strong></div><div><span>数据目录</span><strong title={diagnostics?.dataDir}>{diagnostics?.dataDir || '本机用户数据目录'}</strong></div><div><span>备份数量</span><strong>{backups.length} 份</strong></div></div>
+            <div className="backup-panel"><div className="backup-panel-title">备份与恢复</div><div className="small-note">备份包含业务数据、附件和任务记录，不包含 API Key。恢复前会自动创建一份当前数据备份。</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={exportBackup} disabled={backupBusy !== null}>{backupBusy === 'export' ? '导出中…' : '导出备份'}</button><button className="btn" onClick={() => backupInput.current?.click()} disabled={backupBusy !== null}>{backupBusy === 'restore' ? '恢复中…' : '从备份恢复'}</button><input ref={backupInput} className="file-input-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void importBackup(file); }} /></div>{backups[0] && <div className="settings-last-backup">最近备份：{formatBackupDate(backups[0].createdAt)} · {formatBytes(backups[0].size)}</div>}{backupMessage && <div className="llm-result" aria-live="polite">{backupMessage}</div>}</div>
+          </section>
+        </main>
 
-          <div className="customer-form-grid">
-            <label className="settings-field-wide">Base URL<input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
-            <label className="settings-field-wide">API Key<input type={'pass' + 'word'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasKey ? `已保存 ${masked}，留空表示不修改` : 'sk-...'} /></label>
-            <label>音频转写模型 {modelInput(asrModel, setAsrModel, 'qwen3-asr-flash', 'asr-models')}</label>
-            <label>文本 / 总结模型 {modelInput(summaryModel, setSummaryModel, 'qwen3.8-flash', 'summary-models')}</label>
-            <label>视频 / 图像模型 {modelInput(visionModel, setVisionModel, 'qwen3.8-omni-flash', 'vision-models')}</label>
-            <label className="settings-actions">
-              <span style={{ display: 'block', fontSize: 10.5, color: 'var(--muted-2)' }}>先“测试连接”，再“拉取模型”，然后从下拉候选中选择各功能模型。</span>
-            </label>
-          </div>
+        <aside className="settings-side-column">
+          <section className="card settings-section" id="settings-diagnostics">
+            <div className="card-head"><div><div className="card-title">本地服务与诊断</div><div className="card-sub">确认 Sidecar、FFmpeg 和微信引擎状态</div></div><button className="icon-btn" onClick={() => void refreshDiagnostics()} aria-label="刷新诊断" disabled={diagnosticBusy}><IconRefresh size={15} /></button></div>
+            <div className="diagnostic-status"><span className={`status-dot ${diagnostics ? 'online' : ''}`} /><strong>{healthLabel(diagnostics)}</strong><span>127.0.0.1:{diagnostics?.port || 8765}</span></div>
+            <div className="settings-status-grid"><div><span>Sidecar</span><strong>{diagnostics ? `API ${diagnostics.apiRevision}` : '未连接'}</strong></div><div><span>AI 模式</span><strong>{diagnostics?.mode === 'maas' ? 'MaaS' : 'Mock'}</strong></div><div><span>FFmpeg</span><strong className={diagnostics?.ffmpeg.available ? 'settings-ok' : 'settings-warn'}>{diagnostics?.ffmpeg.available ? '可用' : '未检测'}</strong></div><div><span>微信引擎</span><strong className={wechatStatus?.available ? 'settings-ok' : 'settings-warn'}>{wechatStatus?.available ? '可用' : '未连接'}</strong></div></div>
+            <div className="small-note">版本：{diagnostics?.version || '—'} · 微信账号：{wechatStatus?.accounts?.length || 0} 个</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => void restartSidecar()} disabled={diagnosticBusy}>{diagnosticBusy ? '处理中…' : '重启本地服务'}</button></div>{diagnosticMessage && <div className="llm-result" aria-live="polite">{diagnosticMessage}</div>}
+          </section>
 
-          <div className="settings-actions" style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => run('test')} disabled={busy !== null}>{busy === 'test' ? '测试中…' : '测试连接'}</button>
-            <button className="btn" onClick={() => run('pull')} disabled={busy !== null}>{busy === 'pull' ? '拉取中…' : '拉取模型'}</button>
-            <button className="btn primary" onClick={save} disabled={busy !== null || !baseUrl.trim()}>{busy === 'save' ? '保存中…' : '保存配置'}</button>
-          </div>
-          {message && <div className="llm-result">{message}</div>}
-        </section>
+          <section className="card settings-section" id="settings-import">
+            <div className="card-head"><div><div className="card-title">导入默认值</div><div className="card-sub">新资料会沿用这些偏好</div></div></div>
+            <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示按内容判断" /></label><div className="settings-toggle-row"><div><strong>自动识别客户</strong><span>按手机号、微信号、邮箱和文件名匹配</span></div><button className={`switch ${appSettings.autoMatch ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoMatch: !current.autoMatch }))} aria-label="切换自动识别客户" /></div><div className="settings-toggle-row"><div><strong>导入后自动处理</strong><span>转写、摘要、需求抽取和建索引</span></div><button className={`switch ${appSettings.autoProcess ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoProcess: !current.autoProcess }))} aria-label="切换导入后自动处理" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入设置'}</button>{appMessage && <div className="llm-result" aria-live="polite">{appMessage}</div>}</div>
+          </section>
 
-        <section className="card settings-section">
-          <div className="card-head"><div><div className="card-title">数据与版本</div><div className="card-sub">本地数据只保存在这台电脑</div></div></div>
-          <div className="settings-meta-grid">
-            <div><span>版本</span><strong>0.2.5</strong></div>
-            <div><span>数据存储</span><strong>本机用户数据目录</strong></div>
-            <div><span>微信引擎</span><strong>内置，无需单独安装</strong></div>
-            <div><span>FFmpeg</span><strong>内置，音频无需额外配置</strong></div>
-          </div>
-          <div className="small-note" style={{ marginTop: 10 }}>客户记录、导入文件、大模型 Key 均保存在本机，不会随版本推送到仓库。</div>
-          <div className="settings-actions" style={{ marginTop: 12 }}>
-            <button className="btn" onClick={checkUpdates}>检查更新</button>
-            {updateStatus && <span className="llm-result" style={{ marginTop: 0 }}>{updateStatus}</span>}
-          </div>
-          <div className="backup-panel">
-            <div className="backup-panel-title">本地备份</div>
-            <div className="small-note">包含客户、项目、需求、转写、聊天和附件；API Key 使用系统加密存储，不写入备份文件。</div>
-            <div className="settings-actions" style={{ marginTop: 9 }}>
-              <button className="btn" onClick={exportBackup} disabled={backupBusy !== null}>{backupBusy === 'export' ? '导出中…' : '导出备份'}</button>
-              <button className="btn" onClick={() => backupInput.current?.click()} disabled={backupBusy !== null}>{backupBusy === 'restore' ? '恢复中…' : '从备份恢复'}</button>
-              <input ref={backupInput} className="file-input-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void importBackup(file); }} />
-            </div>
-            {backupMessage && <div className="llm-result">{backupMessage}</div>}
-          </div>
-        </section>
+          <section className="card settings-section" id="settings-updates">
+            <div className="card-head"><div><div className="card-title">更新设置</div><div className="card-sub">控制后台检查和下载行为</div></div></div>
+            <div className="settings-toggle-row"><div><strong>自动检查更新</strong><span>发现新版本后自动下载</span></div><button className={`switch ${appSettings.autoUpdate ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoUpdate: !current.autoUpdate }))} aria-label="切换自动检查更新" /></div><label className="settings-field-inline">检查频率<select value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((current) => ({ ...current, updateIntervalHours: Number(e.target.value) }))}><option value={1}>每 1 小时</option><option value={3}>每 3 小时</option><option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option></select></label><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={checkUpdates}>立即检查</button><button className="btn primary" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存更新设置'}</button></div>{updateStatus && <div className="llm-result" aria-live="polite">{updateStatus}</div>}
+          </section>
+
+          <section className="card settings-section" id="settings-about">
+            <div className="card-head"><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub 0.2.6 · API revision 4</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
+          </section>
+        </aside>
       </div>
     </>
   );

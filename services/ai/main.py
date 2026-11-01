@@ -1814,6 +1814,13 @@ def _delete_plaintext_api_key() -> None:
         conn.execute("DELETE FROM settings WHERE key='llm.api_key'")
 
 
+def _delete_secure_api_key() -> None:
+    try:
+        _secure_key_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _llm_setting_rows() -> dict[str, str]:
     with db() as conn:
         return {
@@ -1874,7 +1881,10 @@ def save_llm_config(data: dict) -> dict:
                 "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, value),
             )
-    if api_key:
+    if data.get("clearApiKey") is True:
+        _delete_secure_api_key()
+        _delete_plaintext_api_key()
+    elif api_key:
         if not _write_secure_api_key(api_key):
             with db() as conn:
                 conn.execute(
@@ -1891,6 +1901,7 @@ APP_SETTING_DEFAULTS = {
     "defaultOwner": "王总",
     "autoMatch": True,
     "autoProcess": True,
+    "autoUpdate": True,
     "updateIntervalHours": 3,
 }
 
@@ -1932,7 +1943,7 @@ def get_app_settings() -> dict:
         if f"app.{key}" not in rows:
             continue
         raw = rows[f"app.{key}"]
-        if key in ("autoMatch", "autoProcess"):
+        if key in ("autoMatch", "autoProcess", "autoUpdate"):
             result[key] = raw.lower() == "true"
         elif key == "updateIntervalHours":
             try:
@@ -1950,7 +1961,7 @@ def save_app_settings(data: dict) -> dict:
         if key not in data:
             continue
         value = data[key]
-        if key in ("autoMatch", "autoProcess"):
+        if key in ("autoMatch", "autoProcess", "autoUpdate"):
             updates[f"app.{key}"] = "true" if value else "false"
         elif key == "updateIntervalHours":
             try:
@@ -1966,6 +1977,34 @@ def save_app_settings(data: dict) -> dict:
                 (key, value),
             )
     return get_app_settings()
+
+
+def get_diagnostics() -> dict:
+    config = get_llm_config()
+    try:
+        database_size = DB_PATH.stat().st_size
+    except OSError:
+        database_size = 0
+    try:
+        wechat_backend = str(wechat_engine._find_backend() or "")
+    except Exception:
+        wechat_backend = os.getenv("WECHAT_DATA_ANALYSIS_BACKEND", "").strip()
+    ffmpeg_path = FFMPEG or ""
+    return {
+        "status": "ok",
+        "service": "clienthub-ai-sidecar",
+        "host": "127.0.0.1",
+        "port": 8765,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.6"),
+        "apiRevision": 4,
+        "mode": "maas" if config["apiKey"] else "mock",
+        "dataDir": str(DATA_DIR),
+        "databaseSize": database_size,
+        "backups": len(list(BACKUP_DIR.glob("clienthub-backup-*.zip"))),
+        "apiKeyStorage": "Windows DPAPI" if os.name == "nt" else "本地配置回退",
+        "ffmpeg": {"available": bool(ffmpeg_path and Path(ffmpeg_path).exists()), "path": ffmpeg_path},
+        "wechatEngine": {"available": bool(wechat_backend and Path(wechat_backend).exists()), "path": wechat_backend},
+    }
 
 
 def _llm_request(method: str, url: str, *, api_key: str = "", payload: dict | None = None, timeout: int = 60) -> tuple[int, str]:
@@ -2880,6 +2919,9 @@ class Handler(BaseHTTPRequestHandler):
                 "apiRevision": 4,
             })
             return
+        if path == "/api/diagnostics":
+            self._json(get_diagnostics())
+            return
         if path == "/api/imports":
             with db() as conn:
                 rows = conn.execute("SELECT * FROM imports ORDER BY imported_at DESC, rowid DESC").fetchall()
@@ -3181,6 +3223,9 @@ class Handler(BaseHTTPRequestHandler):
                 digest = hashlib.sha256(audio_bytes).hexdigest()
             else:
                 digest = hashlib.sha256(f"{file_name}|{data.get('size','')}|{data.get('kind','')}".encode("utf-8")).hexdigest()
+            app_settings = get_app_settings()
+            import_customer = str(data.get("customer") or "待归档") if app_settings["autoMatch"] else "待归档"
+            import_project = str(data.get("project") or app_settings["defaultProject"] or "—")
             with db() as conn:
                 existing = conn.execute("SELECT * FROM imports WHERE sha256=?", (digest,)).fetchone()
                 if existing:
@@ -3202,8 +3247,8 @@ class Handler(BaseHTTPRequestHandler):
                         file_name,
                         record_type,
                         str(data.get("size") or "—"),
-                        str(data.get("customer") or "待归档"),
-                        str(data.get("project") or "—"),
+                        import_customer,
+                        import_project,
                         "processing",
                         0,
                         now_time(),

@@ -50,9 +50,12 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 
 - 设置页保留：
   - 大模型配置（聚合 Key、Base URL、测试连接、拉取模型、ASR/文本/视觉模型选择、阿里云百炼跳转）；
-  - 数据与版本信息；
-  - 检查更新。
-- 已移除“通用设置”卡片（用户明确不要）。
+  - 数据与备份（数据库占用、备份数量、导出、恢复）；
+  - 本地服务诊断（Sidecar API 修订、FFmpeg、微信引擎、账号数量、重启服务）；
+  - 导入默认值（默认项目、负责人、自动识别和自动处理偏好）；
+  - 更新设置（自动检查和频率）；
+  - 隐私与关于（DPAPI 密钥存储、版本和本地文件说明）。
+- API Key 可在设置页删除；Windows 使用 DPAPI 加密文件，备份中不包含密钥。
 - 首页工作台：Hero、客户/项目/需求/待归档统计、最近导入、项目阶段分布、最新需求、快捷入口；
 - 默认启动页为首页。
 
@@ -68,6 +71,14 @@ ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天�
 - v0.2.6 包含 Sidecar PID 生命周期、发布包密钥隔离、微信引擎过滤和安装器版本命名修复；v0.2.5 / v0.2.4 / v0.2.3 为历史版本。
 
 ## 3. 当前卡点 / 状态
+
+### 2026-11-01：设置中心扩展（工作区已实现，未重新发布）
+
+- 设置页拆为大模型、数据与备份、本地服务诊断、导入默认值、更新设置、隐私与关于六个分区。
+- 新增 `GET /api/diagnostics`，展示 Sidecar API 修订、数据目录、数据库占用、备份数量、FFmpeg、微信引擎和密钥存储方式；打包版支持从设置页重启 Sidecar。
+- API Key 支持从 Windows DPAPI 存储中删除；应用设置支持默认项目、负责人、自动识别、自动处理和更新频率。
+- 设置页会在进入时读取诊断和备份信息，保存更新频率后同步 Electron 的后台检查定时器。
+- 验证：前端构建、Python 编译、Electron 语法检查、34 项 SQLite/API 回归测试和临时数据库设置诊断 smoke test 通过。尚未重新打包 v0.2.7。
 
 ### 2026-10-31：界面与数据一致性修复（工作区已实现，未发布）
 
@@ -245,6 +256,8 @@ GET  /api/health
 GET  /api/dashboard
 GET  /api/projects
 GET  /api/settings/llm
+GET  /api/settings/app
+GET  /api/diagnostics
 POST /api/settings/llm/test
 GET  /api/customers
 GET  /api/customers/{name}/projects

@@ -305,7 +305,30 @@ export interface AppSettings {
   defaultOwner: string;
   autoMatch: boolean;
   autoProcess: boolean;
+  autoUpdate: boolean;
   updateIntervalHours: number;
+}
+
+export interface BackupSummary {
+  name: string;
+  size: number;
+  createdAt: string;
+}
+
+export interface Diagnostics {
+  status: string;
+  service: string;
+  host: string;
+  port: number;
+  version: string;
+  apiRevision: number;
+  mode: string;
+  dataDir: string;
+  databaseSize: number;
+  backups: number;
+  apiKeyStorage: string;
+  ffmpeg: { available: boolean; path: string };
+  wechatEngine: { available: boolean; path: string };
 }
 
 export interface LlmConfig {

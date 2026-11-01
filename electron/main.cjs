@@ -8,6 +8,7 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let sidecarProc = null;
 let updateTimer = null;
+let updateCheck = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -97,7 +98,7 @@ function killStaleSidecars() {
 
 function startPackagedSidecar() {
   const sidecarExe = path.join(process.resourcesPath, 'ai-sidecar', 'clienthub-ai.exe');
-  if (!fs.existsSync(sidecarExe)) return;
+  if (!fs.existsSync(sidecarExe)) return false;
   killStaleSidecars();
   const dataDir = path.join(app.getPath('userData'), 'wechat-data');
   sidecarProc = spawn(sidecarExe, ['--host', '127.0.0.1', '--port', '8765', '--parent-pid', String(process.pid)], {
@@ -135,6 +136,7 @@ function startPackagedSidecar() {
     removeSidecarPid(spawned.pid);
     if (sidecarProc === spawned) sidecarProc = null;
   });
+  return true;
 }
 
 function stopPackagedSidecar() {
@@ -149,6 +151,15 @@ function stopAutoUpdaterTimer() {
     clearInterval(updateTimer);
     updateTimer = null;
   }
+}
+
+function configureAutoUpdater({ enabled = true, intervalHours = 3 } = {}) {
+  stopAutoUpdaterTimer();
+  if (!updateCheck || !enabled) return false;
+  const hours = Math.max(1, Math.min(Number(intervalHours) || 3, 24));
+  updateTimer = setInterval(updateCheck, hours * 60 * 60 * 1000);
+  updateTimer.unref?.();
+  return true;
 }
 
 function setupAutoUpdater() {
@@ -166,10 +177,9 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
   autoUpdater.on('error', (err) => sendUpdateStatus('error', String(err && err.message || err)));
   const check = () => autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  updateCheck = check;
   check();
-  // Requirement: background update check every three hours.
-  updateTimer = setInterval(check, 3 * 60 * 60 * 1000);
-  updateTimer.unref?.();
+  configureAutoUpdater();
 }
 
 function sendUpdateStatus(status, version = '', extra = {}) {
@@ -226,6 +236,14 @@ ipcMain.handle('clienthub:install-update', () => {
   if (isDev) return false;
   autoUpdater.quitAndInstall();
   return true;
+});
+
+ipcMain.handle('clienthub:configure-updates', (_event, settings = {}) => configureAutoUpdater(settings));
+
+ipcMain.handle('clienthub:restart-sidecar', () => {
+  if (!app.isPackaged) return { status: 'dev' };
+  stopPackagedSidecar();
+  return { status: startPackagedSidecar() ? 'restarted' : 'missing' };
 });
 
 app.whenReady().then(() => {

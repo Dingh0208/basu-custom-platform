@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('clientHub', {
   },
   checkForUpdates: () => ipcRenderer.invoke('clienthub:check-updates'),
   installUpdate: () => ipcRenderer.invoke('clienthub:install-update'),
+  configureUpdates: (settings) => ipcRenderer.invoke('clienthub:configure-updates', settings),
+  restartSidecar: () => ipcRenderer.invoke('clienthub:restart-sidecar'),
   onUpdateStatus: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('clienthub:update-status', listener);
