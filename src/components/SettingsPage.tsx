@@ -20,6 +20,17 @@ type SettingsPageProps = {
   onToast: (message: string) => void;
 };
 
+type SettingsSectionId = 'llm' | 'import' | 'data' | 'diagnostics' | 'updates' | 'about';
+
+const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: string }> = [
+  { id: 'llm', label: '大模型', hint: '配置音频、文本和图像分析使用的模型' },
+  { id: 'import', label: '导入偏好', hint: '设置新资料的默认负责人、项目和处理方式' },
+  { id: 'data', label: '数据与备份', hint: '管理本地数据库、附件和备份文件' },
+  { id: 'diagnostics', label: '本地诊断', hint: '查看 Sidecar、FFmpeg 和微信引擎状态' },
+  { id: 'updates', label: '更新', hint: '控制自动更新检查和检查频率' },
+  { id: 'about', label: '隐私与关于', hint: '查看密钥存储、版本和本地文件说明' },
+];
+
 const ALIYUN_BAILIAN = 'https://bailian.console.aliyun.com/';
 const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProject: '',
@@ -68,6 +79,7 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
   const [wechatStatus, setWechatStatus] = useState<WeChatStatus | null>(null);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
   const [diagnosticMessage, setDiagnosticMessage] = useState('');
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>('llm');
   const backupInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -274,15 +286,15 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
 
       <div className="settings-page">
         <div className="settings-page-intro">
-          <div className="settings-intro-copy"><div className="settings-eyebrow">WORKSPACE SETTINGS</div><div className="settings-page-description">管理模型、数据、导入偏好和更新行为</div></div>
+          <div className="settings-intro-copy"><div className="settings-eyebrow">WORKSPACE SETTINGS</div><div className="settings-page-description">{SETTINGS_SECTIONS.find((section) => section.id === activeSection)?.hint}</div></div>
           <nav className="settings-nav" aria-label="设置分区">
-            <a href="#settings-llm">大模型</a><a href="#settings-data">数据与备份</a><a href="#settings-diagnostics">诊断</a><a href="#settings-import">导入</a><a href="#settings-updates">更新</a><a href="#settings-about">隐私</a>
+            {SETTINGS_SECTIONS.map((section, index) => <button key={section.id} type="button" className={activeSection === section.id ? 'on' : ''} onClick={() => setActiveSection(section.id)} aria-current={activeSection === section.id ? 'page' : undefined}><span>{String(index + 1).padStart(2, '0')}</span>{section.label}</button>)}
           </nav>
         </div>
 
       <div className="settings-workspace settings-workspace-expanded">
         <main className="settings-main-column">
-          <section className="card settings-section" id="settings-llm">
+          <section className="card settings-section" id="settings-llm" hidden={activeSection !== 'llm'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">01</span><div><div className="card-title">大模型配置</div><div className="card-sub">为音频、文本和图像分析指定模型</div></div></div><a className="btn ghost settings-external-link" href={ALIYUN_BAILIAN} target="_blank" rel="noreferrer">前往阿里云百炼 ↗</a></div>
             <div className="llm-tip">Key 使用 Windows DPAPI 加密保存在本机。发布包不包含任何 API Key，备份文件也会排除密钥。</div>
             <div className="customer-form-grid">
@@ -296,7 +308,7 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
             {message && <div className="llm-result settings-feedback" aria-live="polite">{message}</div>}
           </section>
 
-          <section className="card settings-section" id="settings-data">
+          <section className="card settings-section" id="settings-data" hidden={activeSection !== 'data'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">02</span><div><div className="card-title">数据与备份</div><div className="card-sub">客户、项目、附件和任务都保存在本机</div></div></div></div>
             <div className="settings-meta-grid settings-meta-grid-wide"><div><span>版本</span><strong>0.2.6</strong></div><div><span>数据库</span><strong>{diagnostics ? formatBytes(diagnostics.databaseSize) : '未读取'}</strong></div><div><span>数据目录</span><strong title={diagnostics?.dataDir}>{diagnostics?.dataDir || '本机用户数据目录'}</strong></div><div><span>备份数量</span><strong>{backups.length} 份</strong></div></div>
             <div className="backup-panel"><div className="backup-panel-title">备份与恢复</div><div className="small-note">备份包含业务数据、附件和任务记录，不包含 API Key。恢复前会自动创建一份当前数据备份。</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={exportBackup} disabled={backupBusy !== null}>{backupBusy === 'export' ? '导出中…' : '导出备份'}</button><button className="btn" onClick={() => backupInput.current?.click()} disabled={backupBusy !== null}>{backupBusy === 'restore' ? '恢复中…' : '从备份恢复'}</button><input ref={backupInput} className="file-input-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void importBackup(file); }} /></div>{backups[0] && <div className="settings-last-backup">最近备份：{formatBackupDate(backups[0].createdAt)} · {formatBytes(backups[0].size)}</div>}{backupMessage && <div className="llm-result settings-feedback" aria-live="polite">{backupMessage}</div>}</div>
@@ -304,24 +316,24 @@ export default function SettingsPage({ onToast }: SettingsPageProps) {
         </main>
 
         <aside className="settings-side-column">
-          <section className="card settings-section" id="settings-diagnostics">
+          <section className="card settings-section" id="settings-diagnostics" hidden={activeSection !== 'diagnostics'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">03</span><div><div className="card-title">本地服务与诊断</div><div className="card-sub">确认 Sidecar、FFmpeg 和微信引擎状态</div></div></div><button className="icon-btn" onClick={() => void refreshDiagnostics()} aria-label="刷新诊断" disabled={diagnosticBusy}><IconRefresh size={15} /></button></div>
             <div className="diagnostic-status"><span className={`status-dot ${diagnostics ? 'online' : ''}`} /><strong>{healthLabel(diagnostics)}</strong><span>127.0.0.1:{diagnostics?.port || 8765}</span></div>
             <div className="settings-status-grid"><div><span>Sidecar</span><strong>{diagnostics ? `API ${diagnostics.apiRevision}` : '未连接'}</strong></div><div><span>AI 模式</span><strong>{diagnostics?.mode === 'maas' ? 'MaaS' : 'Mock'}</strong></div><div><span>FFmpeg</span><strong className={diagnostics?.ffmpeg.available ? 'settings-ok' : 'settings-warn'}>{diagnostics?.ffmpeg.available ? '可用' : '未检测'}</strong></div><div><span>微信引擎</span><strong className={wechatStatus?.available ? 'settings-ok' : 'settings-warn'}>{wechatStatus?.available ? '可用' : '未连接'}</strong></div></div>
             <div className="small-note">版本：{diagnostics?.version || '—'} · 微信账号：{wechatStatus?.accounts?.length || 0} 个</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => void restartSidecar()} disabled={diagnosticBusy}>{diagnosticBusy ? '处理中…' : '重启本地服务'}</button></div>{diagnosticMessage && <div className="llm-result settings-feedback" aria-live="polite">{diagnosticMessage}</div>}
           </section>
 
-          <section className="card settings-section" id="settings-import">
+          <section className="card settings-section" id="settings-import" hidden={activeSection !== 'import'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">04</span><div><div className="card-title">导入默认值</div><div className="card-sub">新资料会沿用这些偏好</div></div></div></div>
             <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示按内容判断" /></label><div className="settings-toggle-row"><div><strong>自动识别客户</strong><span>按手机号、微信号、邮箱和文件名匹配</span></div><button className={`switch ${appSettings.autoMatch ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoMatch: !current.autoMatch }))} aria-label="切换自动识别客户" /></div><div className="settings-toggle-row"><div><strong>导入后自动处理</strong><span>转写、摘要、需求抽取和建索引</span></div><button className={`switch ${appSettings.autoProcess ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoProcess: !current.autoProcess }))} aria-label="切换导入后自动处理" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入设置'}</button>{appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}</div>
           </section>
 
-          <section className="card settings-section" id="settings-updates">
+          <section className="card settings-section" id="settings-updates" hidden={activeSection !== 'updates'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">05</span><div><div className="card-title">更新设置</div><div className="card-sub">控制后台检查和下载行为</div></div></div></div>
             <div className="settings-toggle-row"><div><strong>自动检查更新</strong><span>发现新版本后自动下载</span></div><button className={`switch ${appSettings.autoUpdate ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoUpdate: !current.autoUpdate }))} aria-label="切换自动检查更新" /></div><label className="settings-field-inline">检查频率<select value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((current) => ({ ...current, updateIntervalHours: Number(e.target.value) }))}><option value={1}>每 1 小时</option><option value={3}>每 3 小时</option><option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option></select></label><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={checkUpdates}>立即检查</button><button className="btn primary" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存更新设置'}</button></div>{updateStatus && <div className="llm-result settings-feedback" aria-live="polite">{updateStatus}</div>}
           </section>
 
-          <section className="card settings-section" id="settings-about">
+          <section className="card settings-section" id="settings-about" hidden={activeSection !== 'about'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">06</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub 0.2.6 · API revision 4</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
           </section>
         </aside>
