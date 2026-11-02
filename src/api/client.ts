@@ -238,6 +238,27 @@ export async function deleteCustomer(name: string): Promise<{ deleted: string; r
   return fetchJson(`/api/customers/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
+export async function fetchArchivedProjects(): Promise<ProjectListItem[] | null> {
+  const health = await getHealth();
+  if ((health?.apiRevision ?? 0) < 6) return null;
+  return fetchJson('/api/projects?archived=true', undefined, 5000);
+}
+
+export async function restoreProject(projectId: string): Promise<{ restored?: string; error?: string } | null> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}/restore`, {
+      method: 'POST', signal: controller.signal,
+    });
+    return await response.json() as { restored?: string; error?: string };
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export async function fetchCustomerTimeline(customer: string): Promise<{ customer: string; records: CustomerTimelineEntry[] } | null> {
   return fetchJson(`/api/customers/${encodeURIComponent(customer)}/timeline`, undefined, 3000);
 }
@@ -327,6 +348,44 @@ export async function mergeCustomerRequirements(targetId: string, sourceIds: str
 
 export async function getWechatStatus(): Promise<WeChatStatus | null> {
   return fetchJson<WeChatStatus>('/api/wechat/status', undefined, 60000);
+}
+
+export type WechatEngineStartResult = {
+  status: 'ok' | 'failed';
+  available?: boolean;
+  started?: boolean;
+  port?: number;
+  error?: string;
+  repairSteps?: string[];
+  logPath?: string;
+};
+
+export async function startWechatEngine(): Promise<WechatEngineStartResult> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await fetch(`${API_BASE}/api/wechat/start`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const result = await response.json() as Partial<WechatEngineStartResult>;
+    if (result.status === 'ok' || result.status === 'failed') return result as WechatEngineStartResult;
+    return {
+      status: 'failed',
+      error: response.status === 404
+        ? '当前 Sidecar 版本不支持手动启动微信引擎，请先重启或更新本地服务。'
+        : result.error || '本地服务返回了无法识别的启动结果。',
+      repairSteps: ['在“本地服务与诊断”中重启本地服务。', '确认 Sidecar API 已更新后，再启动微信引擎。'],
+    };
+  } catch {
+    return {
+      status: 'failed',
+      error: 'Sidecar 未能完成启动请求，请先重启本地服务后重试。',
+      repairSteps: ['重启 Sidecar 后重新检测。', '若问题持续，请查看本地服务日志并重新安装 ClientHub。'],
+    };
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export async function getWechatSessions(account: string, limit = 400): Promise<{ sessions: WeChatSession[]; total?: number } | null> {

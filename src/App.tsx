@@ -51,6 +51,11 @@ function inferType(name: string) {
   return '文件';
 }
 
+// 过滤掉已归档的项目
+function filterActiveProjects<T extends { archived?: boolean }>(projects: T[]): T[] {
+  return projects.filter(p => !p.archived);
+}
+
 function nowTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
@@ -119,11 +124,13 @@ export default function App() {
         if (mounted && personal) setProfile(personal);
         if (mounted && data) setImports(data);
         if (mounted && projectData) {
-          setProjects(projectData);
+          // 过滤掉已归档的项目
+          const activeProjects = filterActiveProjects(projectData);
+          setProjects(activeProjects);
           setSelectedProject((current) => {
-            if (current && projectData.some((project) => project.name === current)) return current;
+            if (current && activeProjects.some((project) => project.name === current)) return current;
             const preferred = appSettings?.defaultProject || '';
-            return preferred && projectData.some((project) => project.name === preferred) ? preferred : '';
+            return preferred && activeProjects.some((project) => project.name === preferred) ? preferred : '';
           });
         }
         return;
@@ -149,15 +156,18 @@ export default function App() {
         const [data, projectData] = await Promise.all([fetchImports(), fetchProjects()]);
         if (data) setImports(data);
         if (projectData) {
-          setProjects(projectData);
-          setSelectedProject((current) => current && projectData.some((project) => project.name === current) ? current : '');
+          // 过滤掉已归档的项目
+          const activeProjects = filterActiveProjects(projectData);
+          setProjects(activeProjects);
+          setSelectedProject((current) => current && activeProjects.some((project) => project.name === current) ? current : '');
         }
       } finally {
         inFlight = false;
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 2000);
+    // 减少轮询频率：从 2000ms 增加到 4000ms，避免过度刷新
+    const timer = window.setInterval(refresh, 4000);
     return () => window.clearInterval(timer);
   }, [hasProcessingImports, sidecarOnline]);
 
@@ -205,11 +215,12 @@ export default function App() {
   useEffect(() => {
     if (!sidecarOnline || view !== 'chat' || !selectedChatId || activeChat?.status !== 'processing') return;
     let mounted = true;
+    // 减少轮询频率：从 3000ms 增加到 5000ms
     const timer = window.setInterval(() => {
       fetchChat(selectedChatId).then((data) => {
         if (mounted && data) setActiveChat(data);
       });
-    }, 3000);
+    }, 5000);
     return () => { mounted = false; window.clearInterval(timer); };
   }, [sidecarOnline, view, selectedChatId, activeChat?.status]);
 
@@ -379,14 +390,21 @@ export default function App() {
   async function refreshImports() {
     const [data, projectData] = await Promise.all([fetchImports(), fetchProjects()]);
     if (data) setImports(data);
-    if (projectData) setProjects(projectData);
-    if (projectData) setSelectedProject((current) => projectData.some((project) => project.name === current) ? current : '');
+    if (projectData) {
+      // 过滤掉已归档的项目
+      const activeProjects = filterActiveProjects(projectData);
+      setProjects(activeProjects);
+      setSelectedProject((current) => activeProjects.some((project) => project.name === current) ? current : '');
+    }
   }
 
   async function handleWechatImported() {
     await refreshImports();
     const projectData = await fetchProjects();
-    if (projectData) setProjects(projectData);
+    if (projectData) {
+      // 过滤掉已归档的项目
+      setProjects(filterActiveProjects(projectData));
+    }
     showToast('微信聊天记录已进入分析队列，完成后可在客户 360 查看');
   }
 
@@ -542,7 +560,7 @@ export default function App() {
             <div className="empty-panel" style={{ margin: 24 }}>正在加载聊天记录…</div>
           )
         ) : view === 'settings' ? (
-          <SettingsPage onToast={showToast} />
+          <SettingsPage onToast={showToast} onDataChanged={refreshImports} />
         ) : view === 'projects' ? (
           <ProjectPage key={projectFocus} initialProject={projectFocus} onToast={showToast} onCustomer={openCustomer} />
         ) : view === 'todos' ? (

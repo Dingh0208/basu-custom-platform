@@ -67,6 +67,7 @@ _BACKEND_PORT = int(os.getenv("WECHAT_DATA_ANALYSIS_PORT", "10393"))
 _BACKEND_URL = f"http://127.0.0.1:{_BACKEND_PORT}"
 _process: subprocess.Popen | None = None
 _log_handle = None
+_start_lock = threading.Lock()
 _job_lock = threading.Lock()
 _prepare_job: dict[str, Any] = {"status": "idle", "progress": 0, "message": "尚未更新微信库"}
 _import_job: dict[str, Any] = {"status": "idle", "progress": 0, "message": "尚未提取"}
@@ -117,15 +118,46 @@ def _spawn() -> None:
 def ensure_engine(timeout_seconds: float = 35.0) -> dict:
     if _health():
         return {"available": True, "port": _BACKEND_PORT, "started": False, "backend": str(_find_backend() or "")}
-    _spawn()
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
+    with _start_lock:
         if _health():
-            return {"available": True, "port": _BACKEND_PORT, "started": True, "backend": str(_find_backend() or "")}
-        if _process is not None and _process.poll() is not None:
-            raise RuntimeError(f"微信解析引擎启动失败，退出码 {_process.returncode}。请查看 {_data_dir() / 'clienthub-wechat-engine.log'}")
-        time.sleep(0.5)
-    raise RuntimeError("微信解析引擎启动超时，请确认微信已登录、客户端未占用数据库，且安装包包含 wechat-engine。")
+            return {"available": True, "port": _BACKEND_PORT, "started": False, "backend": str(_find_backend() or "")}
+        _spawn()
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            if _health():
+                return {"available": True, "port": _BACKEND_PORT, "started": True, "backend": str(_find_backend() or "")}
+            if _process is not None and _process.poll() is not None:
+                raise RuntimeError(f"微信解析引擎启动失败，退出码 {_process.returncode}。请查看 {_data_dir() / 'clienthub-wechat-engine.log'}")
+            time.sleep(0.5)
+    raise RuntimeError(f"微信解析引擎启动超时。请查看日志：{_data_dir() / 'clienthub-wechat-engine.log'}")
+
+
+def repair_steps(error: str) -> list[str]:
+    if "未找到内置微信引擎" in error:
+        return [
+            "安装目录缺少微信解析组件。重新运行最新版 ClientHub 安装包覆盖安装。",
+            "开发环境请确认 services/wechat-engine/wechat-backend.exe 存在。",
+        ]
+    if "退出码" in error:
+        return [
+            "打开错误详情中的日志文件，查看引擎退出前的错误。",
+            "若日志显示文件被隔离，请在 Windows 安全中心恢复该文件后重新安装。",
+            "修复后重新启动微信引擎。",
+        ]
+    if "超时" in error:
+        return [
+            "确认没有其他 WeChatDataAnalysis 实例占用本地端口 10393，然后重试。",
+            "查看日志文件；若日志没有更新，检查安全软件是否拦截了 wechat-backend.exe。",
+            "若组件缺失或损坏，重新运行最新版 ClientHub 安装包覆盖安装。",
+        ]
+    return [
+        "重新检测并启动一次微信引擎。",
+        "查看错误详情中的日志文件；若组件被隔离或缺失，恢复后重新安装 ClientHub。",
+    ]
+
+
+def log_path() -> str:
+    return str(_data_dir() / "clienthub-wechat-engine.log")
 
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: int = 60) -> dict:

@@ -191,6 +191,7 @@ export interface CustomerProject {
   records: ProjectRecordLink[];
   requirementCount?: number;
   updatedAt?: string;
+  archived?: boolean;
 }
 
 export interface RequirementItemRecord {

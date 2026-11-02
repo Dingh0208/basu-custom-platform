@@ -11,6 +11,7 @@ import {
   fetchCustomerRequirements,
   fetchCustomerTimeline,
   fetchCustomers,
+  getHealth,
   mergeCustomerRequirements,
   mergeCustomers,
   updateCustomer,
@@ -24,6 +25,11 @@ import RequirementModal from './RequirementModal';
 import Modal from './Modal';
 import TodoWorkspace from './TodoWorkspace';
 import TodoModal from './TodoModal';
+
+// 过滤掉已归档的项目
+function filterActiveProjects<T extends { archived?: boolean }>(projects: T[]): T[] {
+  return projects.filter(p => !p.archived);
+}
 
 type CustomerListProps = {
   online: boolean;
@@ -161,7 +167,8 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
     setProjectsLoading(true);
     fetchCustomerProjects(selected.name).then((data) => {
       if (!mounted) return;
-      setProjects(data ?? []);
+      // 过滤掉已归档的项目
+      setProjects(filterActiveProjects(data ?? []));
       setProjectsLoading(false);
     });
     return () => { mounted = false; };
@@ -198,7 +205,8 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
   async function refreshProjects() {
     if (!selected) return;
     const data = await fetchCustomerProjects(selected.name);
-    setProjects(data ?? []);
+    // 过滤掉已归档的项目
+    setProjects(filterActiveProjects(data ?? []));
   }
 
   async function saveProject(data: Partial<CustomerProject>) {
@@ -320,6 +328,12 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
   async function handleDelete() {
     if (!selected) return;
     setBusy(true);
+    const health = await getHealth();
+    if ((health?.apiRevision ?? 0) < 6) {
+      setBusy(false);
+      onToast('当前本地服务不支持项目归档，请启动新版 Sidecar 后再删除客户');
+      return;
+    }
     const result = await deleteCustomer(selected.name);
     setBusy(false);
     if (!result) {
@@ -330,7 +344,7 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
     setSelectedName(null);
     await refreshCustomers();
     await onRefreshImports();
-    onToast(`已删除「${selected.name}」、${result.projects} 个关联项目及 ${result.records} 条记录`);
+    onToast(`已删除「${selected.name}」，${result.projects} 个关联项目已归档，${result.records} 条导入记录已删除`);
   }
 
   const callCount = timeline.filter((entry) => entry.kind === 'audio').length;
@@ -608,10 +622,10 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
         </div>
       </Modal>
 
-      <Modal open={deleteOpen} title="删除客户" subtitle="此操作不可撤销" onClose={() => setDeleteOpen(false)}>
+      <Modal open={deleteOpen} title="删除客户" subtitle="项目可恢复，其他资料不可恢复" onClose={() => setDeleteOpen(false)}>
         <div className="modal-body">
           <div className="customer-merge-source">确定删除客户：<strong>{selected?.name}</strong>？</div>
-          <div className="small-note" style={{ marginTop: 10 }}>会同时删除该客户名下的全部项目、需求、销售待办、导入记录、聊天记录和转写稿，关联项目也会从项目列表中消失。若只是重复客户，请优先使用“合并客户”。</div>
+          <div className="small-note" style={{ marginTop: 10 }}>关联项目将归档并从项目列表消失，可在设置中恢复项目及客户档案。需求、销售待办、导入记录、聊天记录和转写稿会永久删除。若只是重复客户，请优先使用“合并客户”。</div>
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={() => setDeleteOpen(false)}>取消</button>

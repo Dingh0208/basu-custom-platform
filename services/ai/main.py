@@ -231,6 +231,13 @@ def init_db() -> None:
                 updated_at TEXT,
                 UNIQUE(customer, name)
             );
+            CREATE TABLE IF NOT EXISTS archived_projects (
+                id TEXT PRIMARY KEY,
+                customer TEXT NOT NULL,
+                project_json TEXT NOT NULL,
+                customer_json TEXT NOT NULL,
+                archived_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS requirements (
                 id TEXT PRIMARY KEY,
                 customer TEXT NOT NULL,
@@ -284,6 +291,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_chats_status ON chats(status);
             CREATE INDEX IF NOT EXISTS idx_requirements_customer_project ON requirements(customer, project);
             CREATE INDEX IF NOT EXISTS idx_requirements_updated_at ON requirements(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_archived_projects_archived_at ON archived_projects(archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_import_id ON tasks(import_id);
             CREATE INDEX IF NOT EXISTS idx_corrections_source ON corrections(source_id, created_at);
@@ -1170,11 +1178,19 @@ def merge_customers(source: str, target: str) -> dict:
 
 def delete_customer(name: str) -> dict:
     with db() as conn:
-        row = conn.execute("SELECT name FROM customers WHERE name=?", (name,)).fetchone()
+        row = conn.execute("SELECT * FROM customers WHERE name=?", (name,)).fetchone()
         if row is None:
             raise ValueError("客户不存在")
         import_count = conn.execute("SELECT COUNT(*) AS n FROM imports WHERE customer=?", (name,)).fetchone()["n"]
-        project_count = conn.execute("SELECT COUNT(*) AS n FROM projects WHERE customer=?", (name,)).fetchone()["n"]
+        _sync_projects_from_records(conn)
+        projects = conn.execute("SELECT * FROM projects WHERE customer=?", (name,)).fetchall()
+        archived_at = datetime.now().isoformat(timespec="seconds")
+        customer_json = json.dumps(dict(row), ensure_ascii=False)
+        for project in projects:
+            conn.execute(
+                "INSERT INTO archived_projects (id,customer,project_json,customer_json,archived_at) VALUES (?,?,?,?,?)",
+                (project["id"], name, json.dumps(dict(project), ensure_ascii=False), customer_json, archived_at),
+            )
         conn.execute("UPDATE tasks SET status='cancelled',error='客户已删除',updated_at=?,finished_at=? WHERE (import_id IN (SELECT id FROM imports WHERE customer=?) OR entity_id IN (SELECT id FROM chats WHERE customer=? UNION SELECT id FROM transcripts WHERE customer=?)) AND status IN ('queued','running')", (task_now(), task_now(), name, name, name))
         conn.execute("DELETE FROM customer_match_audits WHERE import_id IN (SELECT id FROM imports WHERE customer=?)", (name,))
         conn.execute("DELETE FROM imports WHERE customer=?", (name,))
@@ -1185,7 +1201,7 @@ def delete_customer(name: str) -> dict:
         conn.execute("DELETE FROM todos WHERE customer=?", (name,))
         conn.execute("DELETE FROM projects WHERE customer=?", (name,))
         conn.execute("DELETE FROM customers WHERE name=?", (name,))
-    return {"deleted": name, "records": int(import_count), "projects": int(project_count)}
+    return {"deleted": name, "records": int(import_count), "projects": len(projects)}
 
 
 def _project_defaults(customer: str, name: str, owner: str = "王总") -> dict:
@@ -1256,6 +1272,51 @@ def _project_record(row: sqlite3.Row) -> dict:
         "description": row["description"] or "",
         "updatedAt": row["updated_at"] or "",
     }
+
+
+def list_archived_projects() -> list[dict]:
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM archived_projects ORDER BY archived_at DESC, id").fetchall()
+    result = []
+    for row in rows:
+        project = json.loads(row["project_json"])
+        customer = json.loads(row["customer_json"])
+        item = _project_record(project)
+        item.update({
+            "customerCompany": customer.get("company") or "—",
+            "lastAt": "",
+            "recordCount": 0,
+            "requirementCount": 0,
+            "archived": True,
+            "archivedAt": row["archived_at"],
+        })
+        result.append(item)
+    return result
+
+
+def restore_archived_project(project_id: str) -> dict:
+    with db() as conn:
+        archived = conn.execute("SELECT * FROM archived_projects WHERE id=?", (project_id,)).fetchone()
+        if archived is None:
+            raise LookupError("归档项目不存在")
+        project = json.loads(archived["project_json"])
+        customer = json.loads(archived["customer_json"])
+        conflict = conn.execute(
+            "SELECT id FROM projects WHERE id=? OR (customer=? AND name=?)",
+            (project_id, project["customer"], project["name"]),
+        ).fetchone()
+        if conflict:
+            raise ValueError("该客户下已有同名项目，无法恢复")
+        conn.execute(
+            "INSERT OR IGNORE INTO customers (name,company,position,phone,wechat,email,tags_json,source_channel,owner,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            tuple(customer.get(key) for key in ("name", "company", "position", "phone", "wechat", "email", "tags_json", "source_channel", "owner", "notes", "created_at", "updated_at")),
+        )
+        conn.execute(
+            "INSERT INTO projects (id,customer,name,stage,budget,target_launch_date,owner,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            tuple(project.get(key) for key in ("id", "customer", "name", "stage", "budget", "target_launch_date", "owner", "description", "created_at", "updated_at")),
+        )
+        conn.execute("DELETE FROM archived_projects WHERE id=?", (project_id,))
+    return {"restored": project_id}
 
 
 def list_projects(customer: str) -> list[dict]:
@@ -2007,8 +2068,8 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.7"),
-        "apiRevision": 5,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.8"),
+        "apiRevision": 7,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -2698,6 +2759,7 @@ def restore_backup_archive(payload: bytes) -> dict:
             finally:
                 source.close()
                 target.close()
+            init_db()
 
             for root_name, live_root in (("uploads", UPLOAD_DIR), ("wechat-exports", EXPORT_DIR)):
                 incoming = restore_root / root_name
@@ -2871,7 +2933,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(get_app_settings())
             return
         if path == "/api/projects":
-            self._json(list_all_projects())
+            self._json(list_archived_projects() if q("archived") == "true" else list_all_projects())
             return
         if path == "/api/dashboard":
             self._json(dashboard_summary())
@@ -2894,8 +2956,8 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.7"),
-                "apiRevision": 5,
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.8"),
+                "apiRevision": 7,
             })
             return
         if path == "/api/diagnostics":
@@ -3120,6 +3182,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, 400)
             return
 
+        if path.startswith("/api/projects/") and path.endswith("/restore"):
+            project_id = unquote(path.split("/")[-2])
+            try:
+                self._json(restore_archived_project(project_id))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 409)
+            return
+
         if path.startswith("/api/chats/") and path.endswith("/reanalyze"):
             chat_id = path.split("/")[-2]
             with db() as conn:
@@ -3290,6 +3362,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"summary": summarize_transcript(transcript), "model": get_llm_config()["summaryModel"]})
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
+            return
+
+        if path == "/api/wechat/start":
+            try:
+                self._json({"status": "ok", **wechat_engine.ensure_engine()})
+            except Exception as exc:
+                message = str(exc)
+                self._json({
+                    "status": "failed",
+                    "error": message,
+                    "repairSteps": wechat_engine.repair_steps(message),
+                    "logPath": wechat_engine.log_path(),
+                }, 503)
             return
 
         if path == "/api/wechat/prepare":

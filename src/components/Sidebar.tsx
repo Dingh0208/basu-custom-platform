@@ -42,7 +42,7 @@ const workItems = [
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
-const CURRENT_VERSION = '0.2.7';
+const CURRENT_VERSION = '0.2.8';
 const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
 
 export default function Sidebar({ notificationEntry, profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {

@@ -3,7 +3,7 @@ import type { DashboardSummary, ImportRecord, ProductMetric, TodoRecord } from '
 import { fetchDashboard, fetchTodos, salesLoadError } from '../api/client';
 import { needsArchive } from './InboxArchive';
 import { localDate } from './TodoWorkspace';
-import { IconChat, IconFile, IconMic, IconUsers, IconUpload } from './Icons';
+import { IconCheckSquare, IconChat, IconFile, IconInbox, IconMic, IconUsers, IconUpload } from './Icons';
 
 type HomePageProps = {
   online: boolean;
@@ -64,6 +64,7 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
   const metrics = summary?.metrics;
   const stages = summary?.stageCounts ?? [];
   const maxStage = Math.max(1, ...stages.map((item) => item.count));
+  const openTodoCount = todos?.filter((todo) => todo.status === 'todo' || todo.status === 'doing').length ?? 0;
   const due = todos?.filter((todo) => (todo.status === 'todo' || todo.status === 'doing') && todo.dueDate <= localDate()) ?? [];
 
   return (
@@ -74,45 +75,34 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
       </header>
 
       <div className="home-workspace">
-        <section className="home-hero">
-          <div>
-            <div className="home-hero-kicker">CLIENT INTELLIGENCE WORKBENCH</div>
-            <h1>把每一次沟通，变成可跟进的机会。</h1>
-            <p>通话、微信、文件与需求统一沉淀到客户 360；今天从最近一条客户动态开始。</p>
-            <div className="home-hero-actions">
-              <button className="btn primary" onClick={() => onNavigate('导入中心')}>开始导入</button>
-              <button className="btn" onClick={() => onNavigate('客户')}>查看客户 360</button>
-              <button className="btn ghost" onClick={() => onNavigate('项目')}>项目看板</button>
-            </div>
+        <section className="home-quick-section">
+          <div className="card-head"><div><div className="card-title">快速操作</div><div className="card-sub">常用工作入口与当前数量</div></div></div>
+          <div className="home-quick-grid">
+            <button className="home-quick-tile" onClick={() => onNavigate('导入中心')}>
+              <span className="home-quick-icon"><IconUpload size={18} /></span><span className="home-quick-label">导入资料</span>
+              <strong>{loading ? '—' : stats?.imports ?? 0}</strong><small>资料记录</small>
+            </button>
+            <button className="home-quick-tile" onClick={() => onNavigate('客户')}>
+              <span className="home-quick-icon customer"><IconUsers size={18} /></span><span className="home-quick-label">客户档案</span>
+              <strong>{loading ? '—' : stats?.customers ?? 0}</strong><small>位客户</small>
+            </button>
+            <button className="home-quick-tile" onClick={() => onNavigate('项目')}>
+              <span className="home-quick-icon project"><IconFile size={18} /></span><span className="home-quick-label">项目看板</span>
+              <strong>{loading ? '—' : stats?.projects ?? 0}</strong><small>个项目</small>
+            </button>
+            <button className="home-quick-tile" onClick={() => onNavigate('客户')}>
+              <span className="home-quick-icon need"><IconChat size={18} /></span><span className="home-quick-label">需求清单</span>
+              <strong>{loading ? '—' : stats?.requirements ?? 0}</strong><small>条需求</small>
+            </button>
+            <button className="home-quick-tile" onClick={() => onNavigate('待归档')}>
+              <span className="home-quick-icon inbox"><IconInbox size={18} /></span><span className="home-quick-label">待归档</span>
+              <strong>{loading ? '—' : stats?.inbox ?? 0}</strong><small>项待处理</small>
+            </button>
+            <button className="home-quick-tile" onClick={() => onNavigate('待办')}>
+              <span className="home-quick-icon todo"><IconCheckSquare size={18} /></span><span className="home-quick-label">销售待办</span>
+              <strong>{todos === null ? '—' : openTodoCount}</strong><small>项未完成</small>
+            </button>
           </div>
-          <div className="home-hero-mark"><span>C</span><small>ClientHub</small></div>
-        </section>
-
-        <section className="home-stat-grid">
-          <button className="home-stat-card" onClick={() => onNavigate('客户')}>
-            <span className="home-stat-icon"><IconUsers size={17} /></span>
-            <span className="home-stat-label">客户档案</span>
-            <strong>{loading ? '—' : stats?.customers ?? 0}</strong>
-            <small>位客户正在跟进</small>
-          </button>
-          <button className="home-stat-card" onClick={() => onNavigate('项目')}>
-            <span className="home-stat-icon project"><IconFile size={17} /></span>
-            <span className="home-stat-label">项目</span>
-            <strong>{loading ? '—' : stats?.projects ?? 0}</strong>
-            <small>个进行中的项目</small>
-          </button>
-          <button className="home-stat-card" onClick={() => onNavigate('客户')}>
-            <span className="home-stat-icon need"><IconChat size={17} /></span>
-            <span className="home-stat-label">需求清单</span>
-            <strong>{loading ? '—' : stats?.requirements ?? 0}</strong>
-            <small>条需求待跟进</small>
-          </button>
-          <button className="home-stat-card" onClick={() => onNavigate('待归档')}>
-            <span className="home-stat-icon inbox"><IconUpload size={17} /></span>
-            <span className="home-stat-label">待归档</span>
-            <strong>{loading ? '—' : stats?.inbox ?? 0}</strong>
-            <small>个文件等待处理</small>
-          </button>
         </section>
 
         {metrics && <section className="card home-section home-metrics">
@@ -138,38 +128,23 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
           {todoError ? <div className="sales-error" role="alert">{todoError}<button className="btn ghost" onClick={() => setVersion((v) => v + 1)}>重试</button></div> : due.length === 0 ? <p className="home-followup-empty">{todos === null ? '正在加载跟进提醒…' : '没有到期事项，可继续推进下一步动作'}</p> : due.slice(0, 5).map((todo) => <button key={todo.id} className="home-import-row" onClick={() => onNavigate('待办')}><span className="home-import-main"><strong>{todo.title}</strong><small>{todo.customer} · {todo.project} · {todo.owner} · 截止 {todo.dueDate}</small></span><span className={`pill ${todo.dueDate < localDate() ? 'red' : 'amber'}`}>{todo.dueDate < localDate() ? '已逾期' : '今日到期'}</span></button>)}
         </section>
 
-        <div className="home-columns">
-          <section className="card home-section">
-            <div className="card-head">
-              <div><div className="card-title">最近导入</div><div className="card-sub">最新进入工作台的资料</div></div>
-              <button className="btn ghost" style={{ height: 27, padding: '0 8px', fontSize: 10 }} onClick={() => onNavigate('导入中心')}>查看全部</button>
-            </div>
-            {loading ? <div className="empty-panel">正在加载…</div> : (summary?.recentImports.length ?? 0) === 0 ? <div className="empty-panel">还没有导入记录</div> : (
-              <div className="home-import-list">
-                {summary?.recentImports.map((record) => (
-                  <button key={record.id} className="home-import-row" onClick={() => onOpenRecord(record)}>
-                    <span className="home-import-icon">{recordIcon(record.type)}</span>
-                    <span className="home-import-main"><strong>{record.fileName}</strong><small>{record.customer} · {record.project} · {record.importedAt}</small></span>
-                    <span className={`badge ${record.status === 'done' && !needsArchive(record) ? 'done' : 'warn'}`}>{record.status === 'processing' ? '处理中' : record.status === 'failed' ? '失败' : record.status === 'cancelled' ? '已取消' : needsArchive(record) ? '待归档' : '已完成'}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="card home-section">
-            <div className="card-head"><div><div className="card-title">项目阶段</div><div className="card-sub">当前项目推进分布</div></div><button className="btn ghost" style={{ height: 27, padding: '0 8px', fontSize: 10 }} onClick={() => onNavigate('项目')}>项目看板</button></div>
-            <div className="stage-bars">
-              {stages.length === 0 ? <div className="empty-panel">还没有项目</div> : stages.map((stage) => (
-                <button key={stage.stage} className="stage-bar-row" onClick={() => onNavigate('项目')}>
-                  <span className="stage-bar-label">{stage.stage}</span>
-                  <span className="stage-bar-track"><span style={{ width: `${Math.max(8, stage.count / maxStage * 100)}%` }} /></span>
-                  <strong>{stage.count}</strong>
+        <section className="card home-section">
+          <div className="card-head">
+            <div><div className="card-title">最近导入</div><div className="card-sub">最新进入的资料</div></div>
+            <button className="btn ghost" style={{ height: 27, padding: '0 8px', fontSize: 10 }} onClick={() => onNavigate('导入中心')}>查看全部</button>
+          </div>
+          {loading ? <div className="empty-panel">正在加载…</div> : (summary?.recentImports.length ?? 0) === 0 ? <div className="empty-panel">还没有导入记录</div> : (
+            <div className="home-import-list">
+              {summary?.recentImports.slice(0, 5).map((record) => (
+                <button key={record.id} className="home-import-row" onClick={() => onOpenRecord(record)}>
+                  <span className="home-import-icon">{recordIcon(record.type)}</span>
+                  <span className="home-import-main"><strong>{record.fileName}</strong><small>{record.customer} · {record.project} · {record.importedAt}</small></span>
+                  <span className={`badge ${record.status === 'done' && !needsArchive(record) ? 'done' : 'warn'}`}>{record.status === 'processing' ? '处理中' : record.status === 'failed' ? '失败' : record.status === 'cancelled' ? '已取消' : needsArchive(record) ? '待归档' : '已完成'}</span>
                 </button>
               ))}
             </div>
-          </section>
-        </div>
+          )}
+        </section>
 
         <section className="card home-section home-requirements">
           <div className="card-head"><div><div className="card-title">最新需求</div><div className="card-sub">来自通话、聊天与手工记录</div></div><button className="btn ghost" style={{ height: 27, padding: '0 8px', fontSize: 10 }} onClick={() => onNavigate('客户')}>进入客户 360</button></div>
@@ -184,6 +159,19 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
               ))}
             </div>
           )}
+        </section>
+
+        <section className="card home-section">
+          <div className="card-head"><div><div className="card-title">项目阶段</div><div className="card-sub">进行中的项目分布</div></div></div>
+          <div className="stage-bars">
+            {stages.length === 0 ? <div className="empty-panel">还没有项目</div> : stages.map((stage) => (
+              <button key={stage.stage} className="stage-bar-row" onClick={() => onNavigate('项目')}>
+                <span className="stage-bar-label">{stage.stage}</span>
+                <span className="stage-bar-track"><span style={{ width: `${Math.max(8, stage.count / maxStage * 100)}%` }} /></span>
+                <strong>{stage.count}</strong>
+              </button>
+            ))}
+          </div>
         </section>
       </div>
 

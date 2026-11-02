@@ -46,7 +46,7 @@ class SalesTests(unittest.TestCase):
     def setUp(self):
         main.init_db()
         with main.db() as conn:
-            for table in ("todos", "requirements", "projects", "customers", "imports", "chats", "tasks", "customer_match_audits"):
+            for table in ("todos", "requirements", "projects", "archived_projects", "customers", "imports", "chats", "tasks", "customer_match_audits"):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("INSERT OR IGNORE INTO transcripts(id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES ('tr-001','测试通话','test.m4a','1 MB',60,'2026-10-20','测试客户','测试公司','测试项目','audio','[]','{}')")
             conn.execute("UPDATE transcripts SET customer='测试客户',project='测试项目',imported_at='2026-10-20 10:00',summary_json=?",
@@ -199,6 +199,7 @@ class SalesTests(unittest.TestCase):
         result = main.delete_customer('测试客户')
         self.assertEqual(result['projects'], 1)
         self.assertEqual(main.list_projects('测试客户'), [])
+        self.assertEqual([item['id'] for item in main.list_archived_projects()], [self.project['id']])
         main.init_db()
         main.backfill_requirements()
         self.assertEqual(main.list_all_projects(), [])
@@ -206,6 +207,51 @@ class SalesTests(unittest.TestCase):
         with main.db() as conn:
             for table in ('imports', 'transcripts', 'requirements', 'todos', 'customer_match_audits'):
                 self.assertEqual(conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0], 0)
+
+    def test_restore_archived_project_restores_customer_profile_without_deleted_records(self):
+        self.requirement()
+        self.todo()
+        self.import_record('owned', 'done', '测试客户')
+        self.assertEqual(self.request('/api/customers/%s' % quote('测试客户'), 'DELETE')[0], 200)
+        status, archived = self.request('/api/projects?archived=true')
+        self.assertEqual(status, 200)
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0]['customerCompany'], '统一检索公司')
+        self.assertEqual(self.request('/api/projects')[1], [])
+        backup, _ = main.create_backup_archive()
+        with main.db() as conn:
+            conn.execute('DELETE FROM archived_projects')
+        main.restore_backup_archive(backup)
+        self.assertEqual(main.list_archived_projects()[0]['id'], self.project['id'])
+        status, restored = self.request('/api/projects/%s/restore' % self.project['id'], 'POST')
+        self.assertEqual(status, 200)
+        self.assertEqual(restored['restored'], self.project['id'])
+        self.assertEqual(main.get_customer('测试客户')['company'], '统一检索公司')
+        self.assertEqual(main.list_all_projects()[0]['id'], self.project['id'])
+        self.assertEqual(main.list_archived_projects(), [])
+        self.assertEqual(self.request('/api/projects/%s/restore' % self.project['id'], 'POST')[0], 404)
+        self.assertEqual(self.request('/api/todos')[1], [])
+        self.assertEqual(self.request('/api/customers/%s/requirements' % quote('测试客户'))[1], [])
+
+    def test_restore_archived_project_preserves_existing_customer_and_rejects_name_conflict(self):
+        main.delete_customer('测试客户')
+        main.update_customer('测试客户', {'company': '新公司'})
+        conflict = main.create_project('测试客户', {'name': '测试项目'})
+        self.assertEqual(self.request('/api/projects/%s/restore' % self.project['id'], 'POST')[0], 409)
+        self.assertEqual(main.get_customer('测试客户')['company'], '新公司')
+        self.assertEqual(main.list_archived_projects()[0]['id'], self.project['id'])
+        main.delete_project(conflict['id'])
+        self.assertEqual(self.request('/api/projects/%s/restore' % self.project['id'], 'POST')[0], 200)
+        self.assertEqual(main.get_customer('测试客户')['company'], '新公司')
+
+    def test_delete_customer_archives_project_referenced_only_by_import(self):
+        self.import_record('unlisted', 'done', '测试客户')
+        with main.db() as conn:
+            conn.execute("UPDATE imports SET project='导入项目' WHERE id='unlisted'")
+            self.assertIsNone(conn.execute("SELECT id FROM projects WHERE name='导入项目'").fetchone())
+        result = main.delete_customer('测试客户')
+        self.assertEqual(result['projects'], 2)
+        self.assertEqual({project['name'] for project in main.list_archived_projects()}, {'测试项目', '导入项目'})
 
     def test_notification_settings_api_and_backup_restore(self):
         import notifications
@@ -259,7 +305,21 @@ class SalesTests(unittest.TestCase):
         dashboard_status, dashboard = self.request('/api/dashboard')
         self.assertEqual(dashboard_status, 200)
         self.assertIn('metrics', dashboard)
-        self.assertGreaterEqual(self.request('/api/health')[1]['apiRevision'], 4)
+        self.assertGreaterEqual(self.request('/api/health')[1]['apiRevision'], 7)
+
+    def test_wechat_engine_start_reports_repair_steps_when_backend_is_missing(self):
+        with patch.object(main.wechat_engine, 'ensure_engine', side_effect=RuntimeError('未找到内置微信引擎 services/wechat-engine/wechat-backend.exe')):
+            status, result = self.request('/api/wechat/start', 'POST', {})
+        self.assertEqual(status, 503)
+        self.assertEqual(result['status'], 'failed')
+        self.assertTrue(result['logPath'].endswith('clienthub-wechat-engine.log'))
+        self.assertTrue(any('覆盖安装' in step for step in result['repairSteps']))
+
+    def test_wechat_engine_start_returns_health_after_launch(self):
+        with patch.object(main.wechat_engine, 'ensure_engine', return_value={'available': True, 'started': True, 'port': 10393}):
+            status, result = self.request('/api/wechat/start', 'POST', {})
+        self.assertEqual(status, 200)
+        self.assertEqual((result['status'], result['available'], result['port']), ('ok', True, 10393))
 
     def test_deleting_one_shared_import_keeps_other_source_todos(self):
         for record_id in ('audio-a', 'audio-b'):

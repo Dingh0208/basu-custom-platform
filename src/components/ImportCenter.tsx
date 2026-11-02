@@ -61,7 +61,8 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 3000);
+    // 减少轮询频率：从 3000ms 增加到 5000ms
+    const timer = window.setInterval(refresh, 5000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -143,10 +144,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           <svg className="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
           <div><div className="kpi-num">{inbox}</div><div className="kpi-label">待归档</div></div>
         </button>
-        <div className="kpi" style={{ marginLeft: 'auto' }}>
-          <IconMic className="icon" />
-          <div><div className="kpi-num">32:18</div><div className="kpi-label">最近一条录音</div></div>
-        </div>
       </div>
 
       <div className="import-workspace">

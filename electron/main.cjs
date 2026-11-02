@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, ipcMain, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
@@ -147,6 +148,39 @@ function stopPackagedSidecar() {
   removeSidecarPid(proc ? proc.pid : null);
 }
 
+function readSidecarHealth(timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const request = http.get({ host: '127.0.0.1', port: 8765, path: '/api/health', timeout: timeoutMs }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        try {
+          resolve(response.statusCode === 200 ? JSON.parse(body) : null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => resolve(null));
+  });
+}
+
+async function waitForSidecarHealth(timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const health = await readSidecarHealth();
+    if (health?.status === 'ok') {
+      return (health.apiRevision ?? 0) >= 7
+        ? { status: 'ready', version: health.version, apiRevision: health.apiRevision }
+        : { status: 'legacy', version: health.version, apiRevision: health.apiRevision };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return { status: 'timeout' };
+}
+
 function stopAutoUpdaterTimer() {
   if (updateTimer) {
     clearInterval(updateTimer);
@@ -273,10 +307,11 @@ ipcMain.handle('clienthub:show-reminder', (event, payload) => {
   });
 });
 
-ipcMain.handle('clienthub:restart-sidecar', () => {
+ipcMain.handle('clienthub:restart-sidecar', async () => {
   if (!app.isPackaged) return { status: 'dev' };
   stopPackagedSidecar();
-  return { status: startPackagedSidecar() ? 'restarted' : 'missing' };
+  if (!startPackagedSidecar()) return { status: 'missing' };
+  return waitForSidecarHealth();
 });
 
 app.whenReady().then(() => {

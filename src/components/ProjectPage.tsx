@@ -4,6 +4,11 @@ import { createCustomerProject, deleteCustomerProject, fetchCustomers, fetchProj
 import ProjectModal from './ProjectModal';
 import { IconSearch } from './Icons';
 
+// 过滤掉已归档的项目
+function filterActiveProjects<T extends { archived?: boolean }>(projects: T[]): T[] {
+  return projects.filter(p => !p.archived);
+}
+
 type ProjectPageProps = {
   initialProject?: string;
   onToast: (message: string) => void;
@@ -21,7 +26,8 @@ export default function ProjectPage({ initialProject, onToast, onCustomer }: Pro
 
   async function refresh() {
     const [projectData, customerData] = await Promise.all([fetchProjects(), fetchCustomers()]);
-    setProjects(projectData ?? []);
+    // 过滤掉已归档的项目
+    setProjects(filterActiveProjects(projectData ?? []));
     setCustomers(customerData ?? []);
     setNewCustomer((current) => current && customerData?.some((customer) => customer.name === current) ? current : customerData?.[0]?.name ?? '');
   }
@@ -40,7 +46,7 @@ export default function ProjectPage({ initialProject, onToast, onCustomer }: Pro
   }, []);
 
   const filtered = useMemo(
-    () => projects.filter((project) => !query.trim() || `${project.name}${project.customer}${project.customerCompany}${project.stage}${project.owner}`.toLowerCase().includes(query.trim().toLowerCase())),
+    () => projects.filter((project) => !project.archived && (!query.trim() || `${project.name}${project.customer}${project.customerCompany}${project.stage}${project.owner}`.toLowerCase().includes(query.trim().toLowerCase()))),
     [projects, query],
   );
 

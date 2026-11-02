@@ -47,12 +47,17 @@ export default function NotificationCenter({ online, onTodo }: { online: boolean
     window.addEventListener('focus', focus);
     const cleanup = window.clientHub?.onOpenReminder(async (id) => {
       if (!id) { setOpen(true); void refresh(); return; }
-      const result = await fetchNotifications();
-      const ids = result?.items.filter((item) => item.todoId === id).map((item) => item.id) || [];
-      if (ids.length) await markNotifications('read', ids);
-      setOpen(false);
-      void refresh();
-      onTodoRef.current(id);
+      try {
+        const result = await fetchNotifications();
+        if (!result) { setError('通知加载失败，请检查本地服务后重试'); return; }
+        const ids = result.items.filter((item) => item.todoId === id).map((item) => item.id);
+        if (ids.length) await markNotifications('read', ids);
+        setOpen(false);
+        void refresh();
+        onTodoRef.current(id);
+      } catch (err) {
+        setError('通知加载失败，请检查本地服务后重试');
+      }
     });
     return () => { window.clearInterval(timer); window.removeEventListener('focus', focus); cleanup?.(); };
   }, [refresh]);
