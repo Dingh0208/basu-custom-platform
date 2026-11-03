@@ -16,7 +16,7 @@ type SidebarProps = {
   notificationEntry: React.ReactNode;
   profile: PersonalProfile;
   onProfile: () => void;
-  active: 'home' | 'import' | 'inbox' | 'customers' | 'projects' | 'settings' | 'todos' | 'other';
+  active: 'home' | 'import' | 'inbox' | 'customers' | 'projects' | 'settings' | 'todos' | 'clarifications' | 'other';
   inboxCount: number;
   onNavigate: (label: string) => void;
 };
@@ -39,10 +39,11 @@ const mainItems = [
 
 const workItems = [
   { key: 'tasks', label: '待办', icon: IconCheckSquare },
+  { key: 'clarifications', label: '需求澄清', icon: IconSparkles },
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
-const CURRENT_VERSION = '0.2.8';
+const CURRENT_VERSION = '0.2.9';
 const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
 
 export default function Sidebar({ notificationEntry, profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
@@ -120,13 +121,15 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
         </div>
       </div>
       <div className="nav">
-        <button className="nav-item global-search-trigger" onClick={() => onNavigate('全局搜索')}><IconSearch className="icon" />全局搜索<kbd>Ctrl K</kbd></button>
+        <button className="nav-item global-search-trigger" title="全局搜索" aria-label="全局搜索" onClick={() => onNavigate('全局搜索')}><IconSearch className="icon" />全局搜索<kbd>Ctrl K</kbd></button>
         {mainItems.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.key}
               className={`nav-item ${isActive(item.key) || active === item.key ? 'active' : ''}`}
+              title={item.label}
+              aria-label={item.label}
               onClick={() => onNavigate(item.label)}
             >
               <Icon className="icon" />
@@ -143,7 +146,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
         {workItems.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.key} className={`nav-item ${active === 'todos' && item.key === 'tasks' ? 'active' : ''}`} onClick={() => onNavigate(item.label)}>
+            <button key={item.key} title={item.label} aria-label={item.label} className={`nav-item ${(active === 'todos' && item.key === 'tasks') || active === item.key ? 'active' : ''}`} onClick={() => onNavigate(item.label)}>
               <Icon className="icon" />
               {item.label}
             </button>
@@ -151,7 +154,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
         })}
         <div className="nav-spacer" />
         {notificationEntry}
-        <button className={`nav-item ${active === 'settings' ? 'active' : ''}`} onClick={() => onNavigate('设置')}>
+        <button className={`nav-item ${active === 'settings' ? 'active' : ''}`} title="设置" aria-label="设置" onClick={() => onNavigate('设置')}>
           <IconSettings className="icon" />
           设置
         </button>

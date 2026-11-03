@@ -24,6 +24,16 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Validate release metadata
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $notes = "docs/RELEASE-NOTES-$env:RELEASE_TAG.md"
+          if ("v$($package.version)" -ne $env:RELEASE_TAG) { throw "Tag $env:RELEASE_TAG does not match package version $($package.version)" }
+          if (!(Test-Path -LiteralPath $notes)) { throw "Release notes not found: $notes" }
+
       - name: Install dependencies
         run: npm install
 
@@ -53,6 +63,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis --publish always
+
+      - name: Set release title and notes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const tag = context.ref.replace('refs/tags/', '');
+            const notesPath = `docs/RELEASE-NOTES-${tag}.md`;
+            const body = fs.readFileSync(notesPath, 'utf8');
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag,
+            });
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              name: `ClientHub ${tag}`,
+              body,
+            });
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

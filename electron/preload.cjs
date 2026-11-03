@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('clientHub', {
   installUpdate: () => ipcRenderer.invoke('clienthub:install-update'),
   configureUpdates: (settings) => ipcRenderer.invoke('clienthub:configure-updates', settings),
   restartSidecar: () => ipcRenderer.invoke('clienthub:restart-sidecar'),
+  saveClarificationPdf: (payload) => ipcRenderer.invoke('clienthub:save-clarification-pdf', payload),
   showReminder: (payload) => ipcRenderer.invoke('clienthub:show-reminder', payload),
   onOpenReminder: (callback) => {
     const listener = (_event, todoId) => callback(todoId);

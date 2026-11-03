@@ -27,7 +27,9 @@ $buildOriginalPath = $env:PATH
 try {
   $env:PATH = "$env:SystemRoot\System32;$buildOriginalPath"
   & $Python -m PyInstaller --noconfirm --clean --onefile --name clienthub-ai `
-    --collect-all rapidocr_onnxruntime --collect-all onnxruntime --collect-all pypdfium2 --collect-all pypdfium2_raw `
+    --collect-data rapidocr_onnxruntime --collect-submodules rapidocr_onnxruntime `
+    --collect-binaries onnxruntime --collect-binaries pypdfium2 --collect-binaries pypdfium2_raw `
+    --exclude-module PyQt5 --exclude-module PySide6 `
     --distpath $outDir --workpath $workDir --specpath $specDir $entry
   if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
 } finally {

@@ -10,6 +10,7 @@ import HomePage from './components/HomePage';
 import Toast from './components/Toast';
 import GlobalSearch from './components/GlobalSearch';
 import TodoWorkspace from './components/TodoWorkspace';
+import ClarificationWorkspace from './components/ClarificationWorkspace';
 import InboxArchive, { needsArchive } from './components/InboxArchive';
 import PersonalProfileModal, { defaultProfile } from './components/PersonalProfileModal';
 import NotificationCenter from './components/NotificationCenter';
@@ -75,9 +76,11 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'inbox' ? value : 'home';
+    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'inbox' || value === 'clarifications' ? value : 'home';
   });
-  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'inbox'>('import');
+  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'inbox' | 'clarifications'>(() =>
+    new URLSearchParams(window.location.search).get('from') === 'clarifications' ? 'clarifications' : 'import',
+  );
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
   const [activeTranscript, setActiveTranscript] = useState<TranscriptRecord>(transcriptRecord);
   const [activeChat, setActiveChat] = useState<ChatRecord | null>(null);
@@ -98,6 +101,13 @@ export default function App() {
   const [inboxFocus, setInboxFocus] = useState(() => new URLSearchParams(window.location.search).get('id') || '');
   const [customerFocus, setCustomerFocus] = useState(() => ({ customer: new URLSearchParams(window.location.search).get('customer') || '', requirement: new URLSearchParams(window.location.search).get('requirement') || '' }));
   const [projectFocus, setProjectFocus] = useState(() => new URLSearchParams(window.location.search).get('project') || '');
+  const [clarificationScope, setClarificationScope] = useState(() => ({ customer: new URLSearchParams(window.location.search).get('customer') || '', project: new URLSearchParams(window.location.search).get('project') || '' }));
+  const [clarificationRecordId, setClarificationRecordId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('view') === 'clarifications' ? params.get('id') || '' : params.get('clarification') || '';
+  });
+  const [sourceLoading, setSourceLoading] = useState(() => new URLSearchParams(window.location.search).get('from') === 'clarifications');
+  const [sourceLoadError, setSourceLoadError] = useState('');
   const hasProcessingImports = useMemo(() => imports.some((record) => record.status === 'processing'), [imports]);
 
   function navigateTo(nextView: View, params: Record<string, string | undefined> = {}) {
@@ -194,7 +204,12 @@ export default function App() {
     if (!sidecarOnline || view !== 'transcript') return;
     let mounted = true;
     fetchTranscript(selectedRecordId || 'tr-001').then((data) => {
-      if (mounted && data) setActiveTranscript(data);
+      if (!mounted) return;
+      if (data) setActiveTranscript(data);
+      if (transcriptOrigin === 'clarifications') {
+        setSourceLoading(false);
+        setSourceLoadError(data ? '' : '来源记录已删除或暂时无法加载，返回澄清单仍可查看证据快照');
+      }
     });
     return () => {
       mounted = false;
@@ -205,7 +220,12 @@ export default function App() {
     if (!sidecarOnline || view !== 'chat' || !selectedChatId) return;
     let mounted = true;
     fetchChat(selectedChatId).then((data) => {
-      if (mounted && data) setActiveChat(data);
+      if (!mounted) return;
+      if (data) setActiveChat(data);
+      if (transcriptOrigin === 'clarifications') {
+        setSourceLoading(false);
+        setSourceLoadError(data ? '' : '来源记录已删除或暂时无法加载，返回澄清单仍可查看证据快照');
+      }
     });
     return () => {
       mounted = false;
@@ -245,17 +265,43 @@ export default function App() {
     navigateTo('customers', { customer, requirement });
   }
 
-  async function openSource(id: string) {
-    const record = imports.find((item) => item.id === id || item.transcriptId === id);
-    if (record) { await handleOpenRecord(record, 'customers'); return; }
-    if (id.startsWith('chat-')) {
-      const chat = await fetchChat(id);
-      if (chat) { setActiveChat(chat); setSelectedChatId(id); setTranscriptOrigin('customers'); navigateTo('chat', { id }); return; }
+  function openClarification(customer = '', project = '') {
+    setClarificationScope({ customer, project });
+    setClarificationRecordId('');
+    navigateTo('clarifications', { customer, project });
+  }
+
+  function returnFromSource() {
+    navigateTo(transcriptOrigin, transcriptOrigin === 'clarifications' ? { id: clarificationRecordId } : {});
+  }
+
+  async function openSource(id: string, clarificationId = '') {
+    const sourceImports = clarificationId ? await fetchImports() : imports;
+    if (!sourceImports) { showToast('来源资料加载失败，原文证据快照仍保留'); return; }
+    const record = sourceImports.find((item) => item.id === id || item.transcriptId === id);
+    if (record && !clarificationId) { await handleOpenRecord(record, 'customers'); return; }
+    const sourceId = record ? record.transcriptId : id;
+    if (!sourceId) { showToast('来源记录不存在或暂时无法加载，原文证据快照仍保留'); return; }
+    const origin = clarificationId ? 'clarifications' : 'customers';
+    const params = { id: sourceId, from: clarificationId ? 'clarifications' : '', clarification: clarificationId };
+    if (sourceId.startsWith('chat-')) {
+      const chat = await fetchChat(sourceId);
+      if (chat) {
+        setActiveChat(chat); setSelectedChatId(sourceId); setTranscriptOrigin(origin);
+        setSourceLoading(false); setSourceLoadError('');
+        if (clarificationId) setClarificationRecordId(clarificationId);
+        navigateTo('chat', params); return;
+      }
     } else {
-      const transcript = await fetchTranscript(id);
-      if (transcript) { setActiveTranscript(transcript); setSelectedRecordId(id); setTranscriptOrigin('customers'); navigateTo('transcript', { id }); return; }
+      const transcript = await fetchTranscript(sourceId);
+      if (transcript) {
+        setActiveTranscript(transcript); setSelectedRecordId(sourceId); setTranscriptOrigin(origin);
+        setSourceLoading(false); setSourceLoadError('');
+        if (clarificationId) setClarificationRecordId(clarificationId);
+        navigateTo('transcript', params); return;
+      }
     }
-    showToast('来源记录不存在或暂时无法加载');
+    showToast(clarificationId ? '来源记录已删除或暂时无法加载，原文证据快照仍保留' : '来源记录不存在或暂时无法加载');
   }
 
   function openSearchResult(result: SearchResult) {
@@ -271,6 +317,7 @@ export default function App() {
   function handleNavigate(label: string) {
     if (label === '全局搜索') { setSearchOpen(true); return; }
     if (label === '待办') { navigateTo('todos'); return; }
+    if (label === '需求澄清') { openClarification(); return; }
     if (label === '首页') {
       navigateTo('home');
       return;
@@ -509,8 +556,10 @@ export default function App() {
         inboxCount={inboxCount}
         onNavigate={handleNavigate}
       />
-      <main className="main">
-        {view === 'home' ? (
+      <main className={`main${(view === 'transcript' || view === 'chat') && transcriptOrigin === 'clarifications' ? ' clarification-source-view' : ''}`}>
+        {(view === 'transcript' || view === 'chat') && transcriptOrigin === 'clarifications' && (sourceLoading || sourceLoadError) ? (
+          <div className="empty-panel" style={{ margin: 24 }}><button className="btn" onClick={returnFromSource}>返回澄清单</button><p>{sourceLoadError || '正在连接本地服务并加载来源资料…'}</p></div>
+        ) : view === 'home' ? (
           <HomePage
             online={sidecarOnline}
             onNavigate={handleNavigate}
@@ -541,6 +590,7 @@ export default function App() {
             initialCustomer={customerFocus.customer}
             initialRequirement={customerFocus.requirement}
             onSource={openSource}
+            onClarification={openClarification}
             imports={imports}
             onOpenRecord={(record) => handleOpenRecord(record, 'customers')}
             onToast={showToast}
@@ -551,7 +601,7 @@ export default function App() {
             <ChatWorkspace
               record={activeChat}
               sidecarOnline={sidecarOnline}
-              onBack={() => navigateTo(transcriptOrigin)}
+              onBack={returnFromSource}
               onToast={showToast}
               onChatUpdate={(chat) => { setActiveChat(chat); void refreshImports(); }}
               onRequirement={openCustomer}
@@ -562,15 +612,17 @@ export default function App() {
         ) : view === 'settings' ? (
           <SettingsPage onToast={showToast} onDataChanged={refreshImports} />
         ) : view === 'projects' ? (
-          <ProjectPage key={projectFocus} initialProject={projectFocus} onToast={showToast} onCustomer={openCustomer} />
+          <ProjectPage key={projectFocus} initialProject={projectFocus} onToast={showToast} onCustomer={openCustomer} onClarification={openClarification} />
         ) : view === 'todos' ? (
           <TodoWorkspace key={todoFocus} initialId={todoFocus} online={sidecarOnline} onSource={openSource} onRequirement={openCustomer} />
+        ) : view === 'clarifications' ? (
+          <ClarificationWorkspace key={`${JSON.stringify(clarificationScope)}-${clarificationRecordId}`} online={sidecarOnline} initialCustomer={clarificationScope.customer} initialProject={clarificationScope.project} initialRecordId={clarificationRecordId} onSource={openSource} onToast={showToast} />
         ) : (
           <TranscriptWorkspace
             onRequirement={openCustomer}
             record={activeTranscript}
             sidecarOnline={sidecarOnline}
-            onBack={() => navigateTo(transcriptOrigin)}
+            onBack={returnFromSource}
             onToast={showToast}
           />
         )}

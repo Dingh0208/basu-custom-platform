@@ -1,4 +1,4 @@
-export type View = 'home' | 'import' | 'inbox' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos';
+export type View = 'home' | 'import' | 'inbox' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos' | 'clarifications';
 
 export interface PersonalProfile {
   name: string;
@@ -210,6 +210,116 @@ export interface RequirementItemRecord {
   updatedAt: string;
   owner: string;
   dueDate: string;
+}
+
+export type ClarificationStatus = 'draft' | 'awaiting_confirmation' | 'analyzing' | 'partial' | 'active' | 'completed' | 'failed' | 'archived' | string;
+export type ClarificationQuestionStatus = 'pending' | 'asked' | 'answered' | 'not_applicable' | 'deleted' | string;
+
+export interface ClarificationSource {
+  id: string;
+  recordId: string;
+  sourceType: string;
+  sourceId: string;
+  customerId: string;
+  projectId: string;
+  displayName: string;
+  sourceKind: string;
+  contentHash: string;
+  textSnapshot: string;
+  readable: boolean;
+  analyzed: boolean;
+  extractionError: string;
+  occurredAt?: string | null;
+  createdAt: string;
+}
+
+export interface ClarificationEvidence {
+  id: string;
+  questionId: string;
+  sourceSnapshotId: string;
+  excerpt: string;
+  sourceLabel: string;
+  sourceTime?: string | null;
+  sourceReference: string;
+}
+
+export interface ClarificationAnswer {
+  id: string;
+  questionId: string;
+  answerText: string;
+  recordedAt: string;
+  convertedAction?: Record<string, unknown> | null;
+}
+
+export interface ClarificationQuestion {
+  id: string;
+  recordId: string;
+  customerId: string;
+  projectId: string;
+  category: string;
+  priority: 'must_confirm' | 'important' | 'later' | string;
+  text: string;
+  rationale: string;
+  conclusionType: string;
+  confidence?: number | null;
+  status: ClarificationQuestionStatus;
+  answerText: string;
+  parentQuestionId?: string | null;
+  generatedFrom: string;
+  askedAt?: string | null;
+  copiedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  evidence: ClarificationEvidence[];
+  answers: ClarificationAnswer[];
+}
+
+export interface ClarificationRecord {
+  id: string;
+  name: string;
+  status: ClarificationStatus;
+  selectedScope: Record<string, unknown> | unknown[];
+  modelSnapshot: Record<string, unknown> | unknown[];
+  language: string;
+  totalBatches: number;
+  completedBatches: number;
+  errorMessage: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string | null;
+  analysisCompletedAt?: string | null;
+  sourceCount: number;
+  questionCount: number;
+  openQuestionCount: number;
+  customers?: string[];
+  projects?: string[];
+  sources?: ClarificationSource[];
+  questions?: ClarificationQuestion[];
+}
+
+export interface ClarificationAnalysisMetric {
+  id: string;
+  name: string;
+  completedAt: string;
+  generatedCount: number;
+  retainedCount: number;
+  copiedCount: number;
+  askedCount: number;
+  engagedCount: number;
+}
+
+export interface ClarificationMetrics {
+  limit: number;
+  completedAnalysisCount: number;
+  baselineCount: number;
+  ready: boolean;
+  generatedCount: number;
+  retainedCount: number;
+  copiedCount: number;
+  askedCount: number;
+  engagedCount: number;
+  engagementRate: number | null;
+  analyses: ClarificationAnalysisMetric[];
 }
 
 export interface TodoRecord {

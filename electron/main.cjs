@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Notification, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -257,6 +257,28 @@ function createWindow() {
     return { action: 'deny' };
   });
 }
+
+ipcMain.handle('clienthub:save-clarification-pdf', async (event, payload) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Invalid PDF sender');
+  if (!payload || typeof payload.title !== 'string' || typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('Invalid PDF content');
+  const filename = payload.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || '需求澄清问题';
+  const destination = await dialog.showSaveDialog(mainWindow, {
+    title: '保存需求澄清问题 PDF',
+    defaultPath: path.join(app.getPath('documents'), `${filename}.pdf`),
+    filters: [{ name: 'PDF 文档', extensions: ['pdf'] }],
+  });
+  if (destination.canceled || !destination.filePath) return { canceled: true };
+  const escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false } });
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<html><head><meta charset="utf-8"><title>${escapeHtml(payload.title)}</title><style>body{font-family:"Microsoft YaHei",sans-serif;padding:36px;color:#1f3331;line-height:1.7}h1{font-size:22px;margin:0 0 6px}p{white-space:pre-wrap;font-size:14px}</style></head><body><h1>${escapeHtml(payload.title)}</h1><p>${escapeHtml(payload.text)}</p></body></html>`)}`);
+    const pdf = await printWindow.webContents.printToPDF({ pageSize: 'A4', printBackground: true });
+    await fs.promises.writeFile(destination.filePath, pdf);
+    return { canceled: false };
+  } finally {
+    if (!printWindow.isDestroyed()) printWindow.destroy();
+  }
+});
 
 ipcMain.handle('clienthub:check-updates', async () => {
   if (isDev) return { status: 'dev' };

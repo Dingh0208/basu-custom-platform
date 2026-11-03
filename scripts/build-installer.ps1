@@ -7,11 +7,11 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 Write-Host "1/4 Building frontend..."
-& node "node_modules\vite\bin\vite.js" build
+& npm run build
 if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
 
 Write-Host "2/4 Building Python sidecar..."
-& powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build-sidecar.ps1") -Python $Python
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build-sidecar.ps1") -Python $Python
 if ($LASTEXITCODE -ne 0) { throw "sidecar build failed" }
 
 Write-Host "3/4 Packaging Electron win-unpacked..."

@@ -13,9 +13,10 @@ type ProjectPageProps = {
   initialProject?: string;
   onToast: (message: string) => void;
   onCustomer: (customer: string) => void;
+  onClarification: (customer: string, project: string) => void;
 };
 
-export default function ProjectPage({ initialProject, onToast, onCustomer }: ProjectPageProps) {
+export default function ProjectPage({ initialProject, onToast, onCustomer, onClarification }: ProjectPageProps) {
   const openedInitial = useRef(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
@@ -123,6 +124,7 @@ export default function ProjectPage({ initialProject, onToast, onCustomer }: Pro
         onClose={() => setModalOpen(false)}
         onSave={saveProject}
         onDelete={editingProject ? removeProject : undefined}
+        onClarification={editingProject ? () => onClarification(editingProject.customer, editingProject.name) : undefined}
       />
     </>
   );

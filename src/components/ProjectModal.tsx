@@ -9,11 +9,12 @@ type ProjectModalProps = {
   onClose: () => void;
   onSave: (data: Partial<CustomerProject>) => Promise<boolean>;
   onDelete?: () => Promise<void>;
+  onClarification?: () => void;
 };
 
 const stages = ['需求', '报价', '方案', '签约', '交付'];
 
-export default function ProjectModal({ open, customerName, project, onClose, onSave, onDelete }: ProjectModalProps) {
+export default function ProjectModal({ open, customerName, project, onClose, onSave, onDelete, onClarification }: ProjectModalProps) {
   const [form, setForm] = useState({ name: '', stage: '需求', budget: '', targetLaunchDate: '', owner: '', description: '' });
   const [saving, setSaving] = useState(false);
 
@@ -69,6 +70,7 @@ export default function ProjectModal({ open, customerName, project, onClose, onS
       </div>
       <div className="modal-actions">
         {project && onDelete && <button className="btn danger-btn" style={{ marginRight: 'auto' }} onClick={remove}>删除项目</button>}
+        {project && onClarification && <button className="btn" onClick={onClarification} disabled={saving}>需求澄清</button>}
         <button className="btn" onClick={onClose}>取消</button>
         <button className="btn primary" onClick={save} disabled={saving || !form.name.trim()}>{saving ? '保存中…' : '保存项目'}</button>
       </div>

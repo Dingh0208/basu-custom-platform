@@ -34,6 +34,7 @@ import urllib.request
 import uuid
 import zipfile
 import sales
+import clarifications
 import document_ingest
 import audio_pipeline
 import notifications
@@ -300,6 +301,7 @@ def init_db() -> None:
         migrate_ingest(conn)
         # Seed once so the UI has a realistic starting state.
         sales.migrate(conn)
+        clarifications.migrate(conn)
         notifications.migrate(conn)
         count = conn.execute("SELECT COUNT(*) AS n FROM imports").fetchone()["n"]
         if not existing_database and count == 0:
@@ -2068,8 +2070,8 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.8"),
-        "apiRevision": 7,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.9"),
+        "apiRevision": 17,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -2314,6 +2316,378 @@ def summarize_transcript(transcript: str) -> dict:
     data["evidenceCount"] = len(verified)
     data["confidence"] = round(len(verified) / len(checked), 2) if checked else 0
     return data
+
+
+CLARIFICATION_BATCH_CHARS = 12000
+CLARIFICATION_CATEGORIES = (
+    "业务目标/指标", "用户与流程", "一期范围", "平台与交互", "数据迁移",
+    "接口与第三方", "权限/安全/合规", "性能/可靠性", "工期/预算/合同", "验收/上线/运维/售后",
+)
+CLARIFICATION_PRIORITIES = {"must_confirm", "important", "later"}
+
+
+def _clarification_source_text(source: sqlite3.Row) -> str:
+    snapshot = str(source["text_snapshot"] or "").strip()
+    if snapshot:
+        return snapshot
+    source_id = str(source["source_id"] or "")
+    source_type = str(source["source_type"] or "")
+    with db() as conn:
+        import_row = conn.execute("SELECT * FROM imports WHERE id=?", (source_id,)).fetchone()
+        transcript_id = str(import_row["transcript_id"] or "") if import_row else ""
+        if source_type == "chat" or transcript_id.startswith("chat-"):
+            chat_id = transcript_id or source_id
+            chat = conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
+            if chat:
+                messages = json.loads(chat["messages_json"] or "[]")
+                return "\n".join(f"[{item.get('sentAt') or ''}] {item.get('sender') or ''}: {item.get('content') or ''}" for item in messages).strip()
+        transcript_key = transcript_id or (source_id if source_type == "transcript" else "")
+        if transcript_key:
+            transcript = conn.execute("SELECT * FROM transcripts WHERE id=?", (transcript_key,)).fetchone()
+            if transcript:
+                segments = json.loads(transcript["segments_json"] or "[]")
+                return "\n".join(f"[{item.get('start', '')}] {item.get('text') or ''}" for item in segments).strip()
+        if import_row:
+            matches = sorted(UPLOAD_DIR.glob(f"{source_id}.*"))
+            if matches and matches[0].suffix.lower() in document_ingest.SUPPORTED:
+                text, _ = document_ingest.extract(matches[0])
+                return text.strip()
+    return ""
+
+
+def _clarification_batches(record_id: str, *, pending_only: bool = False) -> list[dict]:
+    with db() as conn:
+        pending_sql = " AND analyzed=0" if pending_only else ""
+        sources = conn.execute(
+            "SELECT * FROM clarification_sources WHERE record_id=? AND readable=1" + pending_sql + " ORDER BY created_at, id",
+            (record_id,),
+        ).fetchall()
+    batches: list[dict] = []
+    for source in sources:
+        text = _clarification_source_text(source)
+        if not text:
+            continue
+        with db() as conn:
+            conn.execute(
+                "UPDATE clarification_sources SET text_snapshot=? WHERE id=? AND (text_snapshot IS NULL OR text_snapshot='')",
+                (text, source["id"]),
+            )
+        for offset in range(0, len(text), CLARIFICATION_BATCH_CHARS):
+            batches.append({
+                "sourceSnapshotId": source["id"],
+                "sourceId": source["source_id"],
+                "sourceLabel": source["display_name"],
+                "sourceType": source["source_type"],
+                "customerId": source["customer_id"],
+                "projectId": source["project_id"],
+                "sourceTime": source["occurred_at"],
+                "text": text[offset:offset + CLARIFICATION_BATCH_CHARS],
+            })
+    return batches
+
+
+def _clarification_language_instruction(language: str) -> str:
+    return f"生成语言：{language}。问题 text 和提问理由 rationale 使用该语言；JSON 字段名、分类/状态枚举及客户/项目标识保持约定值，证据原文不翻译。"
+
+
+def _clarification_prompt(batch: dict, existing_context: str = "", *, language: str = "zh-CN") -> str:
+    categories = "、".join(CLARIFICATION_CATEGORIES)
+    return f"""你是软件开发行业乙方的需求澄清助手。只根据资料原文生成老板可以直接向甲方提问的问题，不要编造事实。
+{_clarification_language_instruction(language)}
+固定维度只能从以下列表选择：{categories}。
+优先级规则：must_confirm 会阻塞范围、报价或工期判断；important 影响方案或成本但暂不阻塞；later 可留到设计、交付或运维阶段。
+把资料中已经明确的事实、推断和信息缺口分开。没有提到的关键项仍生成基础澄清问题，并在 rationale 标明“资料未提及/信息不足”。资料存在冲突时生成 must_confirm 问题，并分别引用冲突证据。
+输出严格 JSON，不要 Markdown，格式如下：
+{{"questions":[{{"customerId":"","projectId":"","category":"","priority":"must_confirm|important|later","text":"简洁、礼貌、专业，每题只问一个事项","rationale":"为什么需要确认","conclusionType":"fact|inference|gap|conflict","confidence":0.0,"evidence":[{{"excerpt":"原文摘录","sourceId":"{batch['sourceId']}","sourceLabel":"{batch['sourceLabel']}","sourceTime":""}}]}}]}}
+证据 excerpt 必须逐字来自资料。若没有可靠证据，保留问题但将 confidence 设为较低。
+客户：{batch['customerId'] or '未归属'}
+项目：{batch['projectId'] or '未归属'}
+资料：{batch['sourceLabel']}（{batch['sourceTime'] or '时间未知'}）
+已有问题（增量分析时仅用于识别变化，不得覆盖旧问题）：
+{existing_context or '无'}
+资料原文：
+{batch['text']}"""
+
+
+def _parse_clarification_result(result: dict, batch: dict) -> list[dict]:
+    choices = result.get("choices") or []
+    content = choices[0].get("message", {}).get("content") if choices else ""
+    if isinstance(content, list):
+        content = "".join(str(item.get("text") or "") if isinstance(item, dict) else str(item) for item in content)
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content or "").strip()).strip()
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ValueError("模型返回的不是有效 JSON") from exc
+    items = parsed.get("questions") if isinstance(parsed, dict) else parsed
+    if not isinstance(items, list):
+        raise ValueError("模型结果缺少 questions 数组")
+    normalized: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("模型问题格式不正确")
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        priority = str(item.get("priority") or "must_confirm").strip()
+        if priority not in CLARIFICATION_PRIORITIES:
+            priority = "must_confirm"
+        conclusion_type = str(item.get("conclusionType") or "gap")
+        if conclusion_type == "conflict":
+            priority = "must_confirm"
+        evidence = []
+        evidence_sources = [batch, *batch.get("referenceSources", [])]
+        for raw in item.get("evidence") or []:
+            if not isinstance(raw, dict):
+                continue
+            excerpt = str(raw.get("excerpt") or "").strip()
+            reference = str(raw.get("sourceId") or batch["sourceId"])
+            source = next((candidate for candidate in evidence_sources if reference in {candidate["sourceId"], candidate["sourceSnapshotId"]} and excerpt in candidate["text"]), batch)
+            if not excerpt or excerpt not in source["text"]:
+                continue
+            evidence.append({
+                "sourceSnapshotId": source["sourceSnapshotId"],
+                "excerpt": excerpt,
+                "sourceLabel": source["sourceLabel"],
+                "sourceTime": source["sourceTime"],
+                "sourceReference": source["sourceId"],
+            })
+        confidence = item.get("confidence")
+        confidence = max(0.0, min(1.0, float(confidence))) if isinstance(confidence, (int, float)) else None
+        if not evidence and confidence is not None:
+            confidence = min(confidence, 0.45)
+        normalized.append({
+            "customerId": str(batch["customerId"]),
+            "projectId": str(batch["projectId"]),
+            "category": str(item.get("category") or "业务目标/指标"),
+            "priority": priority,
+            "text": text,
+            "rationale": str(item.get("rationale") or ""),
+            "conclusionType": conclusion_type,
+            "confidence": confidence,
+            "evidence": evidence,
+        })
+    return normalized
+
+
+def process_clarification_analysis(record_id: str, incremental_only: bool = False, task_id: str | None = None) -> None:
+    completed = 0
+    total = 0
+    try:
+        ensure_task_active(task_id)
+        with db() as conn:
+            record = conn.execute("SELECT * FROM clarification_records WHERE id=?", (record_id,)).fetchone()
+        if record is None:
+            raise ValueError("需求澄清单不存在")
+        batches = _clarification_batches(record_id, pending_only=incremental_only)
+        total = len(batches)
+        if not total:
+            raise ValueError("所选资料没有可提取文本，请重新选择或先完成解析")
+        config = get_llm_config()
+        if not config["apiKey"]:
+            raise RuntimeError("默认文本模型未配置 API Key，请到设置页配置后重试")
+        snapshot = json.loads(record["model_snapshot_json"] or "{}")
+        model = str(snapshot.get("summaryModel") or config["summaryModel"]).strip()
+        if not model:
+            raise RuntimeError("默认文本模型未配置，请到设置页填写文本模型")
+        completed = int(record["completed_batches"] or 0)
+        completed = min(completed, total)
+        with db() as conn:
+            conn.execute(
+                "UPDATE clarification_records SET status='analyzing',total_batches=?,completed_batches=?,error_message='',updated_at=? WHERE id=?",
+                (total, completed, task_now(), record_id),
+            )
+        for index in range(completed, total):
+            ensure_task_active(task_id)
+            batch = batches[index]
+            with db() as conn:
+                history = clarifications.get_record(conn, record_id)
+            scope = (batch["customerId"], batch["projectId"])
+            snapshots = {source["id"]: source for source in history["sources"] if (source["customerId"], source["projectId"]) == scope}
+            context_lines = []
+            references = []
+            for question in history["questions"]:
+                if (question["customerId"], question["projectId"]) != scope:
+                    continue
+                context_lines.append(f"- {question['category']} / {question['text']}（{question['conclusionType']}）")
+                for evidence in question["evidence"]:
+                    source = snapshots.get(evidence["sourceSnapshotId"])
+                    if source and evidence["excerpt"] in source["textSnapshot"]:
+                        line = f"  历史证据 sourceId={source['id']} / {source['displayName']}：{evidence['excerpt']}"
+                        if sum(map(len, context_lines)) + len(line) <= 12000:
+                            context_lines.append(line)
+                            references.append({"sourceSnapshotId": source["id"], "sourceId": source["sourceId"], "sourceLabel": source["displayName"], "sourceTime": source["occurredAt"], "text": evidence["excerpt"]})
+            existing_context = "\n".join(context_lines)[:12000]
+            batch = {**batch, "referenceSources": references}
+            result = maas_request(
+                "/chat/completions",
+                {"model": model, "messages": [{"role": "user", "content": _clarification_prompt(batch, existing_context, language=record["language"])}], "temperature": 0.1, "max_tokens": 3500, "response_format": {"type": "json_object"}},
+                timeout=600,
+                config={**config, "summaryModel": model},
+            )
+            questions = _parse_clarification_result(result, batch)
+            ensure_task_active(task_id)
+            with db() as conn:
+                clarifications.append_questions(conn, record_id, questions, generated_from="incremental" if incremental_only else "initial")
+                conn.execute("UPDATE clarification_records SET completed_batches=?,updated_at=? WHERE id=?", (index + 1, task_now(), record_id))
+            completed = index + 1
+            set_task_progress(task_id, int(completed * 100 / max(1, total)))
+        with db() as conn:
+            if incremental_only:
+                conn.execute("UPDATE clarification_sources SET analyzed=1 WHERE record_id=? AND analyzed=0", (record_id,))
+            else:
+                conn.execute("UPDATE clarification_sources SET analyzed=1 WHERE record_id=?", (record_id,))
+            conn.execute("UPDATE clarification_records SET status='active',error_message='',analysis_completed_at=COALESCE(analysis_completed_at,?),updated_at=? WHERE id=?", (task_now(), task_now(), record_id))
+            clarifications._sync_record_status(conn, record_id)
+        finish_task(task_id, "succeeded", progress=100)
+    except TaskCancelled:
+        status = "partial" if completed else "failed"
+        with db() as conn:
+            conn.execute("UPDATE clarification_records SET status=?,error_message=?,updated_at=? WHERE id=?", (status, "分析已取消，可继续重试剩余批次", task_now(), record_id))
+        finish_task(task_id, "cancelled", progress=int(completed * 100 / max(1, total)))
+    except Exception as exc:
+        status = "partial" if completed else "failed"
+        with db() as conn:
+            conn.execute("UPDATE clarification_records SET status=?,error_message=?,updated_at=? WHERE id=?", (status, str(exc)[:2000], task_now(), record_id))
+        finish_task(task_id, "failed", progress=int(completed * 100 / max(1, total)), error=str(exc))
+
+
+def generate_clarification_followup(question_id: str) -> dict:
+    """Generate follow-up questions from one recorded customer answer."""
+    with db() as conn:
+        question = conn.execute(
+            """SELECT q.*,r.language FROM clarification_questions q
+            JOIN clarification_records r ON r.id=q.record_id WHERE q.id=? AND q.status='answered'""",
+            (question_id,),
+        ).fetchone()
+        answer = conn.execute(
+            "SELECT * FROM clarification_answers WHERE question_id=? ORDER BY recorded_at DESC, rowid DESC LIMIT 1",
+            (question_id,),
+        ).fetchone()
+    if question is None or answer is None:
+        raise ValueError("请先记录甲方回答")
+    config = get_llm_config()
+    if not config["apiKey"]:
+        raise RuntimeError("默认文本模型未配置 API Key，请到设置页配置后重试")
+    model = str(config["summaryModel"] or "").strip()
+    if not model:
+        raise RuntimeError("默认文本模型未配置，请到设置页填写文本模型")
+    batch = {
+        "sourceSnapshotId": f"answer:{question_id}",
+        "sourceId": question_id,
+        "sourceLabel": "甲方回答",
+        "sourceTime": answer["recorded_at"],
+        "customerId": question["customer_id"],
+        "projectId": question["project_id"],
+        "text": answer["answer_text"],
+    }
+    prompt = f"""你是软件开发行业乙方的需求澄清助手。根据下面甲方回答，生成仍需要确认的追问。
+{_clarification_language_instruction(question['language'])}
+只生成确实由回答引出的缺口、歧义或可执行约束，不要重复原问题，不要编造事实。
+固定维度只能从：{'、'.join(CLARIFICATION_CATEGORIES)} 中选择。
+输出严格 JSON，不要 Markdown：
+{{"questions":[{{"customerId":"{batch['customerId']}","projectId":"{batch['projectId']}","category":"","priority":"must_confirm|important|later","text":"简洁、礼貌、专业，每题只问一个事项","rationale":"为什么需要继续确认","conclusionType":"gap|conflict|fact|inference","confidence":0.0,"evidence":[{{"excerpt":"回答中的原文","sourceId":"{question_id}"}}]}}]}}
+原问题：{question['text']}
+原问题优先级：{question['priority']}
+甲方回答（证据只能引用下面原文）：
+{answer['answer_text']}"""
+    result = maas_request(
+        "/chat/completions",
+        {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2200, "response_format": {"type": "json_object"}},
+        timeout=600,
+        config=config,
+    )
+    questions = _parse_clarification_result(result, batch)
+    for item in questions:
+        item["parentQuestionId"] = question_id
+    with db() as conn:
+        added = clarifications.append_questions(conn, question["record_id"], questions, generated_from="followup")
+        detail = clarifications.get_record(conn, question["record_id"])
+    return {"record": detail, "added": added}
+
+
+def clarification_action_preview(question_id: str, data: dict) -> dict:
+    """Build a write-back preview without changing customer/project/requirement data."""
+    action = str(data.get("action") or "requirement").strip()
+    if action not in {"requirement", "project"}:
+        raise ValueError("回写操作无效")
+    with db() as conn:
+        question = conn.execute("SELECT * FROM clarification_questions WHERE id=? AND status='answered'", (question_id,)).fetchone()
+        answer = conn.execute("SELECT * FROM clarification_answers WHERE question_id=? ORDER BY recorded_at DESC, rowid DESC LIMIT 1", (question_id,)).fetchone()
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (str(data.get("targetProjectId") or ""),)).fetchone() if action == "project" else None
+    if question is None or answer is None:
+        raise ValueError("请先记录甲方回答")
+    answer_text = str(answer["answer_text"] or "")
+    if action == "requirement":
+        customer = str(data.get("customer") or question["customer_id"] or "").strip()
+        if not customer:
+            raise ValueError("请选择目标客户")
+        project_name = str(data.get("project") or question["project_id"] or "—").strip() or "—"
+        fields = {
+            "customer": customer,
+            "project": project_name,
+            "title": str(data.get("title") or question["text"]).strip()[:2000],
+            "description": str(data.get("description") or answer_text).strip()[:8000],
+            "priority": str(data.get("priority") or "P1"),
+            "status": "待确认",
+            "sourceType": "clarification",
+            "sourceId": question_id,
+            "sourceTime": answer["recorded_at"],
+            "sourceQuote": answer_text[:4000],
+        }
+        return {"action": action, "target": {"customer": customer, "project": project_name}, "changes": fields, "answerId": answer["id"]}
+    if project is None:
+        raise ValueError("请选择有效的目标项目")
+    changes = {}
+    for key in ("name", "stage", "budget", "targetLaunchDate", "owner", "description"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            changes[key] = value[:8000]
+    if not changes:
+        changes["description"] = answer_text[:8000]
+    return {
+        "action": action,
+        "target": {"projectId": project["id"], "customer": project["customer"], "project": project["name"]},
+        "changes": changes,
+        "answerId": answer["id"],
+    }
+
+
+def _clarification_public_questions(record: dict, customer: str = "", project: str = "") -> list[dict]:
+    questions = []
+    for question in record.get("questions") or []:
+        if question.get("status") in {"deleted", "not_applicable"}:
+            continue
+        if customer and str(question.get("customerId") or "未归属客户") != customer:
+            continue
+        if project and str(question.get("projectId") or "未归属项目") != project:
+            continue
+        questions.append(question)
+    priority_order = {"must_confirm": 0, "important": 1, "later": 2}
+    questions.sort(key=lambda item: (str(item.get("customerId") or "未归属"), str(item.get("projectId") or "未归属"), priority_order.get(str(item.get("priority") or ""), 9), str(item.get("category") or ""), str(item.get("createdAt") or "")))
+    return questions
+
+
+def build_clarification_docx(record: dict, customer: str = "", project: str = "") -> bytes:
+    from docx import Document
+
+    document = Document()
+    document.add_heading(str(record.get("name") or "需求澄清问题"), 0)
+    document.add_paragraph("对外问题清单（仅包含问题文本）")
+    questions = _clarification_public_questions(record, customer, project)
+    current_group = None
+    for question in questions:
+        group = (str(question.get("customerId") or "未归属客户"), str(question.get("projectId") or "未归属项目"))
+        if group != current_group:
+            document.add_heading(f"{group[0]} · {group[1]}", 1)
+            current_group = group
+        paragraph = document.add_paragraph(style="List Number")
+        paragraph.add_run(str(question.get("text") or ""))
+    if not questions:
+        document.add_paragraph("当前筛选范围没有可对外发送的问题。")
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def process_document(import_id: str, path: Path, task_id: str | None = None) -> None:
@@ -2599,6 +2973,13 @@ def launch_task(task: dict) -> bool:
             return False
         start_task(str(task["id"]), process_chat_analysis, import_id, chat_id)
         return True
+    if kind == "clarification_analysis":
+        record_id = str(task.get("entityId") or payload.get("recordId") or "")
+        if not record_id:
+            finish_task(str(task["id"]), "failed", error="任务缺少需求澄清单标识")
+            return False
+        start_task(str(task["id"]), process_clarification_analysis, record_id, bool(payload.get("incremental")))
+        return True
     if kind == "import_real":
         path = Path(str(payload.get("path") or ""))
         if not path.exists():
@@ -2753,6 +3134,7 @@ def restore_backup_archive(payload: bytes) -> dict:
             try:
                 source.backup(target)
                 sales.migrate(target)
+                clarifications.migrate(target)
                 migrate_ingest(target)
                 notifications.migrate(target)
                 target.commit()
@@ -2833,6 +3215,53 @@ class Handler(BaseHTTPRequestHandler):
             with db() as conn:
                 result = sales.list_todos(conn, q("customer"))
             self._json(result)
+            return
+        if path == "/api/clarifications":
+            with db() as conn:
+                result = clarifications.list_records(conn, {
+                    "customer": q("customer"),
+                    "project": q("project"),
+                    "status": q("status"),
+                    "includeArchived": q("includeArchived").lower() in ("1", "true", "yes"),
+                })
+            self._json(result)
+            return
+        if path == "/api/clarifications/metrics":
+            with db() as conn:
+                result = clarifications.baseline_metrics(conn)
+            self._json(result)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/export"):
+            record_id = unquote(path.split("/")[-2])
+            export_format = q("format", "docx").lower()
+            if export_format != "docx":
+                self._json({"error": "当前版本的 PDF 请使用打印窗口保存"}, 400)
+                return
+            with db() as conn:
+                record = clarifications.get_record(conn, record_id)
+            if record is None:
+                self._json({"error": "clarification_not_found"}, 404)
+                return
+            try:
+                body = build_clarification_docx(record, q("customer"), q("project"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                self.send_header("Content-Disposition", 'attachment; filename="clarification-questions.docx"')
+                self.send_header("Content-Length", str(len(body)))
+                self._cors()
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as exc:
+                self._json({"error": f"Word 导出失败：{exc}"}, 500)
+            return
+        if path.startswith("/api/clarifications/"):
+            record_id = unquote(path.split("/")[-1])
+            with db() as conn:
+                result = clarifications.get_record(conn, record_id)
+            if result is None:
+                self._json({"error": "clarification_not_found"}, 404)
+            else:
+                self._json(result)
             return
         if path == "/api/profile":
             self._json(get_profile())
@@ -2956,8 +3385,8 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.8"),
-                "apiRevision": 7,
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.9"),
+                "apiRevision": 17,
             })
             return
         if path == "/api/diagnostics":
@@ -3071,6 +3500,136 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(save_profile(data))
             except ValueError as exc:
                 self._json({"error": str(exc)}, 400)
+            return
+        if path == "/api/clarifications":
+            try:
+                with db() as conn:
+                    result = clarifications.create_record(conn, data)
+                self._json(result, 201)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/copy"):
+            record_id = unquote(path.split("/")[-2])
+            try:
+                with db() as conn:
+                    copied = clarifications.record_question_copies(conn, record_id, data.get("questionIds"))
+                self._json({"copied": copied} if copied is not None else {"error": "clarification_not_found"}, 200 if copied is not None else 404)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/duplicate"):
+            record_id = unquote(path.split("/")[-2])
+            try:
+                with db() as conn:
+                    result = clarifications.duplicate_record(conn, record_id)
+                self._json(result if result else {"error": "clarification_not_found"}, 201 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/sources"):
+            record_id = unquote(path.split("/")[-2])
+            try:
+                with db() as conn:
+                    result = clarifications.replace_sources(conn, record_id, data.get("sources"))
+                self._json(result if result else {"error": "clarification_not_found"}, 200 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/sources/append"):
+            record_id = unquote(path.split("/")[-3])
+            try:
+                with db() as conn:
+                    result = clarifications.append_sources(conn, record_id, data.get("sources"))
+                self._json(result if result else {"error": "clarification_not_found"}, 200 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/questions"):
+            record_id = unquote(path.split("/")[-2])
+            try:
+                with db() as conn:
+                    result = clarifications.create_question(conn, record_id, data)
+                self._json(result if result else {"error": "clarification_not_found"}, 201 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarification-questions/") and path.endswith("/follow-up"):
+            question_id = unquote(path.split("/")[-2])
+            try:
+                result = generate_clarification_followup(question_id)
+                self._json(result, 201)
+            except (ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, 400)
+            except Exception as exc:
+                self._json({"error": f"追问生成失败：{exc}"}, 502)
+            return
+        if path.startswith("/api/clarification-questions/") and path.endswith("/answers"):
+            question_id = unquote(path.split("/")[-2])
+            try:
+                with db() as conn:
+                    result = clarifications.record_question_answer(conn, question_id, data.get("answerText"), status=str(data.get("status") or "answered"))
+                self._json(result if result else {"error": "question_not_found"}, 201 if result else 404)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarification-questions/") and path.endswith("/action-preview"):
+            question_id = unquote(path.split("/")[-2])
+            try:
+                self._json(clarification_action_preview(question_id, data))
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarification-questions/") and path.endswith("/action-confirm"):
+            question_id = unquote(path.split("/")[-2])
+            try:
+                preview = clarification_action_preview(question_id, data)
+                if preview["action"] == "requirement":
+                    result = create_requirement(preview["changes"]["customer"], preview["changes"])
+                else:
+                    result = update_project(preview["changes"].get("projectId") or preview["target"]["projectId"], preview["changes"])
+                if result is None:
+                    self._json({"error": "writeback_target_not_found"}, 404)
+                    return
+                action_snapshot = {"action": preview["action"], "target": preview["target"], "changes": preview["changes"], "resultId": result.get("id")}
+                with db() as conn:
+                    detail = clarifications.mark_answer_converted(conn, question_id, action_snapshot)
+                self._json({"action": preview["action"], "result": result, "question": detail})
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if path.startswith("/api/clarifications/") and path.endswith("/analyze"):
+            record_id = unquote(path.split("/")[-2])
+            incremental = bool(data.get("incremental"))
+            with db() as conn:
+                record = conn.execute("SELECT * FROM clarification_records WHERE id=?", (record_id,)).fetchone()
+                active = conn.execute("SELECT * FROM tasks WHERE kind='clarification_analysis' AND entity_id=? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1", (record_id,)).fetchone()
+                readable = conn.execute("SELECT COUNT(*) FROM clarification_sources WHERE record_id=? AND readable=1", (record_id,)).fetchone()[0] if record else 0
+                pending_sources = conn.execute("SELECT COUNT(*) FROM clarification_sources WHERE record_id=? AND readable=1 AND analyzed=0", (record_id,)).fetchone()[0] if record else 0
+                analyzed_sources = conn.execute("SELECT COUNT(*) FROM clarification_sources WHERE record_id=? AND analyzed=1", (record_id,)).fetchone()[0] if record else 0
+            if record is None:
+                self._json({"error": "clarification_not_found"}, 404)
+                return
+            if active:
+                self._json({"status": "already_running", "recordId": record_id, "taskId": active["id"]}, 202)
+                return
+            if record["status"] in {"partial", "failed"} and analyzed_sources and pending_sources:
+                incremental = True
+            allowed_statuses = {"draft", "awaiting_confirmation", "partial", "failed"} | ({"active", "completed"} if incremental else set())
+            if record["status"] not in allowed_statuses:
+                self._json({"error": "clarification_status_invalid"}, 400)
+                return
+            if not readable:
+                self._json({"error": "no_readable_sources", "message": "所选资料没有可提取文本，请重新选择或先完成解析"}, 400)
+                return
+            if incremental and not pending_sources:
+                self._json({"error": "no_new_sources", "message": "没有待分析的新资料"}, 400)
+                return
+            task_id = create_task("clarification_analysis", entity_id=record_id, payload={"recordId": record_id, "incremental": incremental})
+            with db() as conn:
+                conn.execute("UPDATE clarification_records SET status='analyzing',error_message='',updated_at=? WHERE id=?", (task_now(), record_id))
+            start_task(task_id, process_clarification_analysis, record_id, incremental)
+            self._json({"status": "started", "recordId": record_id, "taskId": task_id}, 202)
             return
         if path.startswith("/api/transcripts/") and path.endswith("/regenerate-summary"):
             transcript_id = unquote(path.split("/")[3])
@@ -3524,6 +4083,22 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, sqlite3.IntegrityError) as exc:
                 self._json({"error": str(exc)}, 400)
             return
+        if len(parts) == 3 and parts[:2] == ["api", "clarifications"]:
+            try:
+                with db() as conn:
+                    result = clarifications.update_record(conn, unquote(parts[2]), data)
+                self._json(result if result else {"error": "clarification_not_found"}, 200 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+        if len(parts) == 3 and parts[:2] == ["api", "clarification-questions"]:
+            try:
+                with db() as conn:
+                    result = clarifications.update_question(conn, unquote(parts[2]), data)
+                self._json(result if result else {"error": "question_not_found"}, 200 if result else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "chats" and parts[3] == "participants":
             chat_id = parts[2]
             participants = data.get("participants")
@@ -3578,6 +4153,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "task_not_found"}, 404)
             else:
                 self._json(task)
+            return
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "clarifications":
+            record_id = unquote(parts[2])
+            try:
+                with db() as conn:
+                    deleted = clarifications.delete_record(conn, record_id)
+                self._json({"deleted": record_id} if deleted else {"error": "clarification_not_found"}, 200 if deleted else 404)
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                self._json({"error": str(exc)}, 400)
             return
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "customers":
             try:

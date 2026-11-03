@@ -36,6 +36,7 @@ type CustomerListProps = {
   initialCustomer?: string;
   initialRequirement?: string;
   onSource: (id: string) => void;
+  onClarification: (customer: string, project?: string) => void;
   imports: ImportRecord[];
   onOpenRecord: (record: ImportRecord) => void;
   onToast: (message: string) => void;
@@ -71,7 +72,7 @@ function fallbackProfiles(imports: ImportRecord[]): CustomerProfile[] {
   return Array.from(map.values()).sort((a, b) => b.recordCount - a.recordCount);
 }
 
-export default function CustomerList({ online, initialCustomer, initialRequirement, onSource, imports, onOpenRecord, onToast, onRefreshImports }: CustomerListProps) {
+export default function CustomerList({ online, initialCustomer, initialRequirement, onSource, onClarification, imports, onOpenRecord, onToast, onRefreshImports }: CustomerListProps) {
   const [query, setQuery] = useState('');
   const [selectedName, setSelectedName] = useState<string | null>(initialCustomer || null);
   const openedRequirement = useRef(false);
@@ -415,6 +416,7 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
                 </div>
               </div>
               <div className="customer-side-actions">
+                <button className="btn" onClick={() => onClarification(selected.name)}>需求澄清</button>
                 <button className="btn" onClick={() => { setEditingCustomer(selected); setProfileOpen(true); }}>编辑档案</button>
                 <button className="btn" onClick={() => { setMergeTarget(''); setMergeOpen(true); }}>合并客户</button>
                 <button className="btn danger-btn" onClick={() => setDeleteOpen(true)}>删除客户</button>
@@ -457,6 +459,7 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
                       <div className="project-card" key={project.id}>
                         <div className="project-card-head">
                           <div className="project-card-name">{project.name}</div>
+                          <button className="btn" onClick={() => onClarification(selected.name, project.name)}>需求澄清</button>
                           <button className="icon-btn" title="编辑项目" onClick={() => { setEditingProject(project); setProjectOpen(true); }}>✎</button>
                         </div>
                         <div className="project-card-meta">
@@ -590,6 +593,7 @@ export default function CustomerList({ online, initialCustomer, initialRequireme
         onClose={() => setProjectOpen(false)}
         onSave={saveProject}
         onDelete={editingProject ? removeProject : undefined}
+        onClarification={editingProject && selected ? () => onClarification(selected.name, editingProject.name) : undefined}
       />
 
       <RequirementModal

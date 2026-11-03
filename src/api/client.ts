@@ -1,4 +1,4 @@
-import type { AppSettings, BackupSummary, ChatRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, BackupSummary, ChatRecord, ClarificationRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -12,6 +12,136 @@ export function markNotifications(action: 'read' | 'delivered', ids: string[], a
 
 export async function fetchTodos(customer = '') {
   return fetchJson<import('../types').TodoRecord[]>(`/api/todos?customer=${encodeURIComponent(customer)}`, undefined, 5000);
+}
+
+export async function fetchClarifications(filters: { customer?: string; project?: string; status?: string; includeArchived?: boolean } = {}) {
+  const query = new URLSearchParams();
+  if (filters.customer) query.set('customer', filters.customer);
+  if (filters.project) query.set('project', filters.project);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.includeArchived) query.set('includeArchived', 'true');
+  const suffix = query.toString();
+  return fetchJson<ClarificationRecord[]>(`/api/clarifications${suffix ? `?${suffix}` : ''}`, undefined, 5000);
+}
+
+export async function fetchClarification(id: string) {
+  return fetchJson<ClarificationRecord>(`/api/clarifications/${encodeURIComponent(id)}`, undefined, 5000);
+}
+
+export async function fetchClarificationMetrics() {
+  return fetchJson<import('../types').ClarificationMetrics>('/api/clarifications/metrics', undefined, 5000);
+}
+
+export async function recordClarificationCopies(recordId: string, questionIds: string[]) {
+  return fetchJson<{ copied: number }>(`/api/clarifications/${encodeURIComponent(recordId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ questionIds }),
+  }, 5000);
+}
+
+export async function createClarification(data: {
+  name?: string;
+  selectedScope?: Record<string, unknown> | unknown[];
+  modelSnapshot?: Record<string, unknown> | unknown[];
+  language?: string;
+  sources?: Array<Record<string, unknown>>;
+}) {
+  return fetchJson<ClarificationRecord>('/api/clarifications', { method: 'POST', body: JSON.stringify(data) }, 5000);
+}
+
+export async function replaceClarificationSources(id: string, sources: Array<Record<string, unknown>>) {
+  return fetchJson<ClarificationRecord>(`/api/clarifications/${encodeURIComponent(id)}/sources`, {
+    method: 'POST',
+    body: JSON.stringify({ sources }),
+  }, 5000);
+}
+
+export async function startClarificationAnalysis(id: string, incremental = false) {
+  return fetchJson<{ status: string; recordId: string; taskId?: string; message?: string }>(`/api/clarifications/${encodeURIComponent(id)}/analyze`, {
+    method: 'POST',
+    body: JSON.stringify({ incremental }),
+  }, 10000);
+}
+
+export async function appendClarificationSources(id: string, sources: Array<Record<string, unknown>>) {
+  return fetchJson<ClarificationRecord>(`/api/clarifications/${encodeURIComponent(id)}/sources/append`, {
+    method: 'POST',
+    body: JSON.stringify({ sources }),
+  }, 5000);
+}
+
+export async function updateClarificationQuestion(id: string, data: Partial<Pick<import('../types').ClarificationQuestion, 'customerId' | 'projectId' | 'category' | 'priority' | 'text' | 'rationale' | 'status'>>) {
+  return fetchJson<import('../types').ClarificationQuestion>(`/api/clarification-questions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }, 5000);
+}
+
+export async function createClarificationQuestion(recordId: string, data: Partial<Pick<import('../types').ClarificationQuestion, 'customerId' | 'projectId' | 'category' | 'priority' | 'text' | 'rationale'>>) {
+  return fetchJson<import('../types').ClarificationQuestion>(`/api/clarifications/${encodeURIComponent(recordId)}/questions`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }, 5000);
+}
+
+export async function recordClarificationAnswer(questionId: string, answerText: string, status: 'asked' | 'answered' = 'answered') {
+  return fetchJson<import('../types').ClarificationQuestion>(`/api/clarification-questions/${encodeURIComponent(questionId)}/answers`, {
+    method: 'POST',
+    body: JSON.stringify({ answerText, status }),
+  }, 5000);
+}
+
+export async function generateClarificationFollowup(questionId: string) {
+  return fetchJson<{ record: ClarificationRecord; added: number }>(`/api/clarification-questions/${encodeURIComponent(questionId)}/follow-up`, {
+    method: 'POST',
+    body: '{}',
+  }, 10000);
+}
+
+export async function previewClarificationAction(questionId: string, data: Record<string, unknown>) {
+  return fetchJson<{ action: string; target: Record<string, string>; changes: Record<string, string>; answerId: string }>(`/api/clarification-questions/${encodeURIComponent(questionId)}/action-preview`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }, 5000);
+}
+
+export async function confirmClarificationAction(questionId: string, data: Record<string, unknown>) {
+  return fetchJson<{ action: string; result: Record<string, unknown>; question: import('../types').ClarificationQuestion }>(`/api/clarification-questions/${encodeURIComponent(questionId)}/action-confirm`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }, 10000);
+}
+
+export async function updateClarification(id: string, data: Partial<Pick<ClarificationRecord, 'name' | 'status' | 'language' | 'selectedScope' | 'modelSnapshot' | 'totalBatches' | 'completedBatches' | 'errorMessage'>>) {
+  return fetchJson<ClarificationRecord>(`/api/clarifications/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }, 5000);
+}
+
+export async function deleteClarification(id: string) {
+  return fetchJson<{ deleted: string }>(`/api/clarifications/${encodeURIComponent(id)}`, { method: 'DELETE' }, 5000);
+}
+
+export async function duplicateClarification(id: string) {
+  return fetchJson<ClarificationRecord>(`/api/clarifications/${encodeURIComponent(id)}/duplicate`, {
+    method: 'POST',
+    body: '{}',
+  }, 5000);
+}
+
+export async function downloadClarificationWord(id: string, filters: { customer?: string; project?: string } = {}) {
+  const query = new URLSearchParams({ format: 'docx' });
+  if (filters.customer) query.set('customer', filters.customer);
+  if (filters.project) query.set('project', filters.project);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(`${API_BASE}/api/clarifications/${encodeURIComponent(id)}/export?${query.toString()}`, { signal: controller.signal });
+    if (!response.ok) return null;
+    return response.blob();
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export async function saveTodo(data: Partial<import('../types').TodoRecord>, id?: string) {
