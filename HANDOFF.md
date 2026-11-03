@@ -8,7 +8,7 @@
 
 ### 0.1 当前任务
 
-当前新增的**资料模块与共享 AI 自动导入开关**已完成源码开发并合入主 PRD。当前源码 Sidecar API revision 为 18；本轮 `npm run build`、69 项 `test_sales.py`、Python 编译和 `git diff --check` 均通过。API18 功能尚未重新打 NSIS 包或安装验收，也未提交、推送或发布。ClientHub `v0.2.9` 仍是此前 API17 版本的 Latest Release，不含本轮 API18 改动；不连接远程云服务器。产品继续保持 Windows 单机单用户边界。
+当前新增的**资料模块与共享 AI 自动导入开关**已完成源码开发、合入主 PRD，并随 ClientHub `v0.3.0` 正式发布。Sidecar API revision 为 18；本地 81 项 Python 回归、`npm run build`、Python 编译和 `git diff --check` 通过。GitHub Actions workflow `41598325384` 成功构建 Windows NSIS 包并发布；`v0.3.0` 是 Latest Release，包含 `.exe`、`.blockmap` 和 `latest.yml`。人工全新 Windows 安装、覆盖升级及自动更新下载安装尚未验收；不连接远程云服务器。产品继续保持 Windows 单机单用户边界。
 
 完整目标链路是：
 
@@ -29,8 +29,8 @@
 
 - 当前分支：`main`。
 - 当前工作区有本会话之前和本会话产生的**未提交改动**，不能 reset、clean 或覆盖；先执行 `git status --short --branch`，只处理能归因于当前任务的文件。
-- 当前最新正式版本为 `v0.2.9`，上一版本是 `v0.2.8`；本次需求澄清助手和发布配置已提交并推送，Release 已公开。
-- 当前源码 Sidecar API revision 是 **18**，应用版本仍为 `0.2.9`；本轮改动未打包。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本，不覆盖 API18 资料功能。
+- 当前最新正式版本为 `v0.3.0`，上一版本是 `v0.2.9`；Release 已公开且标记为 Latest。
+- 当前源码 Sidecar API revision 是 **18**，应用版本为 `0.3.0`。发布提交 `2932355f5e04805154180f0c9224576a909f4ad1` 与远端 `main` 一致，标签 `v0.3.0` 已发布。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本，不覆盖 API18 资料功能。
 - 本次新增/重点文件：
   - `services/ai/clarifications.py`：需求澄清 SQLite 表、迁移、快照、问题、证据、回答、生命周期、增量资料和指标统计。
   - `services/ai/main.py`：澄清 API、持久化任务队列、模型调用、分批分析、追问、回写和指标/复制记录接口。
@@ -126,7 +126,7 @@
 
 ### 0.4 当前验证证据
 
-本轮 API18 源码验证：`npm run build` 通过；`python -m py_compile services/ai/main.py services/ai/document_ingest.py services/ai/wechat_engine.py services/ai/test_sales.py` 通过；`python -m unittest discover -s services/ai -p test_sales.py -q` 共 69 项通过；`git diff --check` 无空白错误。此处不代表 API18 已打包或安装验收。
+本轮 API18 源码验证：发布前 `npm run build`、Python 编译、`git diff --check` 和 81 项 Python 回归通过。GitHub Actions workflow `41598325384` 以提交 `2932355f5e04805154180f0c9224576a909f4ad1` 完成 Windows 发布；Release `v0.3.0` 已核验包含 `ClientHub-Setup-0.3.0.exe`、`ClientHub-Setup-0.3.0.exe.blockmap` 和 `latest.yml`。这证明 CI 已打包并发布，不代表人工完成全新安装、覆盖升级或自动更新下载安装验收。
 
 本机 API17 完整交付证据见 `docs/DELIVERY-API17-2026-11-03.md`：独立 Python 3.12.13 构建环境的 75 项完整后端回归、前端 TypeScript/Vite 构建及 NSIS 安装版 35 项检查通过。模拟模型调用 7 次，真实模型调用 0；涵盖 9 种资料解析、离线 OCR、工作单操作、回写、取消/续跑、缺少 Key、重启和导出。Word 已实际保存；Windows 原生“另存为”已保存 36,090 字节 PDF，中文内容可提取，不含内部理由、证据或模型数据。API15→17 覆盖安装前后，SQLite 五类澄清数据逐行一致，共 23 行。另有 63 项开发业务、4 项通知和 14 项真实前后端流程回归；与早期 14 项归属检查是不同测试集。
 
@@ -170,13 +170,13 @@ git diff --check
 3. 指标持久化与历史页展示已完成；基线只纳入功能上线后记录完成时间的分析，不回填上线前无法追溯的复制/已问操作。
 4. 按问题/资料分配均已实现；引用多份资料的问题需手动选择并整体分配，预览后确认，只补充缺失归属，保留问题/回答/证据和原始资料。归属保存逐项执行，部分失败时只重试失败项。
 5. 缺少 `xlrd` 的构建卡点已在此前解决。独立 Python 3.12.13 环境和 RapidOCR 1.4.4 构建的 API17 包通过 9 种文档/邮件/图片格式解析、真实离线 OCR、澄清失败保留/取消续跑/增量冲突、回写和安装版导出检查。API17 最终安装结果见 `docs/DELIVERY-API17-2026-11-03.md`；`docs/INSTALLER-ACCEPTANCE-2026-11-03.md` 是 API15 历史记录。
-6. `v0.2.9` 曾正式发布；Windows workflow `41585489196` 成功，Release Notes、NSIS 安装包、`.blockmap` 和 `latest.yml` 均已核验。该版本不含本轮 API18 资料模块及共享开关改动。
+6. `v0.3.0` 已正式发布并为 Latest；Windows workflow `41598325384` 成功，Release Notes、NSIS 安装包、`.blockmap` 和 `latest.yml` 均已核验。人工全新安装、覆盖升级及自动更新下载安装仍未验收。
 7. 主 PRD 6.15.3 的证据来源跳转已完成；记录级来源查看和刷新后返回原单已验证，段落/音频时间点精确定位未纳入本轮。
 8. 上次本机只读预览报告 `Audited local temporary files: 5.01 GiB`；用户未确认随后是否运行 `-Apply`，因此不能记为已删除。清理脚本只操作固定的本机路径，命令由用户自行运行。
 
 ### 0.6 下一步：资料模块交付验收
 
-本轮源码开发已完成，当前工作区尚未提交。接下来若继续交付，应基于 API18 源码重新构建 NSIS 安装包，并在本机 Windows 环境验证新安装默认关闭、旧设置迁移、资料预览/筛选和音视频按需转写；完成验收前不得将 API18 标记为已发布。此前 `v0.2.9` 的发布和 API17 安装验收仍是历史记录。
+API18 已随 `v0.3.0` 发布，发布提交已推送至 `main`。交付后的可选验收项是本机 Windows 环境中的全新安装默认关闭、旧设置迁移、资料预览/筛选、音视频按需转写、覆盖升级及自动更新下载安装；不要连接用户提供的远程 Windows 云服务器。此前 `v0.2.9` 的发布和 API17 安装验收仍是历史记录。
 
 ### 0.7 新会话必须遵守的边界
 
