@@ -1,4 +1,4 @@
-export type View = 'home' | 'import' | 'inbox' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos' | 'clarifications';
+export type View = 'home' | 'import' | 'inbox' | 'materials' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos' | 'clarifications';
 
 export interface PersonalProfile {
   name: string;
@@ -414,8 +414,7 @@ export interface ProductMetrics {
 export interface AppSettings {
   defaultProject: string;
   defaultOwner: string;
-  autoMatch: boolean;
-  autoProcess: boolean;
+  aiImportEnabled: boolean;
   autoUpdate: boolean;
   updateIntervalHours: number;
   systemNotifications: boolean;

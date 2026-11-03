@@ -1,6 +1,7 @@
 """Run with: python -m unittest discover -s services/ai -p test_sales.py -v"""
 
 import io
+import base64
 import json
 import os
 import sqlite3
@@ -49,6 +50,7 @@ class SalesTests(unittest.TestCase):
         with main.db() as conn:
             for table in ("clarification_answers", "clarification_evidence", "clarification_questions", "clarification_sources", "clarification_records", "todos", "requirements", "projects", "archived_projects", "customers", "imports", "chats", "tasks", "customer_match_audits"):
                 conn.execute(f"DELETE FROM {table}")
+            conn.execute("DELETE FROM transcripts WHERE id!='tr-001'")
             conn.execute("INSERT OR IGNORE INTO transcripts(id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES ('tr-001','测试通话','test.m4a','1 MB',60,'2026-10-20','测试客户','测试公司','测试项目','audio','[]','{}')")
             conn.execute("UPDATE transcripts SET customer='测试客户',project='测试项目',imported_at='2026-10-20 10:00',summary_json=?",
                          (json.dumps({"needs": "统一检索需求", "oneLine": "销售测试", "nextActions": "发送报价", "objections": "预算需要审批"}, ensure_ascii=False),))
@@ -94,6 +96,112 @@ class SalesTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT id,owner FROM imports").fetchone()["id"], "legacy")
         self.assertEqual(conn.execute("SELECT owner FROM imports").fetchone()[0], "")
         conn.close()
+
+    def test_ai_import_setting_defaults_off_and_migrates_legacy_preferences(self):
+        with main.db() as conn:
+            conn.execute("DELETE FROM settings WHERE key IN ('app.aiImportEnabled','app.autoMatch','app.autoProcess')")
+        self.assertFalse(main.get_app_settings()["aiImportEnabled"])
+        with main.db() as conn:
+            conn.execute("INSERT INTO settings(key,value) VALUES ('app.autoMatch','true'),('app.autoProcess','true')")
+        self.assertTrue(main.get_app_settings()["aiImportEnabled"])
+        with main.db() as conn:
+            conn.execute("UPDATE settings SET value='false' WHERE key='app.autoProcess'")
+        self.assertFalse(main.get_app_settings()["aiImportEnabled"])
+        with main.db() as conn:
+            conn.execute("DELETE FROM settings WHERE key IN ('app.aiImportEnabled','app.autoMatch','app.autoProcess')")
+
+    def test_disabled_media_import_keeps_original_and_file_preview(self):
+        main.save_app_settings({"aiImportEnabled": False})
+        content = b"audio bytes stay local"
+        with patch("main.start_task") as start_task:
+            status, result = self.request("/api/imports", "POST", {
+                "fileName": "call.mp3", "type": "音频", "size": "21 B", "manualCustomer": "测试客户",
+                "project": "测试项目", "contentBase64": base64.b64encode(content).decode(), "mimeType": "audio/mpeg",
+            })
+        self.assertEqual(status, 201)
+        self.assertEqual(result["status"], "done")
+        self.assertTrue(result["deferred"])
+        self.assertFalse(start_task.called)
+        record = next(item for item in self.request("/api/imports")[1] if item["id"] == result["id"])
+        self.assertEqual((record["customer"], record["project"], record["transcriptId"]), ("测试客户", "测试项目", None))
+        preview_status, headers, body = self.raw_request(f"/api/imports/{result['id']}/file")
+        self.assertEqual((preview_status, body), (200, content))
+        (main.UPLOAD_DIR / f"{result['id']}.mp3").unlink(missing_ok=True)
+
+    def test_disabled_document_import_runs_local_extraction_without_summary(self):
+        main.save_app_settings({"aiImportEnabled": False})
+        document = Document()
+        document.add_paragraph("客户希望六月上线，预算需要确认。")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        with patch("main.start_task") as start_task, patch("main.summarize_transcript") as summarize:
+            status, result = self.request("/api/imports", "POST", {
+                "fileName": "需求.docx", "type": "Word", "size": "1 KB", "manualCustomer": "测试客户",
+                "project": "测试项目", "contentBase64": base64.b64encode(buffer.getvalue()).decode(),
+                "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            })
+            self.assertEqual(status, 201)
+            runner = start_task.call_args.args[1]
+            args = start_task.call_args.args[2:]
+            runner(*args)
+        self.assertFalse(summarize.called)
+        record = next(item for item in self.request("/api/imports")[1] if item["id"] == result["id"])
+        self.assertEqual((record["status"], record["customer"], record["project"]), ("done", "测试客户", "测试项目"))
+        transcript = self.request("/api/transcripts/" + record["transcriptId"])[1]
+        self.assertIn("客户希望六月上线", " ".join(item["text"] for item in transcript["segments"]))
+
+    def test_disabled_chat_import_keeps_manual_links_without_analysis_task(self):
+        main.save_app_settings({"aiImportEnabled": False})
+        with patch("main.start_task") as start_task, patch("main.maas_request") as model_request:
+            status, result = self.request("/api/imports/chat", "POST", {
+                "text": "我: 您好\n客户: 希望六月上线", "fileName": "聊天.txt",
+                "manualCustomer": "测试客户", "project": "测试项目", "candidateCustomer": "其他客户",
+            })
+        self.assertEqual((status, result["status"], result["messageCount"]), (201, "done", 2))
+        self.assertFalse(start_task.called)
+        self.assertFalse(model_request.called)
+        chat = self.request("/api/chats/" + result["chatId"])[1]
+        self.assertEqual((chat["customer"], chat["project"], chat["status"]), ("测试客户", "测试项目", "done"))
+
+    def test_import_list_filters_archive_state_type_customer_and_project(self):
+        self.import_record("material-pending", "done")
+        with main.db() as conn:
+            conn.execute("UPDATE imports SET type='Word',project='测试项目' WHERE id='material-pending'")
+            conn.execute("INSERT INTO imports(id,file_name,type,size,customer,project,status,progress,imported_at) VALUES ('material-linked','linked.pdf','PDF','1 KB','测试客户','测试项目','done',100,'2026-10-20 10:00')")
+        pending = self.request("/api/imports?state=pending&type=Word")[1]
+        linked = self.request("/api/imports?state=linked&customer=" + quote("测试客户") + "&project=" + quote("测试项目"))[1]
+        self.assertEqual([item["id"] for item in pending], ["material-pending"])
+        self.assertEqual([item["id"] for item in linked], ["material-linked"])
+
+    def test_unprocessed_audio_is_transcribed_only_after_clarification_analysis_starts(self):
+        audio_path = main.UPLOAD_DIR / "imp-deferred-audio.mp3"
+        audio_path.write_bytes(b"deferred audio")
+        with main.db() as conn:
+            conn.execute("INSERT INTO imports(id,file_name,type,size,customer,project,status,progress,imported_at) VALUES ('imp-deferred-audio','deferred.mp3','音频','14 B','测试客户','测试项目','done',100,'2026-10-20 10:00')")
+        status, created = self.request("/api/clarifications", "POST", {"name": "音频按需分析", "modelSnapshot": {"summaryModel": "mock-text"}, "sources": [{
+            "sourceType": "import", "sourceId": "imp-deferred-audio", "customerId": "测试客户", "projectId": "测试项目",
+            "displayName": "deferred.mp3", "sourceKind": "音频", "readable": True,
+        }]})
+        self.assertEqual(status, 201)
+        response = {"choices": [{"message": {"content": json.dumps({"questions": [{
+            "customerId": "测试客户", "projectId": "测试项目", "category": "工期/预算/合同", "priority": "must_confirm",
+            "text": "请确认六月上线是否为硬性要求。", "rationale": "需要确认交付时间。", "evidence": [{"excerpt": "客户希望六月上线"}],
+        }]})}}]}
+        config = {"apiKey": "test-key", "baseUrl": "http://mock", "summaryModel": "mock-text", "asrModel": "mock-asr", "visionModel": ""}
+        with patch("main.transcribe_audio_file", return_value="客户希望六月上线") as transcribe, \
+             patch("main.probe_duration", return_value=3), \
+             patch("main.get_llm_config", return_value=config), \
+             patch("main.maas_request", return_value=response), \
+             patch("main.start_task") as start_task:
+            analyze_status, task = self.request("/api/clarifications/" + created["id"] + "/analyze", "POST", {})
+            self.assertEqual(analyze_status, 202)
+            self.assertFalse(transcribe.called)
+            task_id, runner, *args = start_task.call_args.args
+            main._run_task(task_id, runner, *args)
+            self.assertTrue(transcribe.called)
+        detail = self.request("/api/clarifications/" + created["id"])[1]
+        self.assertEqual((detail["status"], detail["questionCount"]), ("active", 1))
+        audio_path.unlink(missing_ok=True)
 
     def test_attachment_migration_adds_transcript_column_once(self):
         conn = sqlite3.connect(':memory:')

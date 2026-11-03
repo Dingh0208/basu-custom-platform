@@ -1,14 +1,26 @@
 """Extract bounded, readable text from imported office documents and email."""
 
 import io
+from html.parser import HTMLParser
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
 
 SUPPORTED = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".eml",
-             ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+             ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".txt", ".csv", ".json", ".html"}
 MAX_TEXT = 100_000
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        text = data.strip()
+        if text:
+            self.parts.append(text)
 
 
 def extract(path: Path, *, check_active=lambda: None, progress=None) -> tuple[str, list[tuple[str, bytes]]]:
@@ -20,6 +32,12 @@ def extract(path: Path, *, check_active=lambda: None, progress=None) -> tuple[st
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}:
         import local_ocr
         return local_ocr.file_text(path, check_active, progress)[:MAX_TEXT], []
+    if suffix in {".txt", ".csv", ".json"}:
+        return path.read_bytes()[:MAX_TEXT].decode("utf-8-sig", errors="replace"), []
+    if suffix == ".html":
+        parser = _TextExtractor()
+        parser.feed(path.read_bytes()[:MAX_TEXT].decode("utf-8-sig", errors="replace"))
+        return "\n".join(parser.parts)[:MAX_TEXT], []
     if suffix == ".pptx":
         from pptx import Presentation
         parts = []

@@ -58,6 +58,7 @@ const CLARIFICATION_CATEGORIES = [
 ];
 
 function materialState(record: ImportRecord) {
+  if (record.status === 'done' && (record.type === '音频' || record.type === '视频') && !record.transcriptId) return { readable: true, label: '确认后转写', reason: '开始分析后才会对这份音视频执行转写' };
   if (record.status === 'done') return { readable: true, label: '可分析', reason: '' };
   if (record.status === 'processing') return { readable: false, label: '处理中', reason: '资料仍在解析，完成后才能分析' };
   if (record.status === 'failed') return { readable: false, label: '不可读', reason: '导入处理失败，请回到导入中心重试' };

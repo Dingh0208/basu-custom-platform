@@ -43,8 +43,7 @@ const ALIYUN_BAILIAN = 'https://bailian.console.aliyun.com/';
 const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProject: '',
   defaultOwner: '王总',
-  autoMatch: true,
-  autoProcess: true,
+  aiImportEnabled: false,
   autoUpdate: true,
   updateIntervalHours: 3,
   systemNotifications: true,
@@ -360,6 +359,20 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
     onToast('应用设置已保存');
   }
 
+  async function toggleAiImport() {
+    const enabled = !appSettings.aiImportEnabled;
+    setAppBusy(true);
+    setAppMessage('');
+    const result = await saveAppSettings({ aiImportEnabled: enabled });
+    setAppBusy(false);
+    if (!result) {
+      setAppMessage('保存失败，请确认 Sidecar 已连接');
+      return;
+    }
+    setAppSettings((current) => ({ ...current, aiImportEnabled: result.aiImportEnabled }));
+    setAppMessage(enabled ? '新导入资料将自动分析' : '新导入资料将只做本地解析');
+  }
+
   async function exportBackup() {
     setBackupBusy('export');
     setBackupMessage('正在生成备份…');
@@ -493,7 +506,7 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
 
           <section className="card settings-section" id="settings-import" hidden={activeSection !== 'import'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">02</span><div><div className="card-title">导入默认值</div><div className="card-sub">新资料会沿用这些偏好</div></div></div></div>
-            <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示按内容判断" /></label><div className="settings-toggle-row"><div><strong>自动识别客户</strong><span>按手机号、微信号、邮箱和文件名匹配</span></div><button className={`switch ${appSettings.autoMatch ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoMatch: !current.autoMatch }))} aria-label="切换自动识别客户" /></div><div className="settings-toggle-row"><div><strong>导入后自动处理</strong><span>转写、摘要、需求抽取和建索引</span></div><button className={`switch ${appSettings.autoProcess ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoProcess: !current.autoProcess }))} aria-label="切换导入后自动处理" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入设置'}</button>{appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}</div>
+            <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示不指定" /></label><div className="settings-toggle-row"><div><strong>新资料自动 AI 分析</strong><span>开启后自动识别客户并执行完整 AI 导入流程；关闭后仅本地解析，音视频在需求澄清时转写</span></div><button className={`switch ${appSettings.aiImportEnabled ? 'on' : ''}`} role="switch" aria-checked={appSettings.aiImportEnabled} disabled={appBusy} onClick={() => void toggleAiImport()} aria-label="新资料自动 AI 分析" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入默认值'}</button>{appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}</div>
           </section>
 
           <section className="card settings-section" id="settings-updates" hidden={activeSection !== 'updates'}>

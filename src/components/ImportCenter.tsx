@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ImportRecord, ProjectListItem, TaskRecord } from '../types';
-import { cancelTask, fetchTasks, retryTask } from '../api/client';
+import { cancelTask, fetchAppSettings, fetchTasks, retryTask, saveAppSettings } from '../api/client';
 import { IconChat, IconFile, IconMic, IconRefresh, IconUpload } from './Icons';
 import Modal from './Modal';
 import WeChatImportModal from './WeChatImportModal';
@@ -17,6 +17,9 @@ type ImportCenterProps = {
   onWechatImported: () => void;
   onDeleteRecord: (record: ImportRecord) => void;
   projects: ProjectListItem[];
+  customers: string[];
+  selectedCustomer: string;
+  onCustomerChange: (name: string) => void;
   selectedProject: string;
   onProjectChange: (name: string) => void;
 };
@@ -27,21 +30,46 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, selectedProject, onProjectChange }: ImportCenterProps) {
+export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, customers, selectedCustomer, onCustomerChange, selectedProject, onProjectChange }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [wechatOpen, setWechatOpen] = useState(() => new URLSearchParams(window.location.search).get('wechat') === '1');
-  const [autoMatch, setAutoMatch] = useState(true);
-  const [autoProcess, setAutoProcess] = useState(true);
-  const [aiMode, setAiMode] = useState<'aliyun' | 'mock'>('aliyun');
+  const [aiImportEnabled, setAiImportEnabled] = useState(false);
+  const [aiSettingLoaded, setAiSettingLoaded] = useState(false);
+  const [aiSettingBusy, setAiSettingBusy] = useState(false);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
 
   const done = imports.filter((x) => x.status === 'done').length;
   const processing = imports.filter((x) => x.status === 'processing').length;
   const inbox = imports.filter(needsArchive).length;
+
+  useEffect(() => {
+    if (!sidecarOnline) return;
+    let mounted = true;
+    void fetchAppSettings().then((settings) => {
+      if (!mounted) return;
+      if (settings) setAiImportEnabled(settings.aiImportEnabled);
+      setAiSettingLoaded(true);
+    });
+    return () => { mounted = false; };
+  }, [sidecarOnline]);
+
+  async function toggleAiImport() {
+    if (!aiSettingLoaded || aiSettingBusy) return;
+    const enabled = !aiImportEnabled;
+    setAiSettingBusy(true);
+    const settings = await saveAppSettings({ aiImportEnabled: enabled });
+    setAiSettingBusy(false);
+    if (!settings) {
+      onToast('保存失败，请确认 Sidecar 已连接');
+      return;
+    }
+    setAiImportEnabled(settings.aiImportEnabled);
+    onToast(settings.aiImportEnabled ? '新导入资料将自动 AI 分析' : '新导入资料仅本地解析');
+  }
 
   useEffect(() => {
     if (!sidecarOnline) {
@@ -256,48 +284,36 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderTop: '1px solid #f2f4f7', color: '#667085', fontSize: 10.5, background: '#fafbfc' }}>
               <span style={{ fontWeight: 600, color: '#344054' }}>处理流程</span>
-              <span className="pill">识别客户</span><span>→</span><span className="pill">转写 / 解析</span><span>→</span><span className="pill">生成摘要与需求</span>
+              {aiImportEnabled
+                ? <><span className="pill">识别客户</span><span>→</span><span className="pill">转写 / 解析</span><span>→</span><span className="pill">生成摘要与需求</span></>
+                : <><span className="pill">本地解析</span><span>→</span><span className="pill">保存资料</span><span>→</span><span>需要时在需求澄清中分析</span></>}
               <span style={{ marginLeft: 'auto', color: '#98a2b3' }}>未确认客户的资料可在「待归档」中确认归属</span>
             </div>
           </section>
         </div>
 
         <aside className="card settings-card">
-          <div className="card-head"><div><div className="card-title">导入设置</div><div className="card-sub">仅影响本次导入</div></div></div>
+          <div className="card-head"><div><div className="card-title">导入设置</div><div className="card-sub">AI 设置与设置页共享，仅影响之后新导入资料</div></div></div>
           <div className="settings-body">
             <div className="setting">
-              <div className="setting-top">
-                <div><div className="setting-label">自动识别客户</div><div className="setting-desc">手机号 / 微信号 / 邮箱 / 文件名</div></div>
-                <button className={`switch ${autoMatch ? 'on' : ''}`} onClick={() => setAutoMatch(!autoMatch)} aria-label="切换自动识别客户" />
-              </div>
+              <div className="setting-label">关联客户</div>
+              <select className="select" value={selectedCustomer} onChange={(e) => onCustomerChange(e.target.value)}>
+                <option value="">不指定客户，待归档</option>
+                {customers.map((customer) => <option key={customer} value={customer}>{customer}</option>)}
+              </select>
             </div>
             <div className="setting">
               <div className="setting-label">默认项目</div>
               <select className="select" value={selectedProject} onChange={(e) => onProjectChange(e.target.value)}>
-                <option value="">不指定，按沟通内容判断</option>
-                {projects.map((project) => <option key={project.id} value={project.name}>{project.name}（{project.customer}）</option>)}
+                <option value="">不指定项目</option>
+                {projects.filter((project) => !selectedCustomer || project.customer === selectedCustomer).map((project) => <option key={project.id} value={project.name}>{project.name}（{project.customer}）</option>)}
               </select>
             </div>
             <div className="setting">
-              <div className="setting-label">AI 处理模式</div>
-              <div className="segmented">
-                <button className={aiMode === 'aliyun' ? 'on' : ''} onClick={() => setAiMode('aliyun')}>阿里云百炼</button>
-                <button className={aiMode === 'mock' ? 'on' : ''} onClick={() => setAiMode('mock')}>Mock</button>
+              <div className="setting-top">
+                <div><div className="setting-label">新资料自动 AI 分析</div><div className="setting-desc">关闭时仅本地解析；音视频在需求澄清中手动启动时转写</div></div>
+                <button className={`switch ${aiImportEnabled ? 'on' : ''}`} role="switch" aria-checked={aiImportEnabled} disabled={!aiSettingLoaded || aiSettingBusy} onClick={() => void toggleAiImport()} aria-label="新资料自动 AI 分析" />
               </div>
-              <div className="setting-desc" style={{ marginTop: 7 }}>真实模式会消耗 API 额度；Mock 用于演示流程。</div>
-            </div>
-            <div className="setting">
-              <div className="setting-label">识别规则</div>
-              <div className="rule-list">
-                <div className="rule"><span className="dot" />文件名包含客户姓名或公司名</div>
-                <div className="rule"><span className="dot" />通话记录中的手机号匹配</div>
-                <div className="rule"><span className="dot" />微信导出文件中的备注名匹配</div>
-                <div className="rule"><span className="dot" />邮件发件人 / 收件人邮箱匹配</div>
-              </div>
-            </div>
-            <div className="setting">
-              <div className="setting-label">导入后自动处理</div>
-              <div className="setting-top"><div className="setting-desc">转写 → 摘要 → 需求抽取 → 建索引</div><button className={`switch ${autoProcess ? 'on' : ''}`} onClick={() => setAutoProcess(!autoProcess)} aria-label="切换自动处理" /></div>
             </div>
             <div className="small-note"><strong style={{ color: '#344054' }}>小提示：</strong>识别不到客户的记录会进入“待归档”，不会丢失；您可以随时手动归档或新建客户。</div>
           </div>
@@ -305,7 +321,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
       </div>
 
       <footer className="statusbar">
-        <div className="status-left"><span><span className="status-dot" />本地数据 · 未上传原始文件</span><span>AI：{sidecarOnline ? '本地 Sidecar · MaaS' : '内置 Mock · 未连接'}</span></div>
+        <div className="status-left"><span><span className="status-dot" />本地数据 · 原始文件保存在本机</span><span>新资料自动 AI：{aiSettingLoaded && aiImportEnabled ? '开启' : '关闭'}</span></div>
         <div>客户信息聚合工作台 · Sprint 2</div>
       </footer>
 

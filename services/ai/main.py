@@ -791,6 +791,7 @@ def store_chat_record(
     attachments: list[dict] | None = None,
     source_image_bytes: bytes | None = None,
     source_image_name: str = "",
+    ai_enabled: bool | None = None,
 ) -> dict | None:
     if len(messages) < 2:
         return None
@@ -838,7 +839,17 @@ def store_chat_record(
         message.setdefault("id", f"msg-{index:03d}")
         message.setdefault("sentAt", "")
         message.setdefault("content", "")
-    customer_name = customer or next((p["name"] for p in normalized_participants if p["role"] == "customer"), senders[0])
+    if ai_enabled is None:
+        ai_enabled = bool(get_app_settings()["aiImportEnabled"])
+    if ai_enabled:
+        customer_name = customer or next((p["name"] for p in normalized_participants if p["role"] == "customer"), senders[0])
+    else:
+        project_customer = ""
+        if project:
+            with db() as conn:
+                project_row = conn.execute("SELECT customer FROM projects WHERE name=? ORDER BY created_at LIMIT 1", (project,)).fetchone()
+                project_customer = str(project_row["customer"] or "") if project_row else ""
+        customer_name = customer or project_customer or "待归档"
     chat_id = f"chat-{uuid.uuid4().hex[:10]}"
     import_id = f"imp-{uuid.uuid4().hex[:10]}"
     title = f"微信聊天 · {customer_name}"
@@ -874,23 +885,25 @@ def store_chat_record(
     with db() as conn:
         conn.execute(
             "INSERT INTO imports (id,file_name,type,size,customer,project,status,progress,imported_at,transcript_id,sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (import_id, file_name, "聊天记录", f"{len(messages)} 条", customer_name, project or "—", "processing", 20, now_time(), chat_id, None),
+            (import_id, file_name, "聊天记录", f"{len(messages)} 条", customer_name, project or "—", "processing" if ai_enabled else "done", 20 if ai_enabled else 100, now_time(), chat_id, None),
         )
         conn.execute(
             "INSERT INTO chats (id,title,file_name,customer,project,imported_at,participants_json,messages_json,analysis_json,status,message_count,started_at,ended_at,attachments_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 chat_id, title, file_name, customer_name, project or "—", now_time(),
                 json.dumps(normalized_participants, ensure_ascii=False), json.dumps(messages, ensure_ascii=False),
-                "{}", "processing", len(messages), started_at, ended_at,
+                "{}", "processing" if ai_enabled else "done", len(messages), started_at, ended_at,
                 json.dumps(attachment_index, ensure_ascii=False),
             ),
         )
-    task_id = create_task("chat_analysis", import_id=import_id, entity_id=chat_id, payload={"importId": import_id, "chatId": chat_id})
-    start_task(task_id, process_chat_analysis, import_id, chat_id)
-    return {"importId": import_id, "chatId": chat_id, "taskId": task_id, "messageCount": len(messages), "participants": normalized_participants}
+    task_id = None
+    if ai_enabled:
+        task_id = create_task("chat_analysis", import_id=import_id, entity_id=chat_id, payload={"importId": import_id, "chatId": chat_id})
+        start_task(task_id, process_chat_analysis, import_id, chat_id)
+    return {"importId": import_id, "chatId": chat_id, "taskId": task_id, "status": "processing" if ai_enabled else "done", "messageCount": len(messages), "participants": normalized_participants}
 
 
-def create_chat_record(text: str, file_name: str, customer: str = "", project: str = "", me_name: str = "") -> dict | None:
+def create_chat_record(text: str, file_name: str, customer: str = "", project: str = "", me_name: str = "", ai_enabled: bool | None = None) -> dict | None:
     messages = parse_chat_messages(text)
     if len(messages) < 2:
         return None
@@ -899,10 +912,10 @@ def create_chat_record(text: str, file_name: str, customer: str = "", project: s
         return None
     inferred_me = me_name or infer_me_name(messages)
     participants = [{"name": sender, "role": "me" if sender == inferred_me else "customer"} for sender in senders]
-    return store_chat_record(messages, participants, file_name, customer, project)
+    return store_chat_record(messages, participants, file_name, customer, project, ai_enabled=ai_enabled)
 
 
-def extract_chat_screenshot(image_bytes: bytes, mime_type: str, file_name: str, customer: str = "", project: str = "") -> dict | None:
+def extract_chat_screenshot(image_bytes: bytes, mime_type: str, file_name: str, customer: str = "", project: str = "", ai_enabled: bool = True) -> dict | None:
     data_uri = f"data:{mime_type or 'image/png'};base64,{base64.b64encode(image_bytes).decode()}"
     prompt = f"""请把这张微信聊天截图解析为 JSON，不要输出 Markdown。
 规则：
@@ -945,10 +958,35 @@ def extract_chat_screenshot(image_bytes: bytes, mime_type: str, file_name: str, 
         project,
         source_image_bytes=image_bytes,
         source_image_name=file_name,
+        ai_enabled=ai_enabled,
     )
     if stored:
         stored["visionSummary"] = str(data.get("summary") or "")
     return stored
+
+
+def create_local_screenshot_import(image_bytes: bytes, file_name: str, project: str = "", customer: str = "") -> dict:
+    suffix = Path(file_name).suffix.lower() or ".png"
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    with db() as conn:
+        existing = conn.execute("SELECT * FROM imports WHERE sha256=?", (digest,)).fetchone()
+        if existing:
+            result = row_to_import(existing)
+            result["duplicate"] = True
+            return result
+        import_id = f"imp-{uuid.uuid4().hex[:10]}"
+        path = UPLOAD_DIR / f"{import_id}{suffix}"
+        path.write_bytes(image_bytes)
+        if not customer and project:
+            project_row = conn.execute("SELECT customer FROM projects WHERE name=? ORDER BY created_at LIMIT 1", (project,)).fetchone()
+            customer = str(project_row["customer"] or "") if project_row else ""
+        conn.execute(
+            "INSERT INTO imports (id,file_name,type,size,customer,project,status,progress,imported_at,transcript_id,sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (import_id, file_name, "聊天截图", f"{len(image_bytes) / 1024:.1f} KB", customer or "待归档", project or "—", "processing", 0, now_time(), None, digest),
+        )
+    task_id = create_task("import_document", import_id=import_id, payload={"importId": import_id, "path": str(path), "aiEnabled": False})
+    start_task(task_id, process_document, import_id, path, False)
+    return {"id": import_id, "status": "processing", "taskId": task_id}
 
 
 def row_to_chat(row: sqlite3.Row) -> dict:
@@ -1965,8 +2003,7 @@ def save_llm_config(data: dict) -> dict:
 APP_SETTING_DEFAULTS = {
     "defaultProject": "",
     "defaultOwner": "王总",
-    "autoMatch": True,
-    "autoProcess": True,
+    "aiImportEnabled": False,
     "autoUpdate": True,
     "updateIntervalHours": 3,
     "systemNotifications": True,
@@ -2012,7 +2049,7 @@ def get_app_settings() -> dict:
         if f"app.{key}" not in rows:
             continue
         raw = rows[f"app.{key}"]
-        if key in ("autoMatch", "autoProcess", "autoUpdate", "systemNotifications"):
+        if key in ("aiImportEnabled", "autoUpdate", "systemNotifications"):
             result[key] = raw.lower() == "true"
         elif key == "updateIntervalHours":
             try:
@@ -2021,6 +2058,10 @@ def get_app_settings() -> dict:
                 pass
         else:
             result[key] = raw
+    if "app.aiImportEnabled" not in rows and ("app.autoMatch" in rows or "app.autoProcess" in rows):
+        auto_match = rows.get("app.autoMatch", "true").lower() == "true"
+        auto_process = rows.get("app.autoProcess", "true").lower() == "true"
+        result["aiImportEnabled"] = auto_match and auto_process
     return result
 
 
@@ -2034,7 +2075,7 @@ def save_app_settings(data: dict) -> dict:
             if not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
                 raise ValueError("免打扰时间须使用 HH:MM 格式")
             updates[f"app.{key}"] = value
-        elif key in ("autoMatch", "autoProcess", "autoUpdate", "systemNotifications"):
+        elif key in ("aiImportEnabled", "autoUpdate", "systemNotifications"):
             if not isinstance(value, bool):
                 raise ValueError("开关设置须为布尔值")
             updates[f"app.{key}"] = "true" if value else "false"
@@ -2071,7 +2112,7 @@ def get_diagnostics() -> dict:
         "host": "127.0.0.1",
         "port": 8765,
         "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.9"),
-        "apiRevision": 17,
+        "apiRevision": 18,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -2386,6 +2427,44 @@ def _clarification_batches(record_id: str, *, pending_only: bool = False) -> lis
     return batches
 
 
+def _transcribe_clarification_media(record_id: str, task_id: str | None = None, *, pending_only: bool = False) -> None:
+    pending_sql = " AND s.analyzed=0" if pending_only else ""
+    with db() as conn:
+        sources = conn.execute(
+            """SELECT i.* FROM clarification_sources s JOIN imports i ON i.id=s.source_id
+            WHERE s.record_id=? AND s.readable=1 AND i.transcript_id IS NULL AND i.type IN ('音频','视频')""" + pending_sql + " ORDER BY s.created_at, s.id",
+            (record_id,),
+        ).fetchall()
+    for index, row in enumerate(sources):
+        ensure_task_active(task_id)
+        candidates = list(UPLOAD_DIR.glob(f"{row['id']}.*"))
+        path = next((item.resolve() for item in candidates if item.resolve().parent == UPLOAD_DIR.resolve() and item.is_file()), None)
+        if path is None:
+            raise ValueError(f"{row['file_name']}：找不到本地音视频原件")
+        chunks = []
+        def progress(done: int, total: int) -> None:
+            ensure_task_active(task_id)
+            set_task_progress(task_id, min(25, int(25 * (index + done / max(1, total)) / max(1, len(sources)))))
+        text = transcribe_audio_file(path, mimetypes.guess_type(path.name)[0] or "audio/mpeg", progress, task_id, chunks)
+        if not text.strip():
+            raise ValueError(f"{row['file_name']}：没有识别到可用语音")
+        duration = probe_duration(path)
+        segments = split_transcript(text, duration)
+        summary = {
+            "oneLine": "已转写，需求澄清分析尚未开始", "needs": "未提及", "budget": "未提及", "timeline": "未提及",
+            "decisionMakers": "未提及", "objections": "未提及", "nextActions": "未提及", "paymentMethod": "未提及",
+            "confidence": 0, "evidenceCount": 0, "evidence": {},
+        }
+        transcript_id = f"tr-{row['id']}"
+        with db() as conn:
+            ensure_task_active(task_id)
+            conn.execute(
+                "INSERT OR REPLACE INTO transcripts (id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (transcript_id, row["file_name"], row["file_name"], row["size"], int(duration), row["imported_at"], row["customer"], "—", row["project"], "需求澄清按需转写", json.dumps(segments, ensure_ascii=False), json.dumps(summary, ensure_ascii=False)),
+            )
+            conn.execute("UPDATE imports SET transcript_id=?,status='done',progress=100 WHERE id=?", (transcript_id, row["id"]))
+
+
 def _clarification_language_instruction(language: str) -> str:
     return f"生成语言：{language}。问题 text 和提问理由 rationale 使用该语言；JSON 字段名、分类/状态枚举及客户/项目标识保持约定值，证据原文不翻译。"
 
@@ -2479,6 +2558,7 @@ def process_clarification_analysis(record_id: str, incremental_only: bool = Fals
             record = conn.execute("SELECT * FROM clarification_records WHERE id=?", (record_id,)).fetchone()
         if record is None:
             raise ValueError("需求澄清单不存在")
+        _transcribe_clarification_media(record_id, task_id, pending_only=incremental_only)
         batches = _clarification_batches(record_id, pending_only=incremental_only)
         total = len(batches)
         if not total:
@@ -2690,7 +2770,7 @@ def build_clarification_docx(record: dict, customer: str = "", project: str = ""
     return buffer.getvalue()
 
 
-def process_document(import_id: str, path: Path, task_id: str | None = None) -> None:
+def process_document(import_id: str, path: Path, ai_enabled: bool = True, task_id: str | None = None) -> None:
     try:
         ensure_task_active(task_id)
         set_task_progress(task_id, 15)
@@ -2700,7 +2780,7 @@ def process_document(import_id: str, path: Path, task_id: str | None = None) -> 
             raise ValueError("文档未提取到可读内容")
         ensure_task_active(task_id)
         set_task_progress(task_id, 55)
-        summary = summarize_transcript(text) if get_llm_config()["apiKey"] else {
+        summary = summarize_transcript(text) if ai_enabled and get_llm_config()["apiKey"] else {
             "oneLine": "已提取原文，配置模型后可生成摘要", "needs": "未提及", "budget": "未提及", "timeline": "未提及",
             "decisionMakers": "未提及", "objections": "未提及", "nextActions": "未提及", "paymentMethod": "未提及",
             "confidence": 0, "evidenceCount": 0, "evidence": {},
@@ -2724,7 +2804,7 @@ def process_document(import_id: str, path: Path, task_id: str | None = None) -> 
                          (transcript_id, row["file_name"], row["file_name"], row["size"], 0, row["imported_at"], row["customer"], "—", row["project"], "邮件" if path.suffix.lower() == ".eml" else "文件", json.dumps(segments, ensure_ascii=False), json.dumps(summary, ensure_ascii=False), json.dumps(saved_attachments, ensure_ascii=False)))
             if conn.execute("UPDATE imports SET progress=100,status='done',transcript_id=? WHERE id=? AND status='processing'", (transcript_id, import_id)).rowcount != 1:
                 raise TaskCancelled()
-        if summary["confidence"] >= 0.6 and summary.get("evidence", {}).get("needs"):
+        if ai_enabled and summary["confidence"] >= 0.6 and summary.get("evidence", {}).get("needs"):
             source_type = "email" if path.suffix.lower() == ".eml" else "file"
             insert_requirements_from_audio(import_id, str(row["customer"]), str(row["project"]), summary, source_time=str(row["imported_at"]), source_type=source_type)
         finish_task(task_id, "succeeded", progress=100)
@@ -2994,7 +3074,7 @@ def launch_task(task: dict) -> bool:
             set_import_status(import_id, "failed", 0)
             finish_task(str(task["id"]), "failed", error="原始文档不存在，无法恢复")
             return False
-        start_task(str(task["id"]), process_document, import_id, path)
+        start_task(str(task["id"]), process_document, import_id, path, bool(payload.get("aiEnabled", True)))
         return True
     if kind == "import":
         if not import_id:
@@ -3386,16 +3466,62 @@ class Handler(BaseHTTPRequestHandler):
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
                 "version": os.getenv("CLIENTHUB_APP_VERSION", "0.2.9"),
-                "apiRevision": 17,
+                "apiRevision": 18,
             })
             return
         if path == "/api/diagnostics":
             self._json(get_diagnostics())
             return
+        if path.startswith("/api/imports/") and path.endswith("/file"):
+            import_id = unquote(path.split("/")[-2])
+            with db() as conn:
+                row = conn.execute("SELECT * FROM imports WHERE id=?", (import_id,)).fetchone()
+                chat = conn.execute("SELECT attachments_json FROM chats WHERE id=?", (row["transcript_id"],)).fetchone() if row and str(row["transcript_id"] or "").startswith("chat-") else None
+            file_path = None
+            if row:
+                candidates = list(UPLOAD_DIR.glob(f"{row['id']}.*"))
+                file_path = next((item.resolve() for item in candidates if item.resolve().parent == UPLOAD_DIR.resolve() and item.is_file()), None)
+                if file_path is None and chat:
+                    for attachment in json.loads(chat["attachments_json"] or "[]"):
+                        stored_name = Path(str(attachment.get("storedName") or "")).name
+                        candidate = (UPLOAD_DIR / stored_name).resolve()
+                        if stored_name and candidate.parent == UPLOAD_DIR.resolve() and candidate.is_file():
+                            file_path = candidate
+                            break
+            if file_path is None:
+                self._json({"error": "file_not_found"}, 404)
+                return
+            body = file_path.read_bytes()
+            mime_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if mime_type in ("text/html", "image/svg+xml", "application/xhtml+xml"):
+                self.send_header("Content-Disposition", "attachment")
+            else:
+                self.send_header("Content-Disposition", "inline")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/api/imports":
             with db() as conn:
                 rows = conn.execute("SELECT * FROM imports ORDER BY imported_at DESC, rowid DESC").fetchall()
-            self._json([row_to_import(r) for r in rows])
+            records = [row_to_import(r) for r in rows]
+            archive_state = q("state")
+            type_filter = q("type")
+            customer_filter = q("customer")
+            project_filter = q("project")
+            if archive_state in {"pending", "linked"}:
+                records = [item for item in records if (item["status"] == "inbox" or item["customer"] in {"", "待归档", "待确认"}) == (archive_state == "pending")]
+            if type_filter:
+                records = [item for item in records if item["type"] == type_filter]
+            if customer_filter:
+                records = [item for item in records if item["customer"] == customer_filter]
+            if project_filter:
+                records = [item for item in records if item["project"] == project_filter]
+            self._json(records)
             return
         if path.startswith("/api/transcripts/"):
             transcript_id = path.split("/")[-1]
@@ -3835,6 +3961,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
             file_suffix = Path(file_name).suffix.lower()
             document_file = file_suffix in document_ingest.SUPPORTED
+            media_file = file_suffix in {".mp3", ".m4a", ".wav", ".amr", ".aac", ".flac", ".mp4", ".mov", ".avi", ".mkv"}
             if document_file and audio_bytes is None:
                 self._json({"error": "file_content_required"}, 400)
                 return
@@ -3842,9 +3969,13 @@ class Handler(BaseHTTPRequestHandler):
                 digest = hashlib.sha256(audio_bytes).hexdigest()
             else:
                 digest = hashlib.sha256(f"{file_name}|{data.get('size','')}|{data.get('kind','')}".encode("utf-8")).hexdigest()
-            app_settings = get_app_settings()
-            import_customer = str(data.get("customer") or "待归档") if app_settings["autoMatch"] else "待归档"
-            import_project = str(data.get("project") or app_settings["defaultProject"] or "—")
+            ai_enabled = bool(get_app_settings()["aiImportEnabled"])
+            import_project = str(data.get("project") or get_app_settings()["defaultProject"] or "—")
+            manual_customer = str(data.get("manualCustomer") or "").strip()
+            candidate_customer = str(data.get("candidateCustomer") or data.get("customer") or "").strip()
+            if candidate_customer == "待归档":
+                candidate_customer = ""
+            import_customer = manual_customer or (candidate_customer if ai_enabled else "")
             with db() as conn:
                 existing = conn.execute("SELECT * FROM imports WHERE sha256=?", (digest,)).fetchone()
                 if existing:
@@ -3854,6 +3985,10 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 import_id = f"imp-{uuid.uuid4().hex[:10]}"
                 record_type = str(data.get("type") or "文件")
+                if not import_customer and import_project != "—":
+                    project_row = conn.execute("SELECT customer FROM projects WHERE name=? ORDER BY created_at LIMIT 1", (import_project,)).fetchone()
+                    import_customer = str(project_row["customer"] or "") if project_row else ""
+                import_customer = import_customer or "待归档"
                 suffix = Path(file_name).suffix.lower() or ".bin"
                 saved_path: Path | None = None
                 if audio_bytes is not None:
@@ -3868,27 +4003,24 @@ class Handler(BaseHTTPRequestHandler):
                         str(data.get("size") or "—"),
                         import_customer,
                         import_project,
-                        "processing",
-                        0,
+                        "processing" if document_file or (media_file and ai_enabled) else "done",
+                        0 if document_file or (media_file and ai_enabled) else 100,
                         now_time(),
                         None,
                         digest,
                     ),
                 )
             mime_type = str(data.get("mimeType") or "audio/mpeg")
-            task_kind = "import_document" if document_file else "import_real" if saved_path is not None else "import"
-            task_id = create_task(
-                task_kind,
-                import_id=import_id,
-                payload={"importId": import_id, "path": str(saved_path) if saved_path is not None else "", "mimeType": mime_type},
-            )
             if document_file and saved_path is not None:
-                start_task(task_id, process_document, import_id, saved_path)
-            elif saved_path is not None:
+                task_id = create_task("import_document", import_id=import_id, payload={"importId": import_id, "path": str(saved_path), "aiEnabled": ai_enabled})
+                start_task(task_id, process_document, import_id, saved_path, ai_enabled)
+                self._json({"id": import_id, "status": "processing", "taskId": task_id}, 201)
+            elif media_file and ai_enabled and saved_path is not None:
+                task_id = create_task("import_real", import_id=import_id, payload={"importId": import_id, "path": str(saved_path), "mimeType": mime_type})
                 start_task(task_id, process_import_real, import_id, saved_path, mime_type)
+                self._json({"id": import_id, "status": "processing", "taskId": task_id}, 201)
             else:
-                start_task(task_id, process_import, import_id)
-            self._json({"id": import_id, "status": "processing", "taskId": task_id}, 201)
+                self._json({"id": import_id, "status": "done", "deferred": media_file and not ai_enabled}, 201)
             return
 
         if path == "/api/asr":
@@ -3966,17 +4098,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 image = base64.b64decode(image_b64, validate=True)
-                stored = extract_chat_screenshot(
-                    image,
-                    str(data.get("mimeType") or "image/png"),
-                    str(data.get("fileName") or f"聊天截图_{datetime.now().strftime('%Y-%m-%d')}.png"),
-                    str(data.get("customer") or ""),
-                    str(data.get("project") or ""),
-                )
+                file_name = str(data.get("fileName") or f"聊天截图_{datetime.now().strftime('%Y-%m-%d')}.png")
+                if len(image) > 12 * 1024 * 1024:
+                    raise ValueError("聊天截图超过 12 MB，请缩小后重新导入")
+                ai_enabled = bool(get_app_settings()["aiImportEnabled"])
+                manual_customer = str(data.get("manualCustomer") or "").strip()
+                project = str(data.get("project") or "").strip()
+                if ai_enabled:
+                    stored = extract_chat_screenshot(image, str(data.get("mimeType") or "image/png"), file_name,
+                        manual_customer or str(data.get("candidateCustomer") or data.get("customer") or ""), project, ai_enabled=True)
+                else:
+                    stored = create_local_screenshot_import(image, file_name, project, manual_customer)
                 if stored is None:
                     self._json({"error": "screenshot_not_recognized"}, 400)
                     return
-                self._json({"id": stored["importId"], "status": "processing", "chatId": stored["chatId"], "messageCount": stored["messageCount"]}, 201)
+                self._json({"id": stored.get("importId") or stored.get("id"), "status": stored.get("status", "processing"), "chatId": stored.get("chatId"), "messageCount": stored.get("messageCount"), "duplicate": stored.get("duplicate", False)}, 201)
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
             return
@@ -3986,17 +4122,21 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json({"error": "text_required"}, 400)
                 return
+            ai_enabled = bool(get_app_settings()["aiImportEnabled"])
+            manual_customer = str(data.get("manualCustomer") or "").strip()
+            candidate_customer = str(data.get("candidateCustomer") or data.get("customer") or "").strip()
             chat = create_chat_record(
                 text,
                 str(data.get("fileName") or f"微信聊天_{datetime.now().strftime('%Y-%m-%d')}.txt"),
-                str(data.get("customer") or ""),
+                manual_customer or (candidate_customer if ai_enabled else ""),
                 str(data.get("project") or ""),
                 str(data.get("meName") or ""),
+                ai_enabled,
             )
             if chat is None:
                 self._json({"error": "not_a_recognized_chat"}, 400)
                 return
-            self._json({"id": chat["importId"], "status": "processing", "chatId": chat["chatId"], "messageCount": chat["messageCount"]}, 201)
+            self._json({"id": chat["importId"], "status": chat["status"], "chatId": chat["chatId"], "messageCount": chat["messageCount"], "taskId": chat["taskId"]}, 201)
             return
 
         if path == "/api/imports/paste":
@@ -4004,15 +4144,17 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json({"error": "text_required"}, 400)
                 return
+            ai_enabled = bool(get_app_settings()["aiImportEnabled"])
             chat = create_chat_record(
                 text,
                 f"粘贴文本_{datetime.now().strftime('%Y-%m-%d')}.txt",
                 str(data.get("customer") or ""),
                 str(data.get("project") or ""),
                 str(data.get("meName") or ""),
+                ai_enabled,
             )
             if chat is not None:
-                self._json({"id": chat["importId"], "status": "processing", "chatId": chat["chatId"], "messageCount": chat["messageCount"]}, 201)
+                self._json({"id": chat["importId"], "status": chat["status"], "chatId": chat["chatId"], "messageCount": chat["messageCount"], "taskId": chat["taskId"]}, 201)
                 return
             self._json({"error": "not_a_recognized_chat"}, 400)
             return

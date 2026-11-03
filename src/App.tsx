@@ -12,10 +12,11 @@ import GlobalSearch from './components/GlobalSearch';
 import TodoWorkspace from './components/TodoWorkspace';
 import ClarificationWorkspace from './components/ClarificationWorkspace';
 import InboxArchive, { needsArchive } from './components/InboxArchive';
+import MaterialsPage from './components/MaterialsPage';
 import PersonalProfileModal, { defaultProfile } from './components/PersonalProfileModal';
 import NotificationCenter from './components/NotificationCenter';
 import { initialImports, transcriptRecord } from './mock/data';
-import type { ChatRecord, ImportRecord, ProjectListItem, SearchResult, TranscriptRecord, View } from './types';
+import type { ChatRecord, CustomerProfile, ImportRecord, ProjectListItem, SearchResult, TranscriptRecord, View } from './types';
 import {
   createChatImport,
   createChatScreenshot,
@@ -23,11 +24,13 @@ import {
   deleteImport,
   fetchChat,
   fetchAppSettings,
+  fetchCustomers,
   fetchImports,
   fetchProjects,
   fetchPersonalProfile,
   fetchTranscript,
   getHealth,
+  importFileUrl,
   pasteImport,
 } from './api/client';
 
@@ -76,9 +79,9 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'inbox' || value === 'clarifications' ? value : 'home';
+    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'inbox' || value === 'materials' || value === 'clarifications' ? value : 'home';
   });
-  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'inbox' | 'clarifications'>(() =>
+  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'inbox' | 'materials' | 'clarifications'>(() =>
     new URLSearchParams(window.location.search).get('from') === 'clarifications' ? 'clarifications' : 'import',
   );
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
@@ -92,6 +95,8 @@ export default function App() {
   );
   const [sidecarOnline, setSidecarOnline] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [customers, setCustomers] = useState<CustomerProfile[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState('');
   const [selectedProject, setSelectedProject] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -130,9 +135,10 @@ export default function App() {
       if (!mounted) return;
       if (health?.status === 'ok') {
         setSidecarOnline(true);
-        const [data, projectData, personal, appSettings] = await Promise.all([fetchImports(), fetchProjects(), fetchPersonalProfile(), fetchAppSettings()]);
+        const [data, projectData, personal, appSettings, customerData] = await Promise.all([fetchImports(), fetchProjects(), fetchPersonalProfile(), fetchAppSettings(), fetchCustomers()]);
         if (mounted && personal) setProfile(personal);
         if (mounted && data) setImports(data);
+        if (mounted && customerData) setCustomers(customerData);
         if (mounted && projectData) {
           // 过滤掉已归档的项目
           const activeProjects = filterActiveProjects(projectData);
@@ -140,7 +146,9 @@ export default function App() {
           setSelectedProject((current) => {
             if (current && activeProjects.some((project) => project.name === current)) return current;
             const preferred = appSettings?.defaultProject || '';
-            return preferred && activeProjects.some((project) => project.name === preferred) ? preferred : '';
+            const preferredProject = activeProjects.find((project) => project.name === preferred);
+            if (preferredProject) setSelectedCustomer(preferredProject.customer);
+            return preferredProject?.name || '';
           });
         }
         return;
@@ -345,6 +353,10 @@ export default function App() {
       navigateTo('inbox');
       return;
     }
+    if (label === '资料') {
+      navigateTo('materials');
+      return;
+    }
     showToast(`${label} 模块将在 Sprint 2 提供`);
   }
 
@@ -357,12 +369,12 @@ export default function App() {
         try {
           const type = inferType(file.name);
           const known = /张三|某某科技|会员小程序/.test(file.name);
+          const chosenProject = projects.find((project) => project.name === selectedProject);
+          const manualCustomer = chosenProject?.customer || selectedCustomer;
           if (type === '聊天记录' && file.size <= 8 * 1024 * 1024) {
             const text = await file.text();
-            const chat = await createChatImport(text, { fileName: file.name, customer: known ? '张三' : '', project: selectedProject });
+            const chat = await createChatImport(text, { fileName: file.name, manualCustomer, candidateCustomer: known ? '张三' : undefined, project: selectedProject });
             if (chat?.chatId) continue;
-            failed += 1;
-            continue;
           }
           if (type === '图片' && chatScreenshot) {
             if (file.size > 12 * 1024 * 1024) {
@@ -373,29 +385,30 @@ export default function App() {
             showToast('正在识别聊天截图，请稍候…');
             const imageBase64 = await fileToBase64(file);
             const chat = await createChatScreenshot(imageBase64, file.type || 'image/png', file.name, {
-              customer: known ? '张三' : undefined,
+              manualCustomer,
+              candidateCustomer: known ? '张三' : undefined,
               project: selectedProject || undefined,
             });
-            if (chat?.chatId) {
-              showToast('聊天截图已识别，正在生成对话解析');
+            if (chat?.id) {
+              showToast(chat.chatId ? '聊天截图已识别，正在生成对话解析' : '聊天截图已保存并进行本地 OCR');
               continue;
             }
             failed += 1;
             continue;
           }
           const media = type === '音频' || type === '视频';
-          const document = ['PDF', 'Word', 'Excel', 'PPT', '邮件', '图片'].includes(type);
-          if ((media || document) && file.size > 100 * 1024 * 1024) {
+          if (file.size > 100 * 1024 * 1024) {
             failed += 1;
             showToast(`${file.name} 超过 100 MB，请压缩或拆分后重新导入`);
             continue;
           }
-          const contentBase64 = media || document ? await fileToBase64(file) : undefined;
+          const contentBase64 = await fileToBase64(file);
           const result = await createImport({
             fileName: file.name,
             type,
             size: formatSize(file.size),
-            customer: known ? '张三' : '待归档',
+            manualCustomer,
+            candidateCustomer: known ? '张三' : undefined,
             project: selectedProject || '—',
             kind: type,
             contentBase64,
@@ -477,14 +490,15 @@ export default function App() {
 
   async function handlePasteText(text: string) {
     if (sidecarOnline) {
-      const result = await pasteImport(text, { project: selectedProject });
+      const selected = projects.find((project) => project.name === selectedProject);
+      const result = await pasteImport(text, { project: selectedProject, customer: selected?.customer || selectedCustomer });
       if (!result) {
         showToast('无法识别这段聊天记录，请检查格式后重试');
         return;
       }
       const data = await fetchImports();
       if (data) setImports(data);
-      showToast('已提交粘贴文本到本地 Sidecar，正在解析对话');
+      showToast(result.status === 'done' ? '聊天记录已本地解析并保存到资料' : '已提交粘贴文本到本地 Sidecar 处理');
       return;
     }
     const known = /张三|某某科技|会员小程序/.test(text);
@@ -504,21 +518,32 @@ export default function App() {
     showToast('已接收粘贴文本，正在解析对话（本地模拟）');
   }
 
-  async function handleOpenRecord(record: ImportRecord, origin: 'import' | 'customers' | 'inbox' = 'import', preview = false) {
+  function previewOriginal(record: ImportRecord) {
+    if (!sidecarOnline) {
+      showToast('Sidecar 未连接，暂时无法预览原件');
+      return;
+    }
+    window.open(importFileUrl(record.id), '_blank', 'noopener,noreferrer');
+  }
+
+  async function handleOpenRecord(record: ImportRecord, origin: 'import' | 'customers' | 'inbox' | 'materials' = 'import', preview = false) {
     if (needsArchive(record) && !preview) {
       setInboxFocus(record.id);
       navigateTo('inbox', { id: record.id });
       return;
     }
     if (record.status === 'processing') {
+      if (preview && !record.transcriptId) { previewOriginal(record); return; }
       showToast('文件仍在处理中，请稍候');
       return;
     }
     if (record.status === 'failed') {
+      if (preview && !record.transcriptId) { previewOriginal(record); return; }
       showToast('处理失败：请检查 Sidecar 日志、API Key 与音频格式');
       return;
     }
     if (record.status === 'cancelled') {
+      if (preview && !record.transcriptId) { previewOriginal(record); return; }
       showToast('任务已取消，请在导入中心的任务列表中重试');
       return;
     }
@@ -543,7 +568,7 @@ export default function App() {
       navigateTo('transcript', { id: record.transcriptId });
       return;
     }
-    showToast('该文件已完成，转写稿将在聊天解析链路中生成');
+    previewOriginal(record);
   }
 
   return (
@@ -568,6 +593,8 @@ export default function App() {
           />
         ) : view === 'inbox' ? (
           <InboxArchive imports={imports} online={sidecarOnline} initialId={inboxFocus} onArchived={refreshImports} onNavigate={handleNavigate} onPreview={(record) => void handleOpenRecord(record, 'inbox', true)} onDelete={(record) => void handleDeleteRecord(record)} />
+        ) : view === 'materials' ? (
+          <MaterialsPage imports={imports} onPreview={(record) => void handleOpenRecord(record, 'materials', true)} onNavigate={handleNavigate} />
         ) : view === 'import' ? (
           <ImportCenter
             onInbox={() => handleNavigate('待归档')}
@@ -580,8 +607,18 @@ export default function App() {
             onWechatImported={handleWechatImported}
             onDeleteRecord={handleDeleteRecord}
             projects={projects}
+            customers={customers.map((customer) => customer.name)}
+            selectedCustomer={selectedCustomer}
+            onCustomerChange={(name) => {
+              setSelectedCustomer(name);
+              if (selectedProject && projects.find((project) => project.name === selectedProject)?.customer !== name) setSelectedProject('');
+            }}
             selectedProject={selectedProject}
-            onProjectChange={setSelectedProject}
+            onProjectChange={(name) => {
+              setSelectedProject(name);
+              const project = projects.find((item) => item.name === name);
+              if (project) setSelectedCustomer(project.customer);
+            }}
           />
         ) : view === 'customers' ? (
           <CustomerList

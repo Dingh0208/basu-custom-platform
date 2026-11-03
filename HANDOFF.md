@@ -8,7 +8,7 @@
 
 ### 0.1 当前任务
 
-当前 **客户需求澄清助手** 的 MVP 开发、本机打包及安装验收已完成，并作为 ClientHub 的独立工作台纳入产品主 PRD。API17 安装包在本机隔离安装通过 35 项检查；75 项完整后端回归、前端构建、原生 PDF/Word、API15→17 覆盖安装和卸载数据保留均已验证。ClientHub `v0.2.9` 已正式发布并设为 Latest；Windows Release workflow `41585489196` 成功，Release 正文和 NSIS/自动更新资产已核验。全新 Windows 10/11 安装、真实 MaaS 和自动更新下载安装链路尚未手动验收；不连接远程云服务器。产品继续保持 Windows 单机单用户边界。
+当前新增的**资料模块与共享 AI 自动导入开关**已完成源码开发并合入主 PRD。当前源码 Sidecar API revision 为 18；本轮 `npm run build`、69 项 `test_sales.py`、Python 编译和 `git diff --check` 均通过。API18 功能尚未重新打 NSIS 包或安装验收，也未提交、推送或发布。ClientHub `v0.2.9` 仍是此前 API17 版本的 Latest Release，不含本轮 API18 改动；不连接远程云服务器。产品继续保持 Windows 单机单用户边界。
 
 完整目标链路是：
 
@@ -21,6 +21,7 @@
 
 - 主文档：`docs/PRD-客户信息聚合工作台-v1.0.md`
 - 访谈追溯文档：`docs/PRD-客户需求澄清助手.md`
+- 资料模块与共享 AI 自动导入需求：主 PRD 第 6.16 节
 - API17 本机交付验收：`docs/DELIVERY-API17-2026-11-03.md`
 - 项目交接文档：本文件 `HANDOFF.md`
 
@@ -29,12 +30,14 @@
 - 当前分支：`main`。
 - 当前工作区有本会话之前和本会话产生的**未提交改动**，不能 reset、clean 或覆盖；先执行 `git status --short --branch`，只处理能归因于当前任务的文件。
 - 当前最新正式版本为 `v0.2.9`，上一版本是 `v0.2.8`；本次需求澄清助手和发布配置已提交并推送，Release 已公开。
-- 当前源码 Sidecar API revision 是 **17**，应用版本为 `0.2.9`；本地 API17 验收包和验收证据见 `docs/DELIVERY-API17-2026-11-03.md`。正式安装包由 GitHub Actions 构建。
+- 当前源码 Sidecar API revision 是 **18**，应用版本仍为 `0.2.9`；本轮改动未打包。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本，不覆盖 API18 资料功能。
 - 本次新增/重点文件：
   - `services/ai/clarifications.py`：需求澄清 SQLite 表、迁移、快照、问题、证据、回答、生命周期、增量资料和指标统计。
   - `services/ai/main.py`：澄清 API、持久化任务队列、模型调用、分批分析、追问、回写和指标/复制记录接口。
   - `services/ai/test_sales.py`：隔离 SQLite/API 回归测试。
   - `src/components/ClarificationWorkspace.tsx`：历史列表、资料选择、分析进度、问题工作台、回答、追问、回写、追加资料、问题归属。
+  - `src/components/MaterialsPage.tsx`：资料列表、状态/类型/客户/项目筛选和预览入口。
+  - `src/components/ImportCenter.tsx`、`src/components/SettingsPage.tsx`：共享 AI 自动导入开关。
   - `src/api/client.ts`、`src/types.ts`、`src/styles.css`：对应 API、类型和界面样式。
 
 ### 0.3 已完成范围
@@ -112,13 +115,24 @@
 - 历史列表纳入按问题分配后的归属，显示客户/项目、问题数、未完成数及更新时间；修复无筛选快照时的历史筛选穿透和未归属 Word 导出范围；已生成单可改名，新建默认按所选客户/项目及日期命名。
 - 开发验收与 PRD 对应关系见 `docs/CLARIFICATION-MVP-ACCEPTANCE-2026-11-03.md`。源码 API revision 升为 17，未改数据库结构。
 
+#### 资料模块与共享 AI 自动导入（2026-11-03）
+
+- 新增资料页，复用现有导入记录，支持全部/待归档/已关联状态筛选，以及资料类型、客户、项目过滤；原件可通过 Sidecar 预览，解析内容沿用现有聊天/转写查看路径。
+- 设置页和导入中心共用持久化的 `aiImportEnabled`。新安装默认关闭；旧设置按原 `autoMatch` 与 `autoProcess` 偏好迁移；只影响之后新导入的资料。
+- 关闭时保留手动客户/项目关联，不做自动客户匹配或自动 AI 任务。普通文档、邮件、文本和聊天做本地解析，截图使用离线 OCR；音视频只保留原件。
+- 需求澄清开始分析后，只对用户选中的未转写音视频执行 ASR。资料筛选和原件预览增加 API 支持。
+- 源码 Sidecar API revision 升为 18；新增默认值/旧设置迁移、关闭模式导入、手动关联保留、原件预览、资料筛选和澄清时延后转写回归。
+- 本轮 69 项 `test_sales.py`、Python 编译、前端构建和 `git diff --check` 通过。尚未生成 API18 NSIS 包或做 Windows 安装验收；未提交、推送、发布，也未连接远程主机。
+
 ### 0.4 当前验证证据
+
+本轮 API18 源码验证：`npm run build` 通过；`python -m py_compile services/ai/main.py services/ai/document_ingest.py services/ai/wechat_engine.py services/ai/test_sales.py` 通过；`python -m unittest discover -s services/ai -p test_sales.py -q` 共 69 项通过；`git diff --check` 无空白错误。此处不代表 API18 已打包或安装验收。
 
 本机 API17 完整交付证据见 `docs/DELIVERY-API17-2026-11-03.md`：独立 Python 3.12.13 构建环境的 75 项完整后端回归、前端 TypeScript/Vite 构建及 NSIS 安装版 35 项检查通过。模拟模型调用 7 次，真实模型调用 0；涵盖 9 种资料解析、离线 OCR、工作单操作、回写、取消/续跑、缺少 Key、重启和导出。Word 已实际保存；Windows 原生“另存为”已保存 36,090 字节 PDF，中文内容可提取，不含内部理由、证据或模型数据。API15→17 覆盖安装前后，SQLite 五类澄清数据逐行一致，共 23 行。另有 63 项开发业务、4 项通知和 14 项真实前后端流程回归；与早期 14 项归属检查是不同测试集。
 
-浏览器 fixture 输出 `FIXTURE_CLEANED`，自动清理数据库；验证服务和 Vite 已退出。脚本从内存执行，未新建依赖环境、大型验收目录或安装包。浏览器阶段 PDF mock 只验证打印调用和对外内容；Windows 原生 PDF 保存已在 API17 安装版验收（见上一段）。
+API17 浏览器 fixture 当时输出 `FIXTURE_CLEANED` 并自动清理数据库；该轮验证服务和 Vite 已退出。脚本从内存执行，未新建依赖环境、大型验收目录或安装包。浏览器阶段 PDF mock 只验证打印调用和对外内容；Windows 原生 PDF 保存已在 API17 安装版验收（见上一段）。
 
-本轮后端与构建检查：
+API17 开发阶段留下的历史检查命令与计数如下；当前 API18 结果以上方 69 项测试记录为准：
 
 ```powershell
 python -m unittest discover -s services/ai -p test_sales.py -q
@@ -136,36 +150,33 @@ git diff --check
 
 本次 API17 包另在隔离安装版中通过 9 种资料格式解析、真实离线 OCR、API15→17 手动覆盖升级、实际 PDF/Word 文件导出、应用重启和卸载验收。更早的 API15 记录仍只代表历史包；当前包的清单、散列和边界见 API17 交付记录。
 
-此前本地开发服务已验证以下地址；当前不保证服务运行，不能直接当作在线状态：
+早期本地开发服务曾验证以下地址：
 
 - 前端：`http://localhost:5173/?view=clarifications`
 - Sidecar：`http://127.0.0.1:8765`
 - 历史健康结果：`version=0.2.8`、`apiRevision=15`、`status=ok`；这是早期开发服务，不代表 API17 安装包。
+- 本轮本地预览：前端 `http://127.0.0.1:5173/` 和 Sidecar `http://127.0.0.1:8765` 均在运行；`GET /api/health` 返回 `status=ok`、`version=0.2.9`、`apiRevision=18`。Sidecar 使用仓库默认数据目录 `services/ai/data`；启动前没有排队任务或处理中导入。
 - `GET /api/clarifications/metrics` 正常；当前本机历史完成分析数为 0。
 - 临时数据库 1,000 条澄清历史列表读取约 0.016 秒，指标汇总低于 0.001 秒。
 
-新会话开始时不要假设服务仍在运行，先访问 `/api/health` 和前端地址；若 8765 返回 API 17 以下，说明端口上是旧 Sidecar，不能作为本轮源码验证证据。本轮回归使用独立端口 18765，不操作真实用户数据库或已有业务服务。
+新会话开始时不要假设服务仍在运行，先访问 `/api/health` 和前端地址；若 8765 返回 API 18 以下，说明端口上是旧 Sidecar，不能作为本轮源码验证证据。本轮回归使用独立端口 18765，不操作真实用户数据库或已有业务服务。
 
 ### 0.5 当前卡点和明确未完成项
 
-当前没有已知的阻塞性代码错误，本机 API17 打包及安装验收已完成。以下未验收环境、待用户执行的本机清理及发布状态仍需保留：
+本轮 API18 源码开发和回归已完成；API18 的 NSIS 打包、Windows 安装验收及发布未进行。API17 的历史安装结果只适用于 `v0.2.9`。以下仍是独立的环境边界或历史事项：
 
 1. 本机 Windows 安装版和 API15→17 覆盖升级已通过，且实际生成 PDF。全新 Windows 10/11、真实模型和自动更新下载→重启安装链路仍未验收；用户已停止远程工作，不再连接云服务器。
 2. 真实 MaaS 模型联调尚未作为自动化测试执行；回归测试使用 `patch('main.maas_request', ...)`，不要在测试中调用真实 API 或消耗 Key。
 3. 指标持久化与历史页展示已完成；基线只纳入功能上线后记录完成时间的分析，不回填上线前无法追溯的复制/已问操作。
 4. 按问题/资料分配均已实现；引用多份资料的问题需手动选择并整体分配，预览后确认，只补充缺失归属，保留问题/回答/证据和原始资料。归属保存逐项执行，部分失败时只重试失败项。
-5. 缺少 `xlrd` 的构建卡点已解决。本轮独立 Python 3.12.13 环境和 RapidOCR 1.4.4 构建的 API17 包通过 9 种文档/邮件/图片格式解析、真实离线 OCR、澄清失败保留/取消续跑/增量冲突、回写和安装版导出检查。API17 最终安装结果见 `docs/DELIVERY-API17-2026-11-03.md`；`docs/INSTALLER-ACCEPTANCE-2026-11-03.md` 是 API15 历史记录。
-6. `v0.2.9` 已正式发布；Windows workflow `41585489196` 成功，Release Notes、NSIS 安装包、`.blockmap` 和 `latest.yml` 均已核验。
+5. 缺少 `xlrd` 的构建卡点已在此前解决。独立 Python 3.12.13 环境和 RapidOCR 1.4.4 构建的 API17 包通过 9 种文档/邮件/图片格式解析、真实离线 OCR、澄清失败保留/取消续跑/增量冲突、回写和安装版导出检查。API17 最终安装结果见 `docs/DELIVERY-API17-2026-11-03.md`；`docs/INSTALLER-ACCEPTANCE-2026-11-03.md` 是 API15 历史记录。
+6. `v0.2.9` 曾正式发布；Windows workflow `41585489196` 成功，Release Notes、NSIS 安装包、`.blockmap` 和 `latest.yml` 均已核验。该版本不含本轮 API18 资料模块及共享开关改动。
 7. 主 PRD 6.15.3 的证据来源跳转已完成；记录级来源查看和刷新后返回原单已验证，段落/音频时间点精确定位未纳入本轮。
 8. 上次本机只读预览报告 `Audited local temporary files: 5.01 GiB`；用户未确认随后是否运行 `-Apply`，因此不能记为已删除。清理脚本只操作固定的本机路径，命令由用户自行运行。
 
-### 0.6 下一步：本机临时文件清理
+### 0.6 下一步：资料模块交付验收
 
-需求澄清助手 MVP、源码开发、本机安装验收和 `v0.2.9` Release 均已完成。其他未验收环境作为发布边界保留。
-
-1. **开发及本机验收已完成** → 已对照 6.15.8 核对并修复流程缺口；75 项完整后端回归、4 项通知回归、前端构建及安装版隔离检查通过。自动保存指已确认的分析批次、生成问题和后续已保存操作即时持久化，不自动提交尚未确认的输入。
-2. **发布 v0.2.9 已完成** → Windows workflow `41585489196` 成功；Release 正文标注了本轮功能更新，并包含 `ClientHub-Setup-0.2.9.exe`、`.blockmap` 和 `latest.yml`。
-3. **本机清理由用户执行** → 使用本文件下方记录的固定本地路径脚本；命令只在用户本机执行，不连接远程主机。
+本轮源码开发已完成，当前工作区尚未提交。接下来若继续交付，应基于 API18 源码重新构建 NSIS 安装包，并在本机 Windows 环境验证新安装默认关闭、旧设置迁移、资料预览/筛选和音视频按需转写；完成验收前不得将 API18 标记为已发布。此前 `v0.2.9` 的发布和 API17 安装验收仍是历史记录。
 
 ### 0.7 新会话必须遵守的边界
 

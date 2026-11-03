@@ -6,6 +6,7 @@ import {
   IconFolder,
   IconUpload,
   IconInbox,
+  IconFile,
   IconCheckSquare,
   IconSparkles,
   IconSettings,
@@ -16,7 +17,7 @@ type SidebarProps = {
   notificationEntry: React.ReactNode;
   profile: PersonalProfile;
   onProfile: () => void;
-  active: 'home' | 'import' | 'inbox' | 'customers' | 'projects' | 'settings' | 'todos' | 'clarifications' | 'other';
+  active: 'home' | 'import' | 'inbox' | 'materials' | 'customers' | 'projects' | 'settings' | 'todos' | 'clarifications' | 'other';
   inboxCount: number;
   onNavigate: (label: string) => void;
 };
@@ -34,6 +35,7 @@ const mainItems = [
   { key: 'customers', label: '客户', icon: IconUsers },
   { key: 'projects', label: '项目', icon: IconFolder },
   { key: 'import', label: '导入中心', icon: IconUpload },
+  { key: 'materials', label: '资料', icon: IconFile },
   { key: 'inbox', label: '待归档', icon: IconInbox, badge: true },
 ];
 
@@ -94,7 +96,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
   const hasUpdate = ['available', 'progress', 'downloaded'].includes(update.status);
 
   const isActive = (key: string) =>
-    (active === 'home' && key === 'home') || (active === 'import' && key === 'import') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
+    (active === 'home' && key === 'home') || (active === 'import' && key === 'import') || (active === 'materials' && key === 'materials') || (active === 'customers' && key === 'customers') || (active === 'projects' && key === 'projects');
 
   return (
     <aside className="sidebar">

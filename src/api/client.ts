@@ -248,7 +248,9 @@ export async function createImport(payload: {
   fileName: string;
   type: string;
   size: string;
-  customer: string;
+  customer?: string;
+  manualCustomer?: string;
+  candidateCustomer?: string;
   project: string;
   kind?: string;
   audioBase64?: string;
@@ -557,7 +559,7 @@ export async function getWechatPrepareStatus(): Promise<WeChatJob | null> {
   return fetchJson<WeChatJob>('/api/wechat/prepare/status', undefined, 5000);
 }
 
-export async function createChatImport(text: string, meta?: { fileName?: string; customer?: string; project?: string }): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
+export async function createChatImport(text: string, meta?: { fileName?: string; customer?: string; manualCustomer?: string; candidateCustomer?: string; project?: string }): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
   return fetchJson('/api/imports/chat', {
     method: 'POST',
     body: JSON.stringify({ text, ...meta }),
@@ -568,11 +570,15 @@ export async function createChatScreenshot(
   imageBase64: string,
   mimeType: string,
   fileName: string,
-  meta?: { customer?: string; project?: string },
+  meta?: { customer?: string; manualCustomer?: string; candidateCustomer?: string; project?: string },
 ): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
   return fetchJson(
     '/api/imports/chat-screenshot',
     { method: 'POST', body: JSON.stringify({ imageBase64, mimeType, fileName, ...meta }) },
     360000,
   );
+}
+
+export function importFileUrl(id: string): string {
+  return `${API_BASE}/api/imports/${encodeURIComponent(id)}/file`;
 }

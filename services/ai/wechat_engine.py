@@ -534,7 +534,7 @@ def import_conversation(
         messages,
         participants,
         file_name,
-        customer or session_name,
+        customer,
         project or "—",
         attachments=attachments,
     )
@@ -621,7 +621,7 @@ def _import_worker(account: str, username: str, start_date: str, end_date: str, 
         _update_job(
             _import_job,
             progress=68,
-            message="聊天记录已创建，正在生成 AI 对话解析…",
+            message="聊天记录已创建，正在生成 AI 对话解析…" if result.get("status") == "processing" else "聊天记录已本地解析并保存到资料…",
             chatId=result["chatId"],
             importId=result["importId"],
             sessionName=result.get("sessionName", ""),
@@ -641,7 +641,8 @@ def _import_worker(account: str, username: str, start_date: str, end_date: str, 
             except Exception:
                 status = "processing"
             if status == "done":
-                _update_job(_import_job, status="done", progress=100, message="提取完成，聊天记录和 AI 解析已生成")
+                message = "提取完成，聊天记录和 AI 解析已生成" if result.get("status") == "processing" else "提取完成，聊天记录已保存到资料"
+                _update_job(_import_job, status="done", progress=100, message=message)
                 return
             if status == "failed":
                 _update_job(_import_job, status="failed", progress=90, message="聊天记录已创建，但 AI 解析失败", error="chat_analysis_failed")
