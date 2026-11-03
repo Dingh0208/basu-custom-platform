@@ -479,7 +479,7 @@ export async function mergeCustomerRequirements(targetId: string, sourceIds: str
 }
 
 export async function getWechatStatus(): Promise<WeChatStatus | null> {
-  return fetchJson<WeChatStatus>('/api/wechat/status', undefined, 60000);
+  return fetchJson<WeChatStatus>('/api/wechat/status', undefined, 120000);
 }
 
 export type WechatEngineStartResult = {
@@ -490,11 +490,13 @@ export type WechatEngineStartResult = {
   error?: string;
   repairSteps?: string[];
   logPath?: string;
+  tempDir?: string;
+  retryAfterSeconds?: number;
 };
 
 export async function startWechatEngine(): Promise<WechatEngineStartResult> {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 45000);
+  const timer = window.setTimeout(() => controller.abort(), 120000);
   try {
     const response = await fetch(`${API_BASE}/api/wechat/start`, {
       method: 'POST',

@@ -9,11 +9,13 @@ ClientHub sidecar a small, typed API over it.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import mimetypes
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -68,6 +70,10 @@ _BACKEND_URL = f"http://127.0.0.1:{_BACKEND_PORT}"
 _process: subprocess.Popen | None = None
 _log_handle = None
 _start_lock = threading.Lock()
+_last_start_error = ""
+_retry_after = 0.0
+_runtime_temp: Path | None = None
+_log_offset = 0
 _job_lock = threading.Lock()
 _prepare_job: dict[str, Any] = {"status": "idle", "progress": 0, "message": "尚未更新微信库"}
 _import_job: dict[str, Any] = {"status": "idle", "progress": 0, "message": "尚未提取"}
@@ -82,8 +88,28 @@ def _health() -> dict | None:
         return None
 
 
-def _spawn() -> None:
-    global _process, _log_handle
+def _prepare_runtime_temp(alternate: bool = False) -> Path:
+    candidates = [_data_dir() / "runtime-temp"]
+    local_appdata = os.getenv("LOCALAPPDATA", "").strip()
+    if local_appdata:
+        candidates.append(Path(local_appdata) / "ClientHub" / "wechat-runtime")
+    if alternate:
+        candidates.reverse()
+    errors = []
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            # Test directory creation and writing, which the bootloader needs.
+            with tempfile.TemporaryDirectory(prefix="probe-", dir=candidate) as probe:
+                (Path(probe) / "write-test").write_bytes(b"ok")
+            return candidate.resolve()
+        except OSError as exc:
+            errors.append(f"{candidate}: {exc}")
+    raise RuntimeError("微信引擎临时目录不可写：" + "；".join(errors))
+
+
+def _spawn(alternate_temp: bool = False) -> None:
+    global _process, _log_handle, _runtime_temp, _log_offset
     if _process is not None and _process.poll() is None:
         return
     backend = _find_backend()
@@ -95,10 +121,21 @@ def _spawn() -> None:
     output_dir = _output_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _runtime_temp = _prepare_runtime_temp(alternate_temp)
     log_path = data_dir / "clienthub-wechat-engine.log"
+    if _log_handle is not None:
+        _log_handle.close()
     _log_handle = open(log_path, "a", encoding="utf-8", buffering=1)
+    _log_handle.write(f"\n[ClientHub {datetime.now().isoformat(timespec='seconds')}] starting engine; temp={_runtime_temp}\n")
+    _log_offset = log_path.stat().st_size
     env = {
         **os.environ,
+        # Both the one-file backend and its native broker inherit this path.
+        "TEMP": str(_runtime_temp),
+        "TMP": str(_runtime_temp),
+        "TMPDIR": str(_runtime_temp),
+        # Do not reuse the frozen sidecar's extraction directory/state.
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
         "WECHAT_TOOL_HOST": "127.0.0.1",
         "WECHAT_TOOL_PORT": str(_BACKEND_PORT),
         "WECHAT_TOOL_DATA_DIR": str(data_dir),
@@ -115,24 +152,60 @@ def _spawn() -> None:
     )
 
 
-def ensure_engine(timeout_seconds: float = 35.0) -> dict:
-    if _health():
-        return {"available": True, "port": _BACKEND_PORT, "started": False, "backend": str(_find_backend() or "")}
+def _start_failure(reason: str) -> str:
+    try:
+        with open(log_path(), "rb") as handle:
+            handle.seek(max(_log_offset, handle.seek(0, 2) - 16384))
+            recent = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        recent = ""
+    if "Could not create temporary directory" in recent:
+        reason = f"微信引擎无法创建解包临时目录（{reason}），请检查目录权限或组件完整性级别"
+    elif "native broker did not become ready" in recent or "I/O error (-4)" in recent:
+        reason = f"微信引擎的本地数据库组件未就绪（{reason}），请检查组件权限或安全软件拦截"
+    return f"{reason}。日志：{log_path()}"
+
+
+def ensure_engine(timeout_seconds: float = 35.0, *, force_retry: bool = False) -> dict:
+    global _last_start_error, _retry_after
     with _start_lock:
         if _health():
+            _last_start_error, _retry_after = "", 0.0
             return {"available": True, "port": _BACKEND_PORT, "started": False, "backend": str(_find_backend() or "")}
-        _spawn()
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            if _health():
-                return {"available": True, "port": _BACKEND_PORT, "started": True, "backend": str(_find_backend() or "")}
-            if _process is not None and _process.poll() is not None:
-                raise RuntimeError(f"微信解析引擎启动失败，退出码 {_process.returncode}。请查看 {_data_dir() / 'clienthub-wechat-engine.log'}")
-            time.sleep(0.5)
-    raise RuntimeError(f"微信解析引擎启动超时。请查看日志：{_data_dir() / 'clienthub-wechat-engine.log'}")
+        if not force_retry and time.monotonic() < _retry_after:
+            raise RuntimeError(_last_start_error)
+        try:
+            for attempt in range(2):
+                _spawn(alternate_temp=attempt > 0)
+                deadline = time.monotonic() + timeout_seconds
+                reason = "微信解析引擎启动超时"
+                while time.monotonic() < deadline:
+                    if _health():
+                        _last_start_error, _retry_after = "", 0.0
+                        return {"available": True, "port": _BACKEND_PORT, "started": True, "backend": str(_find_backend() or ""), "attempts": attempt + 1}
+                    if _process is not None and _process.poll() is not None:
+                        reason = f"微信解析引擎启动失败，退出码 {_process.returncode}"
+                        break
+                    time.sleep(0.5)
+                error = _start_failure(reason)
+                _cleanup()
+                if attempt == 0:
+                    time.sleep(1)
+            raise RuntimeError(f"{error}；自动重试 1 次后仍失败，已暂停自动启动，可点击重新启动并重试。")
+        except (OSError, RuntimeError) as exc:
+            _cleanup()
+            _last_start_error = str(exc)
+            _retry_after = time.monotonic() + 60
+            raise RuntimeError(_last_start_error) from exc
 
 
 def repair_steps(error: str) -> list[str]:
+    if "临时目录" in error:
+        return [
+            "已尝试专用解包目录和备用目录；确认对应磁盘有可用空间，当前 Windows 用户对目录有创建和写入权限。",
+            "若仍出现 Could not create temporary directory，请使用修复版安装包覆盖安装，修正引擎组件的 Windows 完整性级别。",
+            "完成修复后点击“重新启动并重试”；不需要删除聊天数据或清空系统 Temp。",
+        ]
     if "未找到内置微信引擎" in error:
         return [
             "安装目录缺少微信解析组件。重新运行最新版 ClientHub 安装包覆盖安装。",
@@ -158,6 +231,14 @@ def repair_steps(error: str) -> list[str]:
 
 def log_path() -> str:
     return str(_data_dir() / "clienthub-wechat-engine.log")
+
+
+def failure_details(error: str) -> dict:
+    return {
+        "repairSteps": repair_steps(error), "logPath": log_path(),
+        "tempDir": str(_runtime_temp or _data_dir() / "runtime-temp"),
+        "retryAfterSeconds": max(0, int(_retry_after - time.monotonic() + 0.999)),
+    }
 
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: int = 60) -> dict:
@@ -196,7 +277,7 @@ def status() -> dict:
             "prepareJob": job,
         }
     except Exception as exc:
-        return {"available": False, "error": str(exc), "prepared": False, "prepareJob": prepare_status()}
+        return {"available": False, "error": str(exc), "accounts": [], "accountInfos": [], "prepared": False, "prepareJob": prepare_status(), **failure_details(str(exc))}
 
 
 def _update_job(job: dict, **changes: Any) -> None:
@@ -392,6 +473,7 @@ def normalize_messages(
     selected = set(render_types or [])
     messages: list[dict] = []
     attachments: list[dict] = []
+    fallback_ids: dict[str, int] = {}
     for index, item in enumerate(items, start=1):
         create_time = int(item.get("createTime") or 0)
         if start_ts and create_time < start_ts:
@@ -403,8 +485,14 @@ def normalize_messages(
             continue
         sent_at = datetime.fromtimestamp(create_time).strftime("%Y-%m-%d %H:%M") if create_time else ""
         sender = str(item.get("senderDisplayName") or item.get("senderUsername") or ("我" if item.get("isSent") else "对方"))
-        message_id = f"wx-{item.get('localId') or index}"
         content = _message_content(item)
+        local_id = item.get("localId")
+        if local_id:
+            message_id = f"wx-id-{local_id}"
+        else:
+            fingerprint = hashlib.sha256(f"{create_time}\0{sender}\0{content}".encode("utf-8")).hexdigest()[:20]
+            fallback_ids[fingerprint] = fallback_ids.get(fingerprint, 0) + 1
+            message_id = f"wx-fp-{fingerprint}-{fallback_ids[fingerprint]}"
         messages.append({
             "id": message_id,
             "sender": sender,
@@ -529,17 +617,32 @@ def import_conversation(
     safe_name = "".join(ch for ch in session_name if ch not in r'\/:*?"<>|').strip() or "微信会话"
     file_name = f"微信聊天_{safe_name}_{stamp}.json"
     progress(55, "正在创建聊天记录…")
-    copy_local_media(attachments, main_module.UPLOAD_DIR)
+    conversation_key = "wechat:" + hashlib.sha256(f"{account}\0{username}".encode("utf-8")).hexdigest()
+    with main_module.db() as conn:
+        existing = main_module._find_existing_chat(conn, conversation_key, messages, participants, customer, safe_name)
+        if existing:
+            _, new_messages = main_module._merge_chat_messages(json.loads(existing["messages_json"] or "[]"), messages)
+        else:
+            new_messages = messages
+    new_message_ids = {str(message.get("id") or "") for message in new_messages}
+    new_attachments = [item for item in attachments if str(item.get("messageId") or "") in new_message_ids]
+    copy_local_media(new_attachments, main_module.UPLOAD_DIR)
     stored = store_chat_record(
         messages,
         participants,
         file_name,
         customer,
         project or "—",
-        attachments=attachments,
+        attachments=new_attachments,
+        conversation_key=conversation_key,
+        legacy_session_name=safe_name,
     )
     if stored is None:
         raise ValueError("没有足够消息，无法创建聊天记录")
+    with main_module.db() as conn:
+        canonical = conn.execute("SELECT messages_json,attachments_json FROM chats WHERE id=?", (stored["chatId"],)).fetchone()
+    canonical_messages = json.loads(canonical["messages_json"] or "[]") if canonical else messages
+    canonical_attachments = json.loads(canonical["attachments_json"] or "[]") if canonical else attachments
     payload = {
         "source": "WeChatDataAnalysis",
         "account": account,
@@ -549,9 +652,10 @@ def import_conversation(
         "startDate": start_date,
         "endDate": end_date,
         "renderTypes": render_types or [],
-        "messageCount": len(messages),
-        "messages": messages,
-        "attachments": attachments,
+        "messageCount": len(canonical_messages),
+        "addedMessageCount": stored.get("addedMessageCount", len(messages)),
+        "messages": canonical_messages,
+        "attachments": canonical_attachments,
     }
     export_dir.mkdir(parents=True, exist_ok=True)
     export_path = export_dir / f"{stored['chatId']}.json"
@@ -626,6 +730,8 @@ def _import_worker(account: str, username: str, start_date: str, end_date: str, 
             importId=result["importId"],
             sessionName=result.get("sessionName", ""),
             messageCount=result.get("messageCount", 0),
+            addedMessageCount=result.get("addedMessageCount", result.get("messageCount", 0)),
+            duplicate=result.get("duplicate", False),
         )
         # Wait for the normal chat-analysis background thread to finish.
         import sys
@@ -641,7 +747,10 @@ def _import_worker(account: str, username: str, start_date: str, end_date: str, 
             except Exception:
                 status = "processing"
             if status == "done":
-                message = "提取完成，聊天记录和 AI 解析已生成" if result.get("status") == "processing" else "提取完成，聊天记录已保存到资料"
+                if result.get("addedMessageCount") == 0:
+                    message = "提取完成，没有发现新增消息，重复内容已跳过"
+                else:
+                    message = "提取完成，新增消息和 AI 解析已保存" if result.get("status") == "processing" else "提取完成，新增消息已保存到资料"
                 _update_job(_import_job, status="done", progress=100, message=message)
                 return
             if status == "failed":
@@ -659,11 +768,19 @@ def _cleanup() -> None:
     global _process, _log_handle
     if _process is not None and _process.poll() is None:
         try:
-            _process.terminate()
-        except Exception:
-            pass
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(_process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            else:
+                _process.terminate()
+            _process.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            # Keep the handle so the next attempt cannot spawn a second tree.
+            if _process.poll() is None:
+                return
+    _process = None
     if _log_handle is not None:
         try:
             _log_handle.close()
-        except Exception:
+        except OSError:
             pass
+        _log_handle = None

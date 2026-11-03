@@ -7,6 +7,7 @@ import {
   getWechatStatus,
   importWechatChat,
   previewWechatMessages,
+  startWechatEngine,
   startWechatPrepare,
 } from '../api/client';
 import { IconChat, IconRefresh, IconSearch } from './Icons';
@@ -67,7 +68,17 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
     setLoading(false);
   }
 
-  async function refreshEngine() {
+  async function refreshEngine(retry = false) {
+    setLoading(true);
+    if (retry) {
+      const started = await startWechatEngine();
+      if (started.status === 'failed') {
+        setStatus({ ...started, available: false, accounts: [], accountInfos: [] });
+        setPrepared(false);
+        setLoading(false);
+        return null;
+      }
+    }
     const result = await getWechatStatus();
     setStatus(result);
     setPrepared(Boolean(result?.prepared));
@@ -76,6 +87,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       setAccount(accountName);
       await loadSessions(accountName);
     }
+    setLoading(false);
     return result;
   }
 
@@ -106,18 +118,6 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
     });
     return () => { mounted = false; };
   }, [open]);
-
-  useEffect(() => {
-    if (!open || loading || status?.available || prepareJob?.status === 'running') return;
-    let mounted = true;
-    const timer = window.setTimeout(async () => {
-      if (mounted) await refreshEngine();
-    }, 3000);
-    return () => {
-      mounted = false;
-      window.clearTimeout(timer);
-    };
-  }, [loading, open, status?.available, prepareJob?.status]);
 
   useEffect(() => {
     if (!open || prepareJob?.status !== 'running') return;
@@ -152,7 +152,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       if (job.status === 'done') {
         window.clearInterval(timer);
         setImporting(false);
-        onToast(`已提取 ${job.messageCount ?? 0} 条消息，聊天解析已生成`);
+        onToast(job.addedMessageCount === 0 ? '没有发现新增消息，重复内容已自动跳过' : `本次新增 ${job.addedMessageCount ?? job.messageCount ?? 0} 条，累计 ${job.messageCount ?? 0} 条，资料已更新`);
         onImported();
         onClose();
       } else if (job.status === 'failed') {
@@ -259,10 +259,10 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
           <div className="wechat-pane-head">
             <div className="wechat-pane-title"><IconChat size={16} /> 微信会话</div>
             <div className="wechat-pane-actions">
-              <button className="btn ghost wechat-update-btn" disabled={prepareJob?.status === 'running'} onClick={handlePrepare}>
+              <button className="btn ghost wechat-update-btn" disabled={loading || !status?.available || prepareJob?.status === 'running'} onClick={handlePrepare}>
                 {prepareJob?.status === 'running' ? `解密中 ${prepareJob.progress || 0}%` : '更新微信库'}
               </button>
-              <button className="icon-btn" title="刷新" onClick={async () => { await refreshEngine(); }}><IconRefresh size={15} /></button>
+              <button className="icon-btn" title="刷新" disabled={loading} onClick={async () => { await refreshEngine(!status?.available); }}><IconRefresh size={15} /></button>
             </div>
           </div>
           <div className={`wechat-ready-line ${prepared ? 'ok' : 'warn'}`}>
@@ -279,7 +279,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
           {loading && !status ? (
             <div className="wechat-unavailable">
               <div className="empty-panel">正在启动微信解析引擎…</div>
-              <div className="small-note">首次启动需要读取微信数据，通常约 10–30 秒；启动完成后会自动加载会话。</div>
+              <div className="small-note">首次启动通常约 10–30 秒；失败时会切换专用临时目录重试一次，最长约 90 秒。</div>
             </div>
           ) : status?.available ? (
             <>
@@ -323,9 +323,17 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
               </div>
             </>
           ) : (
-            <div className="wechat-unavailable">
-              <div className="empty-panel">微信解析引擎未连接</div>
+            <div className="wechat-unavailable" role="alert">
+              <div className="empty-panel">{loading ? '正在重试启动微信解析引擎…' : '微信解析引擎未连接'}</div>
               <div className="small-note">{status?.error || '内置微信引擎未就绪，请检查安装包是否包含 wechat-engine 目录。'}</div>
+              <div className="wechat-repair-help">
+                <strong>可执行的修复步骤</strong>
+                <ol>{(status?.repairSteps || ['确认微信已登录，点击下方按钮重新启动引擎。']).map((step) => <li key={step}>{step}</li>)}</ol>
+                {status?.tempDir && <small>解包目录：{status.tempDir}</small>}
+                {status?.logPath && <small>诊断日志：{status.logPath}</small>}
+                {!!status?.retryAfterSeconds && <small>自动启动已暂停，修复后可手动重试。</small>}
+              </div>
+              <button className="btn primary" disabled={loading} onClick={() => void refreshEngine(true)}>{loading ? '正在重试…' : '重新启动并重试'}</button>
             </div>
           )}
         </div>
@@ -371,7 +379,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
               <div className="wechat-progress-track"><span style={{ width: `${importJob.progress || 0}%` }} /></div>
             </div>
           )}
-          <div className="small-note">提取后会自动写入聊天记录、客户档案和客户 360 时间线，并触发 AI 对话解析。</div>
+          <div className="small-note">同一会话合并为一条累计记录，重复消息自动跳过；AI 分析按设置开关执行。</div>
         </div>
       </div>
       <div className="modal-actions">

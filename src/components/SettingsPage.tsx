@@ -81,7 +81,7 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
   const [busy, setBusy] = useState<'test' | 'pull' | 'save' | 'clear' | null>(null);
   const [message, setMessage] = useState('');
   const [updateStatus, setUpdateStatus] = useState('');
-  const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'available' | 'progress' | 'downloaded' | 'none' | 'error'>('idle');
+  const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'available' | 'progress' | 'downloaded' | 'installing' | 'none' | 'error'>('idle');
   const [updateProgress, setUpdateProgress] = useState(0);
   const [backupBusy, setBackupBusy] = useState<'export' | 'restore' | null>(null);
   const [backupMessage, setBackupMessage] = useState('');
@@ -106,16 +106,21 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
   useEffect(() => {
     const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number }) => void) => (() => void) | void; getUpdateState?: () => Promise<{ status: string; version?: string; percent?: number } | null> } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
+    let receivedEvent = false;
     const applyUpdateState = (payload: { status: string; version?: string; percent?: number }) => {
       if (payload.status === 'checking') { setUpdatePhase('checking'); setUpdateStatus('正在检查更新…'); }
       else if (payload.status === 'available') { setUpdatePhase('available'); setUpdateStatus(`发现新版本 ${payload.version || ''}，点击下载`); }
-      else if (payload.status === 'progress') { setUpdatePhase('progress'); setUpdateProgress(payload.percent || 0); setUpdateStatus('正在下载更新…'); }
+      else if (payload.status === 'progress') { setUpdatePhase('progress'); setUpdateProgress(payload.percent || 0); setUpdateStatus('正在进行更新…'); }
       else if (payload.status === 'downloaded') { setUpdatePhase('downloaded'); setUpdateProgress(100); setUpdateStatus(`新版本 ${payload.version || ''} 已下载，点击重启应用`); }
+      else if (payload.status === 'installing') { setUpdatePhase('installing'); setUpdateStatus('正在安装更新…'); }
       else if (payload.status === 'none') { setUpdatePhase('none'); setUpdateStatus('当前已是最新版本'); }
       else if (payload.status === 'error') { setUpdatePhase('error'); setUpdateStatus('更新检查失败，请稍后重试'); }
     };
-    const cleanup = bridge.onUpdateStatus(applyUpdateState);
-    void bridge.getUpdateState?.().then((payload) => { if (payload) applyUpdateState(payload); });
+    const cleanup = bridge.onUpdateStatus((payload) => {
+      receivedEvent = true;
+      applyUpdateState(payload);
+    });
+    void bridge.getUpdateState?.().then((payload) => { if (payload && !receivedEvent) applyUpdateState(payload); });
     return cleanup;
   }, []);
 
@@ -192,7 +197,7 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
     const bridge = (window as unknown as { clientHub?: { downloadUpdate?: () => Promise<{ status: string }> } }).clientHub;
     setUpdatePhase('progress');
     setUpdateProgress(0);
-    setUpdateStatus('正在下载更新…');
+    setUpdateStatus('正在进行更新…');
     const result = await bridge?.downloadUpdate?.();
     if (!result || result.status === 'error') {
       setUpdatePhase('error');
@@ -202,7 +207,10 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
 
   async function installUpdate() {
     const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
-    await bridge?.installUpdate?.();
+    setUpdatePhase('installing');
+    setUpdateStatus('正在安装更新…');
+    const started = await bridge?.installUpdate?.();
+    if (started === false) { setUpdatePhase('error'); setUpdateStatus('更新安装未启动，请重试'); }
   }
 
   async function refreshDiagnostics() {
@@ -511,7 +519,7 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
 
           <section className="card settings-section" id="settings-updates" hidden={activeSection !== 'updates'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">06</span><div><div className="card-title">更新设置</div><div className="card-sub">控制后台检查和下载行为</div></div></div></div>
-            <div className="settings-toggle-row"><div><strong>自动检查更新</strong><span>发现新版本后提醒，下载由你确认</span></div><button className={`switch ${appSettings.autoUpdate ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoUpdate: !current.autoUpdate }))} aria-label="切换自动检查更新" /></div><label className="settings-field-inline">检查频率<select value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((current) => ({ ...current, updateIntervalHours: Number(e.target.value) }))}><option value={1}>每 1 小时</option><option value={3}>每 3 小时</option><option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option></select></label><div className="settings-actions settings-actions-spaced settings-update-actions"><button className="btn" onClick={() => void checkUpdates()} disabled={updatePhase === 'checking' || updatePhase === 'progress'}>立即检查</button>{updatePhase === 'available' && <button className="btn primary" onClick={() => void downloadUpdate()}>下载更新</button>}{updatePhase === 'downloaded' && <button className="btn primary" onClick={() => void installUpdate()}>重启该应用</button>}<button className="btn primary" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存更新设置'}</button></div>{updatePhase === 'progress' && <div className="settings-update-progress"><div><span>下载进度</span><strong>{Math.round(updateProgress)}%</strong></div><div className="version-progress"><span style={{ width: `${Math.min(100, Math.max(0, updateProgress))}%` }} /></div></div>}{updateStatus && <div className="llm-result settings-feedback" aria-live="polite">{updateStatus}</div>}
+            <div className="settings-toggle-row"><div><strong>自动检查更新</strong><span>发现新版本后提醒，下载由你确认</span></div><button className={`switch ${appSettings.autoUpdate ? 'on' : ''}`} onClick={() => setAppSettings((current) => ({ ...current, autoUpdate: !current.autoUpdate }))} aria-label="切换自动检查更新" /></div><label className="settings-field-inline">检查频率<select value={appSettings.updateIntervalHours} onChange={(e) => setAppSettings((current) => ({ ...current, updateIntervalHours: Number(e.target.value) }))}><option value={1}>每 1 小时</option><option value={3}>每 3 小时</option><option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option></select></label><div className="settings-actions settings-actions-spaced settings-update-actions"><button className="btn" onClick={() => void checkUpdates()} disabled={updatePhase === 'checking' || updatePhase === 'progress' || updatePhase === 'downloaded' || updatePhase === 'installing'}>立即检查</button>{updatePhase === 'available' && <button className="btn primary" onClick={() => void downloadUpdate()}>下载更新</button>}{updatePhase === 'downloaded' && <button className="btn primary" onClick={() => void installUpdate()}>重启该应用</button>}<button className="btn primary" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存更新设置'}</button></div>{updatePhase === 'progress' && <div className="settings-update-progress"><div><span>正在进行更新</span><strong>{Math.round(updateProgress)}%</strong></div><div className="version-progress"><span style={{ width: `${Math.min(100, Math.max(0, updateProgress))}%` }} /></div></div>}{updateStatus && <div className="llm-result settings-feedback" aria-live="polite">{updateStatus}</div>}
           </section>
 
           <section className="card settings-section" id="settings-notifications" hidden={activeSection !== 'notifications'}>

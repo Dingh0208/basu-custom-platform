@@ -137,6 +137,12 @@ button{font-family:inherit}
 .t-text{font-size:12.5px;line-height:1.75;color:#344054}
 .t-text mark{background:#fff1b8;color:inherit;padding:0 2px;border-radius:3px}
 .t-text .muted{color:var(--muted-2)}
+.t-row>textarea{width:100%;min-width:0;min-height:100px;resize:vertical;padding:10px 12px;border:1px solid var(--line-strong);border-radius:6px;font:inherit;line-height:1.75}
+.document-transcript .transcript-head{flex-wrap:wrap}
+.document-transcript .t-row{grid-template-columns:46px minmax(0,1fr)}
+.document-transcript .t-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.85}
+.document-transcript .t-row>textarea{min-height:180px;font-size:14px;line-height:1.85}
+.clarification-analysis-stage{margin:0 16px 10px;color:var(--muted);font-size:12px;line-height:1.65}
 .t-row.active{background:#fbfdfc;border-radius:8px;margin:0 -8px;padding-left:8px;padding-right:8px;border-bottom-color:transparent}
 .t-row.active .t-text{color:#1d2939}
 .summary-card{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}

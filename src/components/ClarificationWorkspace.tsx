@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ClarificationRecord, ImportRecord, LlmConfig, ProjectListItem } from '../types';
+import type { ClarificationRecord, ImportRecord, LlmConfig, ProjectListItem, TaskRecord } from '../types';
 import {
   cancelTask,
   appendClarificationSources,
@@ -137,6 +137,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [analysisTaskId, setAnalysisTaskId] = useState('');
+  const [analysisTask, setAnalysisTask] = useState<TaskRecord | null>(null);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [questionBusy, setQuestionBusy] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState('');
@@ -216,7 +217,10 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
       }
       const task = tasks?.filter((item) => item.kind === 'clarification_analysis' && item.entityId === selectedRecord.id)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      if (task) setAnalysisTaskId(task.id);
+      if (task) {
+        setAnalysisTaskId(task.id);
+        setAnalysisTask(task);
+      }
       if ((detail?.status || selectedRecord.status) === 'analyzing') timer = window.setTimeout(refresh, 1800);
     };
     void refresh();
@@ -505,6 +509,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
 
   async function startAnalysis(incremental = false) {
     if (!selectedRecord) return;
+    setAnalysisTask(null);
     setAnalysisBusy(true);
     const result = await startClarificationAnalysis(selectedRecord.id, incremental);
     if (!result) {
@@ -551,6 +556,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     setSaving(false);
     setAnalysisBusy(true);
     const started = await startClarificationAnalysis(updated.id, true);
+    setAnalysisTask(null);
     if (started?.taskId) setAnalysisTaskId(started.taskId);
     const detail = await fetchClarification(updated.id);
     if (detail) {
@@ -1038,6 +1044,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
             <section className="card clarification-analysis-card">
               <div className="card-head"><div><div className="card-title">分析进度</div><div className="card-sub">已完成批次会立即保存；取消或失败后可以继续分析剩余批次</div></div><span className={`badge clarification-status status-${selectedRecord.status}`}>{formatRecordStatus(selectedRecord.status)}</span></div>
               <div className="clarification-analysis-progress"><div className="clarification-progress-track"><span style={{ width: `${analysisProgress}%` }} /></div><strong>{selectedRecord.completedBatches} / {selectedRecord.totalBatches || '—'} 批 · {selectedRecord.questionCount} 个问题</strong></div>
+              {selectedRecord.status === 'analyzing' && <div className="clarification-analysis-stage" role="status" aria-live="polite">{analysisTask?.entityId === selectedRecord.id && analysisTask.status === 'running' && analysisTask.stage ? analysisTask.stage : selectedRecord.totalBatches > 0 ? `正在分析第 ${Math.min(selectedRecord.completedBatches + 1, selectedRecord.totalBatches)} / ${selectedRecord.totalBatches} 批，等待模型返回` : '正在准备资料和分析批次…'}</div>}
               {selectedRecord.errorMessage && <div className="clarification-analysis-error">{selectedRecord.errorMessage}</div>}
               <div className="clarification-analysis-actions">
                 {selectedRecord.status === 'analyzing' && <button className="btn" onClick={() => void cancelAnalysis()} disabled={analysisBusy}>{analysisBusy ? '处理中…' : '取消分析'}</button>}

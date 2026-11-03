@@ -4,12 +4,14 @@ const fs = require('node:fs');
 const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
+const { version: appVersion } = require('../package.json');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
 let sidecarProc = null;
 let updateTimer = null;
 let updateCheck = null;
+let updateCheckPromise = null;
 let latestUpdateStatus = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -211,13 +213,26 @@ function setupAutoUpdater() {
   }));
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
   autoUpdater.on('error', (err) => sendUpdateStatus('error', String(err && err.message || err)));
-  const check = () => autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  const check = () => runUpdateCheck(true).catch(() => {});
   updateCheck = check;
   check();
   configureAutoUpdater();
 }
 
+function runUpdateCheck(notify = false) {
+  if (['progress', 'downloaded', 'installing'].includes(latestUpdateStatus?.status)) {
+    return Promise.resolve(null);
+  }
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = (notify ? autoUpdater.checkForUpdatesAndNotify() : autoUpdater.checkForUpdates())
+    .finally(() => { updateCheckPromise = null; });
+  return updateCheckPromise;
+}
+
 function sendUpdateStatus(status, version = '', extra = {}) {
+  if (['progress', 'downloaded', 'installing'].includes(latestUpdateStatus?.status) && ['checking', 'available', 'none'].includes(status)) {
+    return latestUpdateStatus;
+  }
   latestUpdateStatus = { status, version, ...extra };
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('clienthub:update-status', latestUpdateStatus);
@@ -282,8 +297,9 @@ ipcMain.handle('clienthub:save-clarification-pdf', async (event, payload) => {
 
 ipcMain.handle('clienthub:check-updates', async () => {
   if (isDev) return { status: 'dev' };
+  if (['progress', 'downloaded', 'installing'].includes(latestUpdateStatus?.status)) return { status: latestUpdateStatus.status };
   try {
-    const result = await autoUpdater.checkForUpdates();
+    const result = await runUpdateCheck(false);
     return { status: 'checked', version: result && result.updateInfo && result.updateInfo.version };
   } catch (error) {
     return { status: 'error', error: String(error && error.message || error) };
@@ -295,6 +311,7 @@ ipcMain.handle('clienthub:get-update-state', () => latestUpdateStatus);
 ipcMain.handle('clienthub:download-update', async () => {
   if (isDev) return { status: 'dev' };
   try {
+    sendUpdateStatus('progress', latestUpdateStatus?.version || '', { percent: 0, transferred: 0, total: 0 });
     await autoUpdater.downloadUpdate();
     return { status: 'started' };
   } catch (error) {
@@ -304,6 +321,7 @@ ipcMain.handle('clienthub:download-update', async () => {
 
 ipcMain.handle('clienthub:install-update', () => {
   if (isDev) return false;
+  sendUpdateStatus('installing', latestUpdateStatus?.version || '');
   autoUpdater.quitAndInstall();
   return true;
 });

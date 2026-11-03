@@ -305,14 +305,14 @@ export default function TranscriptWorkspace({ record, sidecarOnline, onBack, onT
             </div>
           </div>}
 
-          <div className="card transcript-card">
+          <div className={`card transcript-card${record.duration > 0 ? '' : ' document-transcript'}`}>
             <div className="transcript-head">
               <span className="transcript-title">{record.duration ? '转写稿' : '文档原文'}</span><span className="transcript-count">{record.duration ? formatTime(record.duration) : '文本'} · {segments.length} 段</span>
               <button className="btn ghost" disabled={saving || generating} onClick={() => { if (editingSegments) setSegments(savedRecord.segments); setEditingSegments((value) => !value); }}>{editingSegments ? '取消校正' : '校正原文'}</button>
               {editingSegments && <button className="btn primary" disabled={saving} onClick={() => void saveSegments()}>保存校正</button>}
               <div className="search-box">
                 <IconSearch size={15} />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索转写稿" aria-label="搜索转写稿" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={record.duration > 0 ? '搜索转写稿' : '搜索文档原文'} aria-label={record.duration > 0 ? '搜索转写稿' : '搜索文档原文'} />
               </div>
               {record.duration > 0 && <div className="seg">
                 <button className={!onlyCustomer ? 'on' : ''} onClick={() => setOnlyCustomer(false)}>全部</button>
@@ -426,7 +426,7 @@ export default function TranscriptWorkspace({ record, sidecarOnline, onBack, onT
               <>
                 <div className="summary-footer">
                   <button className="btn secondary" onClick={() => void handleRegenerate()} disabled={generating || saving || editingSegments || editing}>
-                    <IconRefresh size={15} className={generating ? 'icon-sm spin' : 'icon-sm'} />重新生成
+                    <IconRefresh size={15} className={generating ? 'icon-sm spin' : 'icon-sm'} />{generating ? '正在生成…' : '重新生成'}
                   </button>
                   <button className="btn primary" disabled={saving || generating} onClick={() => void handleSave()}>{saving ? '保存中…' : '保存修改'}</button>
                 </div>

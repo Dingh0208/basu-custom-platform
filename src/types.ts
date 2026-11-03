@@ -36,6 +36,7 @@ export interface TaskRecord {
   attempt: number;
   maxAttempts: number;
   error: string;
+  stage?: string;
   payload?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -511,12 +512,18 @@ export interface WeChatJob {
   importId?: string;
   sessionName?: string;
   messageCount?: number;
+  addedMessageCount?: number;
+  duplicate?: boolean;
 }
 
 export interface WeChatStatus {
   available: boolean;
   port?: number;
   error?: string;
+  repairSteps?: string[];
+  logPath?: string;
+  tempDir?: string;
+  retryAfterSeconds?: number;
   accounts: string[];
   defaultAccount?: string | null;
   accountInfos: WeChatAccountInfo[];

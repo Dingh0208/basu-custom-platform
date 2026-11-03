@@ -255,7 +255,9 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前正式版本为 [v0.2.7](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.2.7)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.2.7/ClientHub-Setup-0.2.7.exe)，大小 **393,894,524 字节（约 393.9 MB / 375.6 MiB）**。新增离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发；历史 `v0.2.6` 本机包约 289.3 MB、CI 包约 294.2 MB。已经做了这些轻量化：
+当前发布版本为 [v0.3.1](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.1)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.1/ClientHub-Setup-0.3.1.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.1.md)。本版包含 AI 摘要提速、完整 JSON 校验与纠正、聊天增量导入、微信引擎恢复、文档布局和更新状态修复，Sidecar API revision 为 20。
+
+离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发。已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；

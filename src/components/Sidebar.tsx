@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PersonalProfile } from '../types';
+import appPackage from '../../package.json';
 import {
   IconHome,
   IconUsers,
@@ -45,7 +46,7 @@ const workItems = [
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
-const CURRENT_VERSION = '0.2.9';
+const CURRENT_VERSION = appPackage.version;
 const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
 
 export default function Sidebar({ notificationEntry, profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
@@ -56,8 +57,14 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
   useEffect(() => {
     const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: UpdateState) => void) => (() => void) | void; getUpdateState?: () => Promise<UpdateState | null> } }).clientHub;
     if (!bridge?.onUpdateStatus) return;
-    const cleanup = bridge.onUpdateStatus((payload) => setUpdate((current) => ({ ...current, ...payload })));
-    void bridge.getUpdateState?.().then((payload) => { if (payload) setUpdate((current) => ({ ...current, ...payload })); });
+    let receivedEvent = false;
+    const cleanup = bridge.onUpdateStatus((payload) => {
+      receivedEvent = true;
+      setUpdate((current) => ({ ...current, ...payload }));
+    });
+    void bridge.getUpdateState?.().then((payload) => {
+      if (payload && !receivedEvent) setUpdate((current) => ({ ...current, ...payload }));
+    });
     return cleanup;
   }, []);
 
@@ -71,7 +78,9 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
 
   async function installUpdate() {
     const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
-    await bridge?.installUpdate?.();
+    setUpdate((current) => ({ ...current, status: 'installing' }));
+    const started = await bridge?.installUpdate?.();
+    if (started === false) setUpdate((current) => ({ ...current, status: 'error' }));
   }
 
   async function downloadUpdate() {
@@ -82,6 +91,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
   }
 
   async function checkUpdates() {
+    if (['progress', 'downloaded', 'installing'].includes(update.status)) return;
     const bridge = (window as unknown as { clientHub?: { checkForUpdates?: () => Promise<{ status: string }> } }).clientHub;
     setUpdate({ status: 'checking' });
     if (!bridge?.checkForUpdates) {
@@ -111,7 +121,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
               <div className="version-popover" role="dialog" aria-label="应用更新">
                 <div className="version-popover-head"><span>当前版本</span><button className="version-refresh" onClick={() => void checkUpdates()} aria-label="检查更新">↻</button></div>
                 <div className="version-popover-current">v{CURRENT_VERSION}</div>
-                <div className={`version-popover-status ${hasUpdate ? 'has-update' : ''}`}>{hasUpdate && update.version ? `最新版本 v${update.version}` : update.status === 'checking' ? '正在检查更新…' : update.status === 'error' ? '更新检查失败，请重试' : '当前已是最新版本'}</div>
+                <div className={`version-popover-status ${hasUpdate ? 'has-update' : ''}`}>{update.status === 'progress' ? '正在进行更新' : update.status === 'installing' ? '正在安装更新…' : hasUpdate && update.version ? `最新版本 v${update.version}` : update.status === 'checking' ? '正在检查更新…' : update.status === 'error' ? '更新检查失败，请重试' : '当前已是最新版本'}</div>
                 {update.status === 'available' && <button className="btn primary version-action" onClick={() => void downloadUpdate()}>下载更新</button>}
                 {update.status === 'progress' && <><div className="version-progress"><span style={{ width: `${Math.min(100, Math.max(0, update.percent || 0))}%` }} /></div><div className="version-progress-text">正在下载 {Math.round(update.percent || 0)}%</div></>}
                 {update.status === 'downloaded' && <button className="btn primary version-action" onClick={() => void installUpdate()}>重启该应用</button>}

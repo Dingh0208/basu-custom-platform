@@ -8,7 +8,33 @@
 
 ### 0.1 当前任务
 
-当前新增的**资料模块与共享 AI 自动导入开关**已完成源码开发、合入主 PRD，并随 ClientHub `v0.3.0` 正式发布。Sidecar API revision 为 18；本地 81 项 Python 回归、`npm run build`、Python 编译和 `git diff --check` 通过。GitHub Actions workflow `41598325384` 成功构建 Windows NSIS 包并发布；`v0.3.0` 是 Latest Release，包含 `.exe`、`.blockmap` 和 `latest.yml`。人工全新 Windows 安装、覆盖升级及自动更新下载安装尚未验收；不连接远程云服务器。产品继续保持 Windows 单机单用户边界。
+当前在已发布的 ClientHub `v0.3.0`（Sidecar API 18）基础上继续修复。**最新反馈是需求澄清等待 3–4 分钟后报 JSON 错误、资料摘要过慢，用户要求保留完整回复且不设置输出预算；随后明确接受完整澄清超过 10 秒并保留当前模型。**源码 Sidecar API revision 为 **20**，应用包版本准备升级为 0.3.1；完整 Python 回归 **107 项通过**，`npm run build`、`git diff --check` 通过。用户已退出桌面版并执行修正后的 `build/start-latest-web.ps1`；实际健康接口已核验 `0.3.0 / API20`，5173 页面正常，8765 仅一名监听者，原数据目录和两份澄清历史仍可读取。用户自行启动的真实澄清 **36 秒完成，1/1 批、14 个问题、6 条证据，结果已保存且无错误**。此耗时只代表本次，不保证任意资料都在 10 秒内完成。用户已明确要求推送 GitHub Release 并标注更新内容，正在准备 v0.3.1 / API20，通过现有 Windows CI 构建安装包；发布完成后补充核验记录。
+
+#### 最新一轮：文本分析延迟与完整输出（API20，2026-11-03）
+
+- 用户明确允许使用当前模型/密钥及虚构资料做少量真实性能测试；不发送客户资料。当前模型 `qwen3.8-flash`。相同虚构资料、均未设置输出预算：默认模式摘要 19.213 秒（1296 reasoning tokens），关闭思考模式后 4.228 秒（无 reasoning），均为正常 stop、7 条有效证据。完整澄清 25.706 秒，11 个问题、8 条证据，正常 stop。结果只代表此样本，不保证任意资料耗时。
+- 默认思考模式是已证实的延迟来源；没有取得现场失败的模型原始回复，不能断言历史 JSON 错误的唯一成因。当前任务 API 记录最近三次澄清失败耗时 3:04、3:49、4:00，错误仍为旧“模型返回的不是有效 JSON”；查询时无活动任务/导入，实际监听者仍为旧 Python PID 53912，前端 PID 64412。
+- 摘要、聊天分块/汇总、澄清/追问共用最小文本请求构造函数；Qwen3 混合模型设置 `enable_thinking=false`，名称显式含 thinking 的模型和其他供应商不附加此参数。所有文本结构化分析不设 `max_tokens` / `max_completion_tokens`，重试也不注入预算；沿用完整 JSON 校验和最多一次纠正，认证错误不重复调用。
+- 摘要不再以首尾 6000 字符替代长原文，完整正文进入模型；摘要也接入统一 JSON 校验/纠正。新增回归通过真实 HTTP 摘要接口核验长资料中间约定、超长回复及保存后重新读取的完整性；保留原文证据核验。
+- 澄清提示词只让模型输出需要判断的字段，客户/项目/本资料名称和时间由现有归一化逻辑补齐；历史证据仍可通过 sourceId 引用，不限制问题数。摘要按钮等待期间显示“正在生成…”。
+- 测过行业维度并行但整体仍为 21.678 秒且问题膨胀，已撤回实现及对应测试；用户选择继续当前模型。最终源码未引入并行模型请求或额外模型依赖。
+- 最终验证：107 项完整 Python 回归通过（20.166 秒），TypeScript/Vite 构建及差异检查通过。真实模型使用临时数据目录，仅读取用户明确授权的模型配置/密钥，不读写业务资料。性能元数据见被忽略的 `build/model-latency-*.json`，重启脚本和日志也在 `build/`，不能假设这些文件在其他克隆中存在。
+- 用户首次执行重启脚本因监听 PID 检查停止，没有终止进程。进一步 `netstat -ano -p TCP` 发现 8765 同时由开发版 Python 53912 和桌面版 `clienthub-ai.exe` 36652 监听；`Get-NetTCPConnection` 可能只显示其中一个，不能据此认定唯一归属。新版 `SidecarHTTPServer` 在 Windows 设置 `SO_EXCLUSIVEADDRUSE` 并关闭地址复用，在初始化数据库/恢复任务前先绑定端口。新增实际随机端口回归覆盖拒绝旧服务共享、端口冲突不加载数据/恢复任务；正常 HTTP 请求后旧服务退出、独占服务立即重绑也已单独核验。
+- 前端 5173 与后端 8765 的切换已由用户授权，但自动执行审核拒绝执行，仅返回 `blocked by policy`。未绕过审核；已请用户先完全退出桌面 ClientHub，再执行 `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\code\Basu-Custom-Platform\build\start-latest-web.ps1"`。脚本改用 netstat 枚举全部监听进程，不写死 PID；核验可执行文件/命令行/项目数据目录和无活动任务后才切换，并在启动后检查 API20。执行后须核验健康接口和浏览器刷新；桌面安装包仍是旧版，不包含源码前端更新。
+- 用户已执行脚本，输出 Ready；再次核验 API20/页面均正常、前端 PID 34608、后端 PID 44984，原项目数据目录不变，2 份历史单可读取，启动错误日志为空。PID 仅本轮快照。此前用户第一次选“Ready”时实际仍是旧服务，后续粘贴完整命令输出并由健康接口证实后才记为切换成功。用户自行启动的真实澄清耗时 36 秒 succeeded；工作单 1/1 批，14 个问题、6 条证据已保存，重新 GET 确认，无 JSON 错误。没有替用户选材或触发分析。另一份历史失败单的旧错误保留，尚未替用户重试。
+
+#### 最新一轮：JSON 分析恢复与文档正文布局（2026-11-03）
+
+- 用户截图中的客户端版本为 0.2.9；本机 `http://127.0.0.1:8765/api/health` 返回 `version=0.2.9 / apiRevision=18`。源码为 API19；准确旧错误文案“模型返回的不是有效 JSON”已不在当前源码。**现场失败的模型原始回复未抓取，因此不能断言真实原因一定是截断，也不能把 mock 回归说成真实模型已验收。**
+- JSON 提取现在只接受完整的最外层对象/数组，兼容 Markdown 围栏、说明文字和文本块；不再扫描并误接受截断外层中的内部对象。识别 `finish_reason=length`，即使局部内容能解析也执行纠正重试。
+- 结构化请求仍最多两次（首次 + 一次纠正）：HTTP 成功但响应体非 JSON、空正文、正文格式/结构错误均进入重试。截断或空正文时增加输出预算；需求澄清首次 `max_tokens=6000`，重试按需翻倍，新增预算上限 16000。不会把 reasoning 内容当正文或发回模型，不追加空 assistant 消息；401 等 RuntimeError 不自动重复调用。
+- 澄清 Prompt 加强最终 JSON、转义、简短理由和必要短证据约束。不能用空问题、编造问题或局部坏结果伪装成功；连续失败保留工作单、成功批次和错误，手动重试只跑剩余批次。
+- `set_task_progress(..., stage=...)` 在已有任务 `payload_json` 保存阶段，任务 API 返回 `stage`；不增加数据库字段。`request_validated_json(..., on_attempt=...)` 在每次请求前反馈阶段并检查取消。前端显示“正在分析第 N/M 批，等待模型返回”或具体原因及“正在自动重试（1/1）”，完成数只在真正保存结果后增长。
+- 文档窄列根因：`TranscriptWorkspace` 的文档没有说话人节点，但 `.t-row` 仍按 `46px 58px 1fr` 三列排版，正文和 textarea 落在 58px 列。新增 `.document-transcript`，改为 `46px minmax(0,1fr)`；正文保留换行并自动折行，校正框占满正文宽度、最小高 180px，可垂直调整。文档搜索文案同步更正；音频继续使用时间/说话人/正文三列。
+- 本轮改动文件：`services/ai/main.py`、`services/ai/test_sales.py`、`src/components/ClarificationWorkspace.tsx`、`src/components/TranscriptWorkspace.tsx`、`src/types.ts`、`src/styles.css`，以及主 PRD 和本文件。此前的其他 API19 改动必须保留。
+- 新增 8 项后端回归，含截断外层、文本块/围栏、长度终止/只有 reasoning、非 JSON HTTP 响应、有界失败、401 不重试、阶段反馈、重试前取消、失败检查点续跑（部分场景在同一测试内）。最终完整回归 103 项通过。
+- Edge + 独立 Vite + API mock 验证：1920/1440/1280 窗口下正文分别宽 880/400/268px，无横向溢出；宽屏校正框 880×180px；搜索高亮、取消恢复、保存校正、音频三列和说话人编辑、等待→纠正重试→完成均通过，无页面异常。测试浏览器和独立 Vite 已退出；未调用真实模型，未读写真实业务库。
+- 小型截图证据位于 `build/verification-json-document/`：`document-reading.png`、`document-editing.png`、`analysis-retrying.png`，合计约 221 KiB。截图使用虚构资料，最后一张是阶段文案验证时截图，之后仅补了该文案的左右边距。浏览器脚本从内存执行，未保存至仓库，不要假设下一会话可取到脚本。
 
 完整目标链路是：
 
@@ -30,7 +56,7 @@
 - 当前分支：`main`。
 - 当前工作区有本会话之前和本会话产生的**未提交改动**，不能 reset、clean 或覆盖；先执行 `git status --short --branch`，只处理能归因于当前任务的文件。
 - 当前最新正式版本为 `v0.3.0`，上一版本是 `v0.2.9`；Release 已公开且标记为 Latest。
-- 当前源码 Sidecar API revision 是 **18**，应用版本为 `0.3.0`。发布提交 `2932355f5e04805154180f0c9224576a909f4ad1` 与远端 `main` 一致，标签 `v0.3.0` 已发布。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本，不覆盖 API18 资料功能。
+- 当前源码 Sidecar API revision 是 **20**，应用版本已升为 `0.3.1`；发布前远端最新正式 Release 为 `v0.3.0` / API18。用户已授权提交、推送及发布 v0.3.1；已 fetch 核验本地 main 与 origin/main 一致，按现有标签 CI 发布 API19/20 修复。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本。
 - 本次新增/重点文件：
   - `services/ai/clarifications.py`：需求澄清 SQLite 表、迁移、快照、问题、证据、回答、生命周期、增量资料和指标统计。
   - `services/ai/main.py`：澄清 API、持久化任务队列、模型调用、分批分析、追问、回写和指标/复制记录接口。
@@ -39,6 +65,24 @@
   - `src/components/MaterialsPage.tsx`：资料列表、状态/类型/客户/项目筛选和预览入口。
   - `src/components/ImportCenter.tsx`、`src/components/SettingsPage.tsx`：共享 AI 自动导入开关。
   - `src/api/client.ts`、`src/types.ts`、`src/styles.css`：对应 API、类型和界面样式。
+
+#### 聊天增量、分块分析与更新状态（API19，纳入 v0.3.1）
+
+- 微信会话以账号和会话 username 的稳定哈希归并；新导入按 local ID 或消息指纹去重，累计记录只追加新消息，同一会话不重复创建资料。旧会话按名称/参与者及消息重叠兼容匹配；无唯一匹配时不跨客户合并。
+- AI 只分析新消息，约 12,000 字符分块并汇总；成功分块会保存检查点，重试跳过已成功分块。结构化输出会提取并验证 JSON，格式错误时附纠正提示重试一次；仍失败则保留资料和检查点。
+- 微信导入结果展示本次新增数及累计数；更新下载/安装期间忽略迟到的“无更新”事件，侧栏版本从包信息读取，并显示“正在进行更新”。
+- 复核时补上旧序号 ID 冲突保护：`msg-001` 相同但正文不同的增量消息会保留并分配唯一 ID。
+- PRD 验收要求见第 6.17 节。源码 revision 升为 19；未改应用包版本，未生成 NSIS 安装包或做 Windows VM 验收。
+
+#### 微信引擎临时目录故障恢复（API19，纳入 v0.3.1）
+
+- 用户提供的 `clienthub-wechat-engine.log` 共 67 处 `Could not create temporary directory!`，另有 native broker I/O error 和启动超时；当时磁盘有足够空闲空间。仓库引擎带 Low 完整性级别，但当前桌面安装目录的引擎没有该标签，不能将仓库标签认定为本次故障的唯一根因。
+- 引擎启动检查专用临时目录的创建/写入权限，失败可切换备用目录；设置 `TEMP/TMP/TMPDIR` 和 `PYINSTALLER_RESET_ENVIRONMENT=1`，避免继承冻结 Sidecar 的解包状态。
+- 服务端每轮最多两次启动尝试，失败冷却 60 秒；状态请求复用诊断，手动启动接口可发起新一轮尝试。超时仅结束自身启动的进程树；日志记录启动时间和临时目录，诊断只读取本次新增内容。
+- 导入弹窗保留错误、目录、日志和修复步骤，增加“重新启动并重试”；启动中禁用重复操作，引擎不可用时禁用更新微信库。移除旧的失败后 3 秒自动拉起逻辑。
+- `scripts/afterPack.cjs` 为本地及 CI 打包统一校正 5 个启动组件的 Medium 完整性级别，失败直接终止打包；未清理通用 Temp 或用户数据库。
+- 测试新增 `services/ai/test_wechat_engine.py` 7 项故障回归。使用当前安装版的真实引擎，在独立端口/数据目录下首次启动并返回 `healthy`；未调用账号/会话接口，测试进程和临时目录已清理。此检查不等于验证安装版旧 Sidecar 已修复。
+- Edge + 隔离 API mock 验证通过：失败详情持续显示、没有失败后自动循环启动、重试期间禁用重复操作、再次失败后保留入口、重试成功后加载会话；无页面异常。测试浏览器与独立 Vite 服务已退出。
 
 ### 0.3 已完成范围
 
@@ -126,13 +170,15 @@
 
 ### 0.4 当前验证证据
 
-本轮 API18 源码验证：发布前 `npm run build`、Python 编译、`git diff --check` 和 81 项 Python 回归通过。GitHub Actions workflow `41598325384` 以提交 `2932355f5e04805154180f0c9224576a909f4ad1` 完成 Windows 发布；Release `v0.3.0` 已核验包含 `ClientHub-Setup-0.3.0.exe`、`ClientHub-Setup-0.3.0.exe.blockmap` 和 `latest.yml`。这证明 CI 已打包并发布，不代表人工完成全新安装、覆盖升级或自动更新下载安装验收。
+本轮 API20 源码验证：`python -m unittest discover -s services/ai -p "test*.py" -q` 最终 **107 项通过（20.166s）**；`npm run build`、`git diff --check` 通过。上一轮 API19 的 103 项、浏览器布局验证及 Windows `afterPack` 测试仍作历史证据；本轮用户授权的真实模型虚构资料计时见 0.1 节，不代表真实业务界面已切换或任意输入都达到 10 秒。
+
+上一版 API18 发布证据：GitHub Actions workflow `41598325384` 以提交 `2932355f5e04805154180f0c9224576a909f4ad1` 完成 Windows 发布；Release `v0.3.0` 已核验包含 `ClientHub-Setup-0.3.0.exe`、`ClientHub-Setup-0.3.0.exe.blockmap` 和 `latest.yml`。这不代表 API19 已打包，也不代表人工完成全新安装、覆盖升级或自动更新下载安装验收。
 
 本机 API17 完整交付证据见 `docs/DELIVERY-API17-2026-11-03.md`：独立 Python 3.12.13 构建环境的 75 项完整后端回归、前端 TypeScript/Vite 构建及 NSIS 安装版 35 项检查通过。模拟模型调用 7 次，真实模型调用 0；涵盖 9 种资料解析、离线 OCR、工作单操作、回写、取消/续跑、缺少 Key、重启和导出。Word 已实际保存；Windows 原生“另存为”已保存 36,090 字节 PDF，中文内容可提取，不含内部理由、证据或模型数据。API15→17 覆盖安装前后，SQLite 五类澄清数据逐行一致，共 23 行。另有 63 项开发业务、4 项通知和 14 项真实前后端流程回归；与早期 14 项归属检查是不同测试集。
 
 API17 浏览器 fixture 当时输出 `FIXTURE_CLEANED` 并自动清理数据库；该轮验证服务和 Vite 已退出。脚本从内存执行，未新建依赖环境、大型验收目录或安装包。浏览器阶段 PDF mock 只验证打印调用和对外内容；Windows 原生 PDF 保存已在 API17 安装版验收（见上一段）。
 
-API17 开发阶段留下的历史检查命令与计数如下；当前 API18 结果以上方 69 项测试记录为准：
+API17 开发阶段留下的历史检查命令与计数如下；API18 的 69 项也是历史记录，当前 API19 以本节顶部的 103 项完整回归为准：
 
 ```powershell
 python -m unittest discover -s services/ai -p test_sales.py -q
@@ -155,15 +201,18 @@ git diff --check
 - 前端：`http://localhost:5173/?view=clarifications`
 - Sidecar：`http://127.0.0.1:8765`
 - 历史健康结果：`version=0.2.8`、`apiRevision=15`、`status=ok`；这是早期开发服务，不代表 API17 安装包。
-- 本轮本地预览：前端 `http://127.0.0.1:5173/` 和 Sidecar `http://127.0.0.1:8765` 均在运行；`GET /api/health` 返回 `status=ok`、`version=0.2.9`、`apiRevision=18`。Sidecar 使用仓库默认数据目录 `services/ai/data`；启动前没有排队任务或处理中导入。
+- 本轮结束时前端 `http://127.0.0.1:5173/` 和 Sidecar `http://127.0.0.1:8765` 均有既有服务；`GET /api/health` 返回 `status=ok`、`version=0.2.9`、`apiRevision=18`。它们不是本轮隔离测试启动的服务，没有被本轮重启。
+- **端口归属需要特别核实**：结束前 8765 监听者是 `D:\develop\Anaconda3\python.exe`，PID 53912，命令行为 `services/ai/main.py --host 127.0.0.1 --port 8765`；5173 监听者 PID 64412。桌面主进程 PID 54248（`D:\Users\111\Desktop\ClientHub\ClientHub.exe --updated`）还启动了捆绑 `clienthub-ai.exe`（PID 61544/36652），其命令也指向 8765，但端口实际属于前述 Python。因此存在旧开发服务与桌面服务同时运行的情况，不能仅凭桌面已打开就认定捆绑 Sidecar 在提供服务。PID 仅为本次快照，新会话必须重新查询；本轮未终止任何既有服务。
 - `GET /api/clarifications/metrics` 正常；当前本机历史完成分析数为 0。
 - 临时数据库 1,000 条澄清历史列表读取约 0.016 秒，指标汇总低于 0.001 秒。
 
-新会话开始时不要假设服务仍在运行，先访问 `/api/health` 和前端地址；若 8765 返回 API 18 以下，说明端口上是旧 Sidecar，不能作为本轮源码验证证据。本轮回归使用独立端口 18765，不操作真实用户数据库或已有业务服务。
+新会话开始时不要假设服务仍在运行，先访问 `/api/health` 和前端地址；若 8765 返回 **API19 以下**，说明仍是旧服务，不能作为本轮源码验证证据。本轮 unittest 使用独立临时数据目录和系统分配的随机端口；浏览器使用 API mock 和独立随机 Vite 端口，不操作真实用户数据库或已有业务服务。
 
 ### 0.5 当前卡点和明确未完成项
 
-本轮 API18 源码开发和回归已完成；API18 的 NSIS 打包、Windows 安装验收及发布未进行。API17 的历史安装结果只适用于 `v0.2.9`。以下仍是独立的环境边界或历史事项：
+本轮 API20 源码开发、回归和当前 Web 服务切换已完成，已有一次用户真实澄清成功。用户已授权发布 v0.3.1 / API20，NSIS 打包与发布将由现有 GitHub Actions 完成，人工 Windows 安装验收尚未进行。发布前 API18 是正式版本，API17 的历史安装结果只适用于 `v0.2.9`。以下仍是独立的环境边界或历史事项：
+
+当前没有尚未解决的自动化测试失败，当前 Web 已为 API20。旧 Python 与捆绑 Sidecar 同端口监听的问题已在本次切换时解除，新源码独占端口防止重现。剩余交付边界是安装包尚未更新；历史失败的原始模型回复仍未取得，本次单次真实澄清成功不能替代所有材料的性能验收。
 
 1. 本机 Windows 安装版和 API15→17 覆盖升级已通过，且实际生成 PDF。全新 Windows 10/11、真实模型和自动更新下载→重启安装链路仍未验收；用户已停止远程工作，不再连接云服务器。
 2. 真实 MaaS 模型联调尚未作为自动化测试执行；回归测试使用 `patch('main.maas_request', ...)`，不要在测试中调用真实 API 或消耗 Key。
@@ -174,9 +223,13 @@ git diff --check
 7. 主 PRD 6.15.3 的证据来源跳转已完成；记录级来源查看和刷新后返回原单已验证，段落/音频时间点精确定位未纳入本轮。
 8. 上次本机只读预览报告 `Audited local temporary files: 5.01 GiB`；用户未确认随后是否运行 `-Apply`，因此不能记为已删除。清理脚本只操作固定的本机路径，命令由用户自行运行。
 
-### 0.6 下一步：资料模块交付验收
+### 0.6 当前发布：v0.3.1 / API20
 
-API18 已随 `v0.3.0` 发布，发布提交已推送至 `main`。交付后的可选验收项是本机 Windows 环境中的全新安装默认关闭、旧设置迁移、资料预览/筛选、音视频按需转写、覆盖升级及自动更新下载安装；不要连接用户提供的远程 Windows 云服务器。此前 `v0.2.9` 的发布和 API17 安装验收仍是历史记录。
+1. 先读本节、主 PRD 6.15/6.16/6.17/6.18，执行 `git status --short --branch`；不要从历史章节重复开发。用户当前使用 `http://127.0.0.1:5173/`，已明确要求推送 GitHub Release；本次通过 CI 交付 API20 安装包，不重启既有 Web 服务。
+2. 切换 Web 服务已获用户授权并由用户执行脚本完成；无需重复请求同一授权。后续先检查健康接口和 `netstat` 全部监听者，不能只凭 Get-NetTCPConnection 的一个结果认定端口唯一。API20 使用独占监听；不要同时再启动旧桌面版捆绑服务，也不要因历史 PID 直接杀进程。
+3. 安装包发布指令已取得，使用项目现有标签 CI 生成包含 API20 的 v0.3.1 安装包；先检查 `scripts/build-sidecar.ps1`、`scripts/build-installer.ps1`、`scripts/afterPack.cjs` 和 CI。避免新建大型环境；版本号必须按当时最新 Release 递增，不把旧 0.3.0 资产当作新修复包。
+4. 用独立 `CLIENTHUB_DATA_DIR` 和端口验证新包健康必须为 API20；覆盖文档阅读/校正、模拟坏 JSON 自动纠正、无输出预算、连续失败后续跑、聊天增量、微信临时目录恢复及更新状态。测试通过前不要连接真实业务库或自动使用真实模型。
+5. 本次用户自行选材并启动的真实澄清已成功，证据见 0.1 节；更多真实资料仍由用户明确选择并启动，不自动重试另一份失败单。发布已获授权；Release Notes 见 `docs/RELEASE-NOTES-v0.3.1.md`，需核验 Windows CI、公开 Release、安装包、`.blockmap` 和 `latest.yml` 后再记为完成。
 
 ### 0.7 新会话必须遵守的边界
 
@@ -185,6 +238,18 @@ API18 已随 `v0.3.0` 发布，发布提交已推送至 `main`。交付后的可
 - 甲方回答转需求/项目必须经过预览和手动确认；不能直接写库。
 - 追加分析不能覆盖旧结论；冲突必须新增问题并保留双方证据。
 - 任何模型失败、取消或不可读资料都必须保留工作单、已有问题、回答和错误原因，并允许重试。
+- 用户要求保留当前模型并接受完整澄清超过 10 秒，Web 切换已完成；最新指令已授权提交、推送并发布 GitHub Release，须清楚标注更新内容。只提交本轮修复及发布文件，不混入无关实验文件。
+
+#### 踩过的坑，绝对不要再踩
+
+- **源码修改不等于当前桌面生效**：本轮截图/API 仍是旧版本，8765 还被预先启动的 Python 占用。不能拿旧服务验收新代码，也不能只换前端就说后端重试已生效。
+- **不要连接远程 Windows**：用户早已停止远程工作，并明确批评过误连远端。不要因为历史中出现过远程主机就继续连接；凭据不写入文档、日志或提交。
+- **不要动真实数据**：禁止为了测试、清理或重放分析而读取/改动真实业务库、导入文件、聊天及模型密钥。使用临时 `CLIENTHUB_DATA_DIR`、随机端口和 mock 模型；不要以真实调用代替测试。
+- **不要通删 Temp / `_MEI*`**：只有固定可归因目标可按清理脚本处理，先预览；5.01 GiB 只是审计量，不能记成已释放空间。执行策略被阻止时使用子进程 `-ExecutionPolicy Bypass`，不要永久改系统策略。
+- **不要无限重试/伪造成功**：微信启动重试有上限和冷却，JSON 纠正最多一次；保留失败位置。不能接受截断 JSON 的内部对象、用空数组吞错、把 0/1 批改成虚假进度或自动重跑已成功批次。
+- **不要把历史构建问题当当前卡点**：`xlrd` 已解决；不重复下载依赖或创建数 GB 的验收环境。微信旧日志只作历史证据，新一轮诊断必须只读新增日志；Low 完整性标签不能无证据归因为安装版故障。
+- **不要覆盖脏工作区**：`git reset --hard`、`git clean`、整文件恢复会丢失已有 API19 修复。`services/ai/test_wechat_engine.py` 是本任务链新增测试，应保留；`SUMMARY.md`、`docs/TELEAGENT-50轮迭代提示词.md`、`jest.config.js`、`scripts/generate-icon.py`、`src/components/LazyLoadingWrapper.tsx`、`src/service-worker.ts`、`src/setup-tests.ts`、`src/utils/` 是已有无关未跟踪文件，不能删除或混入提交。
+- **测试工具细节**：Windows PowerShell 用 `-NoProfile`/工具 `login:false` 避免启动慢；命令返回 session_id 后必须收完结果。Playwright 已安装在 `C:/Users/111/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright`，Edge 为 `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`，不用重装浏览器。拦截 API 使用 `url => url.pathname.startsWith('/api/')`，不要用 `**/api/**` 误拦 `/src/api/client.ts`。Vite 测试路由应在 `configureServer` 的 SPA fallback 前注册，再调用 `transformIndexHtml`。并发写已有 `__pycache__` 曾出现 WinError5，语法检查可指定独立临时 cfile；测试进程和目录在 finally 清理。
 
 ### 0.8 本机临时文件清理状态（2026-11-03）
 

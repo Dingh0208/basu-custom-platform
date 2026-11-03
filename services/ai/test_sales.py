@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -97,6 +98,20 @@ class SalesTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT owner FROM imports").fetchone()[0], "")
         conn.close()
 
+    def test_sidecar_port_collision_stops_before_loading_data_or_resuming_tasks(self):
+        with main.ThreadingHTTPServer(('127.0.0.1', 0), main.Handler) as existing:
+            with patch.object(sys, 'argv', ['main.py', '--port', str(existing.server_port)]), patch('main.init_db') as init_db, patch('main.launch_task') as launch:
+                with self.assertRaises(OSError):
+                    main.main()
+            init_db.assert_not_called()
+            launch.assert_not_called()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exclusive socket binding')
+    def test_sidecar_exclusive_port_prevents_legacy_listener_from_reusing_it(self):
+        with main.SidecarHTTPServer(('127.0.0.1', 0), main.Handler) as server:
+            with self.assertRaises(OSError):
+                main.ThreadingHTTPServer(('127.0.0.1', server.server_port), main.Handler)
+
     def test_ai_import_setting_defaults_off_and_migrates_legacy_preferences(self):
         with main.db() as conn:
             conn.execute("DELETE FROM settings WHERE key IN ('app.aiImportEnabled','app.autoMatch','app.autoProcess')")
@@ -163,6 +178,252 @@ class SalesTests(unittest.TestCase):
         chat = self.request("/api/chats/" + result["chatId"])[1]
         self.assertEqual((chat["customer"], chat["project"], chat["status"]), ("测试客户", "测试项目", "done"))
 
+    def test_chat_reimport_merges_only_new_messages_into_canonical_conversation(self):
+        participants = [{"name": "我", "role": "me"}, {"name": "客户甲", "role": "customer"}]
+        original = [
+            {"id": "wx-101", "sender": "我", "sentAt": "2026-11-01 10:00", "content": "你好"},
+            {"id": "wx-102", "sender": "客户甲", "sentAt": "2026-11-01 10:01", "content": "请发方案"},
+        ]
+        delta = [
+            {"id": "wx-102", "sender": "客户甲", "sentAt": "2026-11-01 10:01", "content": "请发方案"},
+            {"id": "wx-103", "sender": "我", "sentAt": "2026-11-03 10:00", "content": "方案已发"},
+        ]
+        first = main.store_chat_record(original, participants, "微信聊天_客户甲_20261101.json", "测试客户", "测试项目", ai_enabled=False, conversation_key="wechat:account-a:session-a")
+        second = main.store_chat_record(delta, participants, "微信聊天_客户甲_20261103.json", "测试客户", "测试项目", ai_enabled=False, conversation_key="wechat:account-a:session-a")
+        duplicate = main.store_chat_record(delta, participants, "微信聊天_客户甲_20261103.json", "测试客户", "测试项目", ai_enabled=False, conversation_key="wechat:account-a:session-a")
+
+        self.assertEqual(first["chatId"], second["chatId"])
+        self.assertEqual(first["importId"], second["importId"])
+        self.assertEqual((second["addedMessageCount"], second["messageCount"], second["duplicate"]), (1, 3, False))
+        self.assertEqual((duplicate["addedMessageCount"], duplicate["messageCount"], duplicate["duplicate"]), (0, 3, True))
+        with main.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM chats").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM imports WHERE transcript_id=?", (first["chatId"],)).fetchone()[0], 1)
+        chat = self.request("/api/chats/" + first["chatId"])[1]
+        self.assertEqual([message["id"] for message in chat["messages"]], ["wx-101", "wx-102", "wx-103"])
+
+    def test_chat_reimport_keeps_new_message_when_legacy_sequence_id_collides(self):
+        participants = [{"name": "我", "role": "me"}, {"name": "客户甲", "role": "customer"}]
+        original = [
+            {"id": "msg-001", "sender": "我", "sentAt": "2026-11-01 10:00", "content": "旧开头"},
+            {"id": "msg-002", "sender": "客户甲", "sentAt": "2026-11-01 10:01", "content": "旧消息"},
+        ]
+        incoming = [
+            {"id": "msg-001", "sender": "我", "sentAt": "2026-11-03 10:00", "content": "新消息一"},
+            {"id": "msg-002", "sender": "客户甲", "sentAt": "2026-11-03 10:01", "content": "新消息二"},
+        ]
+        main.store_chat_record(original, participants, "聊天.txt", "测试客户", "测试项目", ai_enabled=False, conversation_key="file:legacy-sequence")
+        stored = main.store_chat_record(incoming, participants, "聊天.txt", "测试客户", "测试项目", ai_enabled=False, conversation_key="file:legacy-sequence")
+
+        self.assertEqual((stored["addedMessageCount"], stored["messageCount"]), (2, 4))
+        with main.db() as conn:
+            chat = conn.execute("SELECT messages_json FROM chats WHERE id=?", (stored["chatId"],)).fetchone()
+        messages = json.loads(chat["messages_json"])
+        self.assertEqual([message["content"] for message in messages], ["旧开头", "旧消息", "新消息一", "新消息二"])
+        self.assertEqual(len({message["id"] for message in messages}), 4)
+
+    def test_structured_json_request_repairs_one_invalid_model_response(self):
+        valid = {"questions": []}
+        responses = [
+            {"choices": [{"message": {"content": "模型暂时没有按格式输出"}}]},
+            {"choices": [{"message": {"content": json.dumps(valid, ensure_ascii=False)}}]},
+        ]
+        with patch("main.maas_request", side_effect=responses) as model_request:
+            result = main.request_validated_json(
+                {"model": "mock", "messages": [{"role": "user", "content": "只输出 JSON"}]},
+                lambda value: value if isinstance(value, dict) and isinstance(value.get("questions"), list) else (_ for _ in ()).throw(ValueError("缺少 questions")),
+                label="问题分析",
+            )
+        self.assertEqual(result, valid)
+        self.assertEqual(model_request.call_count, 2)
+        self.assertIn("上次输出不符合要求", model_request.call_args.args[1]["messages"][-1]["content"])
+
+    def test_structured_json_rejects_nested_result_inside_truncated_outer_json(self):
+        response = {"choices": [{"message": {"content": '{"questions":[{"questions":[]}],"incomplete":'}}]}
+        with self.assertRaisesRegex(ValueError, "完整 JSON"):
+            main._extract_model_json(response)
+
+    def test_structured_json_accepts_fenced_text_blocks_without_extra_request(self):
+        response = {"choices": [{"message": {"content": [{"type": "text", "text": '说明：\n```json\n{"questions":[]}\n```'}]}}]}
+        with patch("main.maas_request", return_value=response) as model_request:
+            result = main.request_validated_json({"messages": []}, lambda value: value["questions"], label="分析")
+        self.assertEqual(result, [])
+        self.assertEqual(model_request.call_count, 1)
+
+    def test_structured_json_retries_truncation_without_output_budget(self):
+        for content in ('{"questions":[]}', ''):
+            with self.subTest(content=content):
+                responses = [
+                    {"choices": [{"finish_reason": "length", "message": {"content": content, "reasoning_content": "private reasoning"}}]},
+                    {"choices": [{"finish_reason": "stop", "message": {"content": '{"questions":[]}'}}]},
+                ]
+                with patch("main.maas_request", side_effect=responses) as model_request:
+                    result = main.request_validated_json(
+                        {"messages": [{"role": "user", "content": "资料"}], "max_tokens": 3500, "max_completion_tokens": 3500},
+                        lambda value: value["questions"], label="分析",
+                    )
+                self.assertEqual(result, [])
+                self.assertEqual(model_request.call_count, 2)
+                retry = model_request.call_args.args[1]
+                for call in model_request.call_args_list:
+                    self.assertNotIn("max_tokens", call.args[1])
+                    self.assertNotIn("max_completion_tokens", call.args[1])
+                self.assertIn("截断", retry["messages"][-1]["content"])
+                self.assertNotIn("private reasoning", json.dumps(retry))
+                self.assertFalse(any(item["role"] == "assistant" and not item["content"] for item in retry["messages"]))
+
+    def test_structured_json_retries_non_json_http_body_and_bounds_invalid_replies(self):
+        bad_response = {"choices": [{"message": {"content": "not JSON"}}]}
+        with patch("main.maas_request", side_effect=[json.JSONDecodeError("bad gateway", "<html>", 0), bad_response]) as model_request:
+            with self.assertRaisesRegex(ValueError, "连续两次.*已保留进度"):
+                main.request_validated_json({"messages": []}, lambda value: value, label="分析")
+        self.assertEqual(model_request.call_count, 2)
+
+    def test_structured_json_does_not_retry_authentication_errors(self):
+        with patch("main.maas_request", side_effect=RuntimeError("MAAS HTTP 401")) as model_request:
+            with self.assertRaisesRegex(RuntimeError, "401"):
+                main.request_validated_json({"messages": []}, lambda value: value, label="分析")
+        self.assertEqual(model_request.call_count, 1)
+
+    def test_clarification_json_recovery_reports_stage_and_preserves_batch_progress(self):
+        _, created = self.request('/api/clarifications', 'POST', {'sources': [{
+            'sourceType': 'transcript', 'sourceId': 'tr-001', 'displayName': '资料甲',
+            'textSnapshot': '预算需要确认。', 'readable': True,
+        }]})
+        config = {'apiKey': 'test-key', 'baseUrl': 'http://mock', 'summaryModel': 'mock-text'}
+        stages = []
+
+        def model_reply(*args, **kwargs):
+            task = next(task for task in main.list_tasks() if task['entityId'] == created['id'])
+            stages.append((task['stage'], task['progress']))
+            if len(stages) == 1:
+                return {'choices': [{'finish_reason': 'length', 'message': {'content': '{"questions":['}}]}
+            return {'choices': [{'message': {'content': json.dumps({'questions': [{'text': '预算上限是多少？'}]})}}]}
+
+        with patch('main.get_llm_config', return_value=config), patch('main.maas_request', side_effect=model_reply), patch('main.start_task', side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)):
+            self.assertEqual(self.request('/api/clarifications/' + created['id'] + '/analyze', 'POST', {})[0], 202)
+        detail = self.request('/api/clarifications/' + created['id'])[1]
+        self.assertEqual((detail['status'], detail['completedBatches'], detail['questionCount']), ('active', 1, 1))
+        self.assertEqual([progress for _, progress in stages], [0, 0])
+        self.assertIn('第 1 / 1 批', stages[0][0])
+        self.assertIn('自动重试', stages[1][0])
+        self.assertIn('截断', stages[1][0])
+
+    def test_structured_json_cancel_before_repair_does_not_issue_second_request(self):
+        attempts = []
+
+        def check_active(attempt, error):
+            attempts.append(attempt)
+            if attempt:
+                raise main.TaskCancelled()
+
+        with patch('main.maas_request', return_value={'choices': [{'message': {'content': 'bad JSON'}}]}) as model_request:
+            with self.assertRaises(main.TaskCancelled):
+                main.request_validated_json({'messages': []}, lambda value: value, label='分析', on_attempt=check_active)
+        self.assertEqual(attempts, [0, 1])
+        self.assertEqual(model_request.call_count, 1)
+
+    def test_clarification_invalid_json_keeps_successful_batch_and_retries_only_remainder(self):
+        _, created = self.request('/api/clarifications', 'POST', {'sources': [{
+            'sourceType': 'transcript', 'sourceId': 'tr-001', 'displayName': '资料甲',
+            'textSnapshot': '预算需要确认。', 'readable': True,
+        }]})
+        batches = [{
+            'sourceSnapshotId': created['sources'][0]['id'], 'sourceId': 'tr-001',
+            'sourceLabel': '资料甲', 'sourceTime': '', 'customerId': '', 'projectId': '',
+            'text': text,
+        } for text in ['预算需要确认。', '交付时间需要确认。']]
+        config = {'apiKey': 'test-key', 'baseUrl': 'http://mock', 'summaryModel': 'mock-text'}
+        valid = {'choices': [{'message': {'content': json.dumps({'questions': [{'text': '预算上限是多少？'}]})}}]}
+        invalid = {'choices': [{'message': {'content': '{"questions":[{"questions":[]}],"unfinished":'}}]}
+        with patch('main._clarification_batches', return_value=batches), patch('main.get_llm_config', return_value=config), patch('main.maas_request', side_effect=[valid, invalid, invalid]), patch('main.start_task', side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)):
+            self.assertEqual(self.request('/api/clarifications/' + created['id'] + '/analyze', 'POST', {})[0], 202)
+        partial = self.request('/api/clarifications/' + created['id'])[1]
+        self.assertEqual((partial['status'], partial['completedBatches'], partial['totalBatches'], partial['questionCount']), ('partial', 1, 2, 1))
+        self.assertIn('连续两次', partial['errorMessage'])
+        with patch('main._clarification_batches', return_value=batches), patch('main.get_llm_config', return_value=config), patch('main.maas_request', return_value=valid) as model_request, patch('main.start_task', side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)):
+            self.assertEqual(self.request('/api/clarifications/' + created['id'] + '/analyze', 'POST', {})[0], 202)
+        detail = self.request('/api/clarifications/' + created['id'])[1]
+        self.assertEqual((detail['status'], detail['completedBatches'], detail['totalBatches']), ('active', 2, 2))
+        self.assertEqual(model_request.call_count, 1)
+        self.assertIn('交付时间需要确认。', model_request.call_args.args[1]['messages'][0]['content'])
+
+    def test_chat_message_batches_cover_long_conversation_without_truncation(self):
+        messages = [
+            {"id": f"msg-{index}", "sender": "客户甲", "sentAt": f"2026-11-03 10:{index:02d}", "content": "消息内容" * 1200}
+            for index in range(5)
+        ]
+        batches = main.split_chat_messages(messages, max_chars=6000)
+        self.assertGreater(len(batches), 1)
+        self.assertEqual([message["id"] for batch in batches for message in batch], [message["id"] for message in messages])
+
+    def test_large_chat_analysis_uses_every_chunk_then_reduces_results(self):
+        messages = [
+            {"id": f"msg-{index}", "sender": "客户甲", "sentAt": f"2026-11-03 10:0{index}", "content": f"唯一标记{index}" + "长" * 6000}
+            for index in range(3)
+        ]
+        response = {"choices": [{"message": {"content": json.dumps({
+            "summary": "分块总结", "topic": "", "project": "", "participants": [], "keyQa": [],
+            "requirements": [], "commitments": [], "nextActions": [], "risks": [], "tags": [],
+        }, ensure_ascii=False)}}]}
+        config = {"summaryModel": "mock-text"}
+        with patch("main.get_llm_config", return_value=config), patch("main.maas_request", return_value=response) as model_request:
+            analysis = main.analyze_chat_messages(messages, "我")
+        self.assertEqual(analysis["summary"], "分块总结")
+        self.assertEqual(model_request.call_count, 4)
+        sent_prompts = "\n".join(call.args[1]["messages"][0]["content"] for call in model_request.call_args_list)
+        for index in range(3):
+            self.assertIn(f"唯一标记{index}", sent_prompts)
+
+    def test_chat_analysis_retry_reuses_completed_chunk_checkpoint(self):
+        messages = [
+            {"id": f"msg-{index}", "sender": "我" if index % 2 == 0 else "客户甲", "sentAt": f"2026-11-03 11:0{index}", "content": f"分块标记{index}" + "长" * 6000}
+            for index in range(3)
+        ]
+        stored = main.store_chat_record(messages, [{"name": "我", "role": "me"}, {"name": "客户甲", "role": "customer"}], "长聊天.txt", "测试客户", "测试项目", ai_enabled=False, conversation_key="wechat:checkpoint")
+        with main.db() as conn:
+            conn.execute("UPDATE chats SET status='processing',pending_messages_json=? WHERE id=?", (json.dumps(messages, ensure_ascii=False), stored["chatId"]))
+            conn.execute("UPDATE imports SET status='processing' WHERE id=?", (stored["importId"],))
+        valid = {"choices": [{"message": {"content": json.dumps({
+            "summary": "分块总结", "topic": "", "project": "", "participants": [], "keyQa": [],
+            "requirements": [], "commitments": [], "nextActions": [], "risks": [], "tags": [],
+        }, ensure_ascii=False)}}]}
+        invalid = {"choices": [{"message": {"content": "不是 JSON"}}]}
+        config = {"apiKey": "test-key", "baseUrl": "http://mock", "summaryModel": "mock-text", "asrModel": "", "visionModel": ""}
+        first_task = main.create_task("chat_analysis", import_id=stored["importId"], entity_id=stored["chatId"], payload={"importId": stored["importId"], "chatId": stored["chatId"]})
+        with patch("main.get_llm_config", return_value=config), patch("main.maas_request", side_effect=[valid, invalid, invalid]):
+            main._run_task(first_task, main.process_chat_analysis, stored["importId"], stored["chatId"])
+        failed = main.get_task(first_task)
+        with main.db() as conn:
+            row = conn.execute("SELECT status,analysis_batches_json FROM chats WHERE id=?", (stored["chatId"],)).fetchone()
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(len(json.loads(row["analysis_batches_json"])), 1)
+
+        with patch("main.get_llm_config", return_value=config), patch("main.maas_request", return_value=valid) as model_request, patch("main.start_task", side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)):
+            self.assertEqual(self.request("/api/chats/" + stored["chatId"] + "/reanalyze", "POST", {})[0], 200)
+        self.assertEqual(model_request.call_count, 3)
+        chat = self.request("/api/chats/" + stored["chatId"])[1]
+        self.assertEqual(chat["status"], "done")
+        with main.db() as conn:
+            self.assertEqual(json.loads(conn.execute("SELECT analysis_batches_json FROM chats WHERE id=?", (stored["chatId"],)).fetchone()[0]), {})
+
+    def test_clarification_analysis_retries_malformed_json_and_finishes(self):
+        status, created = self.request("/api/clarifications", "POST", {
+            "name": "坏 JSON 重试", "modelSnapshot": {"summaryModel": "mock-text"}, "sources": [{
+                "sourceType": "transcript", "sourceId": "tr-001", "customerId": "测试客户", "projectId": "测试项目",
+                "displayName": "预算沟通", "sourceKind": "通话转写", "textSnapshot": "客户预算尚未确认。", "readable": True,
+            }],
+        })
+        self.assertEqual(status, 201)
+        valid = {"choices": [{"message": {"content": json.dumps({"questions": [{"text": "请确认项目预算范围。", "evidence": [{"excerpt": "客户预算尚未确认。", "sourceId": "tr-001"}]}]}, ensure_ascii=False)}}]}
+        config = {"apiKey": "test-key", "baseUrl": "http://mock", "summaryModel": "mock-text", "asrModel": "", "visionModel": ""}
+        with patch("main.get_llm_config", return_value=config), patch("main.maas_request", side_effect=[{"choices": [{"message": {"content": "不是 JSON"}}]}, valid]) as model_request, patch("main.start_task", side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)):
+            self.assertEqual(self.request("/api/clarifications/" + created["id"] + "/analyze", "POST", {})[0], 202)
+        detail = self.request("/api/clarifications/" + created["id"])[1]
+        self.assertEqual((detail["status"], detail["questionCount"]), ("active", 1))
+        self.assertEqual(model_request.call_count, 2)
+
     def test_import_list_filters_archive_state_type_customer_and_project(self):
         self.import_record("material-pending", "done")
         with main.db() as conn:
@@ -212,6 +473,9 @@ class SalesTests(unittest.TestCase):
         for table in ('chats', 'transcripts'):
             columns = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
             self.assertIn('attachments_json', columns)
+        chat_columns = {row['name'] for row in conn.execute('PRAGMA table_info(chats)')}
+        self.assertTrue({'conversation_key', 'pending_messages_json', 'analysis_batches_json'}.issubset(chat_columns))
+        main.migrate_ingest(conn)
         conn.close()
 
     def test_requirement_todo_trace_and_completion_persist(self):
@@ -434,8 +698,9 @@ class SalesTests(unittest.TestCase):
         self.assertTrue(any('覆盖安装' in step for step in result['repairSteps']))
 
     def test_wechat_engine_start_returns_health_after_launch(self):
-        with patch.object(main.wechat_engine, 'ensure_engine', return_value={'available': True, 'started': True, 'port': 10393}):
+        with patch.object(main.wechat_engine, 'ensure_engine', return_value={'available': True, 'started': True, 'port': 10393}) as ensure_engine:
             status, result = self.request('/api/wechat/start', 'POST', {})
+        ensure_engine.assert_called_once_with(force_retry=True)
         self.assertEqual(status, 200)
         self.assertEqual((result['status'], result['available'], result['port']), ('ok', True, 10393))
 
@@ -702,6 +967,43 @@ class SalesTests(unittest.TestCase):
         summarize.assert_called_once_with('客户明确需要报价')
         self.assertEqual(record['summary']['evidence']['needs'], '客户明确需要报价')
 
+    def test_regenerate_summary_keeps_middle_of_long_source_and_complete_model_reply(self):
+        transcript = '开头说明。' * 1300 + '唯一关键约定：预付款为百分之三十。' + '结尾说明。' * 1300
+        full_needs = '完整需求说明。' * 1500
+        response = {'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps({
+            'needs': full_needs, 'paymentMethod': '预付款百分之三十',
+            'evidence': {'paymentMethod': '预付款为百分之三十'},
+        }, ensure_ascii=False)}}]}
+        config = {'apiKey': 'test-key', 'summaryModel': 'qwen3.8-flash'}
+        with main.db() as conn:
+            conn.execute("UPDATE transcripts SET segments_json=? WHERE id='tr-001'", (json.dumps([{'id': 's1', 'text': transcript}], ensure_ascii=False),))
+        with patch('main.get_llm_config', return_value=config), patch('main.maas_request', return_value=response) as model:
+            status, record = self.request('/api/transcripts/tr-001/regenerate-summary', 'POST', {})
+        self.assertEqual(status, 200)
+        payload = model.call_args.args[1]
+        self.assertIn(transcript, payload['messages'][0]['content'])
+        self.assertFalse(payload['enable_thinking'])
+        self.assertNotIn('max_tokens', payload)
+        self.assertNotIn('max_completion_tokens', payload)
+        self.assertEqual(record['summary']['needs'], full_needs)
+        self.assertEqual(record['summary']['evidence']['paymentMethod'], '预付款为百分之三十')
+        self.assertEqual(self.request('/api/transcripts/tr-001')[1]['summary']['needs'], full_needs)
+
+    def test_summary_repairs_invalid_json_and_leaves_other_model_parameters_compatible(self):
+        responses = [
+            {'choices': [{'finish_reason': 'length', 'message': {'content': '{"needs":'}}]},
+            {'choices': [{'finish_reason': 'stop', 'message': {'content': '{"needs":"报价","evidence":{"needs":"需要报价"}}'}}]},
+        ]
+        with patch('main.get_llm_config', return_value={'summaryModel': 'other-model'}), patch('main.maas_request', side_effect=responses) as model:
+            summary = main.summarize_transcript('客户需要报价')
+        self.assertEqual(summary['needs'], '报价')
+        self.assertEqual(summary['evidenceCount'], 1)
+        self.assertEqual(model.call_count, 2)
+        for call in model.call_args_list:
+            self.assertNotIn('enable_thinking', call.args[1])
+            self.assertNotIn('max_tokens', call.args[1])
+            self.assertNotIn('max_completion_tokens', call.args[1])
+
     def test_group_role_edit_keeps_the_selected_customer(self):
         source_id = 'chat-group-test'
         participants = [{'name': '销售', 'role': 'me'}, {'name': '客户甲', 'role': 'customer'}, {'name': '客户乙', 'role': 'customer'}]
@@ -862,7 +1164,7 @@ class SalesTests(unittest.TestCase):
     def test_clarification_analysis_saves_questions_and_evidence(self):
         payload = {
             'name': '分析测试单',
-            'modelSnapshot': {'summaryModel': 'mock-text'},
+            'modelSnapshot': {'summaryModel': 'qwen3.8-flash'},
             'sources': [{
                 'sourceType': 'transcript', 'sourceId': 'tr-001', 'customerId': '测试客户', 'projectId': '测试项目',
                 'displayName': '测试通话', 'sourceKind': '通话转写', 'textSnapshot': '客户希望一期在六月上线，预算需要确认。', 'readable': True,
@@ -891,7 +1193,12 @@ class SalesTests(unittest.TestCase):
         self.assertEqual(detail['questions'][0]['evidence'][0]['excerpt'], '客户希望一期在六月上线')
         self.assertGreaterEqual(detail['questions'][0]['confidence'], 0.8)
         self.assertEqual(detail['language'], 'zh-CN')
-        self.assertIn('生成语言：zh-CN', model_request.call_args.args[1]['messages'][0]['content'])
+        request_payload = model_request.call_args.args[1]
+        self.assertIn('生成语言：zh-CN', request_payload['messages'][0]['content'])
+        self.assertFalse(request_payload['enable_thinking'])
+        self.assertEqual(request_payload['model'], 'qwen3.8-flash')
+        self.assertNotIn('max_tokens', request_payload)
+        self.assertNotIn('max_completion_tokens', request_payload)
 
     def test_clarification_language_persists_across_analysis_incremental_and_followup(self):
         source = {
@@ -930,6 +1237,8 @@ class SalesTests(unittest.TestCase):
             prompt = call.args[1]['messages'][0]['content']
             self.assertIn('生成语言：日本語', prompt)
             self.assertIn('证据原文不翻译', prompt)
+            self.assertNotIn('max_tokens', call.args[1])
+            self.assertNotIn('max_completion_tokens', call.args[1])
         detail = self.request(path)[1]
         self.assertEqual((detail['language'], detail['questionCount']), ('日本語', 3))
         for question in detail['questions']:
@@ -1055,9 +1364,9 @@ class SalesTests(unittest.TestCase):
         original_progress = main.set_task_progress
         cancelled = False
 
-        def cancel_after_first_batch(task_id, progress):
+        def cancel_after_first_batch(task_id, progress, **kwargs):
             nonlocal cancelled
-            original_progress(task_id, progress)
+            original_progress(task_id, progress, **kwargs)
             if progress == 50 and not cancelled:
                 cancelled = True
                 main.cancel_task(task_id)
