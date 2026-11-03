@@ -45,6 +45,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+# Windows redirected consoles may not encode Chinese error messages.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="backslashreplace")
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -2417,7 +2421,7 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.1"),
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.2"),
         "apiRevision": 20,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
@@ -3761,7 +3765,7 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.1"),
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.2"),
                 "apiRevision": 20,
             })
             return

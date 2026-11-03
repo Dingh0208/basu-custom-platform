@@ -255,7 +255,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前发布版本为 [v0.3.1](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.1)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.1/ClientHub-Setup-0.3.1.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.1.md)。本版包含 AI 摘要提速、完整 JSON 校验与纠正、聊天增量导入、微信引擎恢复、文档布局和更新状态修复，Sidecar API revision 为 20。
+当前发布版本为 [v0.3.2](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.2)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.2/ClientHub-Setup-0.3.2.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.2.md)。本版包含 AI 摘要提速、完整 JSON 校验与纠正、聊天增量导入、微信引擎恢复、文档布局和更新状态修复，Sidecar API revision 为 20。
 
 离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发。已经做了这些轻量化：
 

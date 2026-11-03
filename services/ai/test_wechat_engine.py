@@ -11,7 +11,7 @@ class WechatEngineStartupTests(unittest.TestCase):
     def setUp(self):
         sandbox = tempfile.TemporaryDirectory(prefix="clienthub-engine-tests-")
         self.addCleanup(sandbox.cleanup)
-        self.root = Path(sandbox.name)
+        self.root = Path(sandbox.name).resolve()
         self.data = self.root / "data"
         self.backend = self.root / "wechat-backend.exe"
         self.backend.write_bytes(b"test fixture")
