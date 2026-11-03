@@ -72,17 +72,20 @@ jobs:
             const tag = context.ref.replace('refs/tags/', '');
             const notesPath = `docs/RELEASE-NOTES-${tag}.md`;
             const body = fs.readFileSync(notesPath, 'utf8');
-            const release = await github.rest.repos.getReleaseByTag({
+            const releases = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag,
+              per_page: 100,
             });
+            const release = releases.data.find((item) => item.tag_name === tag);
+            if (!release) throw new Error(`Release for ${tag} was not created by electron-builder`);
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: release.data.id,
+              release_id: release.id,
               name: `ClientHub ${tag}`,
               body,
+              draft: false,
             });
 
       - name: Upload installer artifact
