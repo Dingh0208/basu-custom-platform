@@ -255,13 +255,15 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前发布版本为 [v0.3.2](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.2)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.2/ClientHub-Setup-0.3.2.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.2.md)。本版包含 AI 摘要提速、完整 JSON 校验与纠正、聊天增量导入、微信引擎恢复、文档布局和更新状态修复，Sidecar API revision 为 20。
+当前发布版本为 [v0.3.3](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.3)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.3/ClientHub-Setup-0.3.3.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.3.md)。另提供[小型在线安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.3/ClientHub-Web-Setup-0.3.3.exe)（安装时需下载完整组件）。本版优化安装压缩与差分复用，并包含此前尚未发布的微信导入容量提示及未分析聊天白屏修复，Sidecar API revision 为 21。
 
 离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发。已经做了这些轻量化：
 
 - 移除独立的 `ffprobe.exe`，时长探测改由 `ffmpeg` 完成；
 - Electron 只保留 `zh-CN` / `en-US` 语言包；
 - NSIS 使用 LZMA 压缩；
+- 同时提供完整离线 NSIS 包和可选小型 NSIS Web 引导器；应用内更新继续使用离线包的 blockmap 差分，避免切换更新格式导致整包下载；
+- Sidecar 使用目录式冻结依赖并由安装器压缩，减少嵌套压缩和后续版本中重复下载的依赖；安装后依赖展开，目录占用会增大，完整解析/OCR 功能保留；
 - 微信引擎、FFmpeg、Sidecar 仍全部内置，不牺牲功能。
 
 **v0.2.7 更新内容：**

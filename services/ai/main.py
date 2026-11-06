@@ -1059,6 +1059,19 @@ def _merge_chat_messages(existing: list[dict], incoming: list[dict]) -> tuple[li
     return combined, added
 
 
+CHAT_LIBRARY_MESSAGE_LIMIT = 100_000
+
+
+class ChatCapacityError(ValueError):
+    pass
+
+
+def _check_chat_library_capacity(conn: sqlite3.Connection, added: int) -> None:
+    total = conn.execute("SELECT COALESCE(SUM(message_count),0) FROM chats").fetchone()[0]
+    if total + added > CHAT_LIBRARY_MESSAGE_LIMIT:
+        raise ChatCapacityError(f"本机聊天累计最多 {CHAT_LIBRARY_MESSAGE_LIMIT:,} 条，已有 {total:,} 条，本次新增 {added:,} 条。请先备份并删除不需要的聊天资料后再导入；已有记录未改变。")
+
+
 def store_chat_record(
     messages: list[dict],
     participants: list[dict],
@@ -1072,6 +1085,8 @@ def store_chat_record(
     conversation_key: str = "",
     legacy_session_name: str = "",
 ) -> dict | None:
+    if len(messages) > wechat_engine.MAX_IMPORT_MESSAGES:
+        raise ChatCapacityError(f"单次最多导入 {wechat_engine.MAX_IMPORT_MESSAGES:,} 条聊天消息，请按日期分批导入；本次未保存。")
     if len(messages) < 2:
         return None
     senders = list(dict.fromkeys(m["sender"] for m in messages))
@@ -1140,6 +1155,7 @@ def store_chat_record(
     task_id = None
     added_messages = list(messages)
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         existing = _find_existing_chat(conn, conversation_key, messages, normalized_participants, customer_name, legacy_session_name)
         imported_at = now_time()
         if existing:
@@ -1150,6 +1166,7 @@ def store_chat_record(
                 import_row = conn.execute("SELECT id FROM imports WHERE transcript_id=? ORDER BY rowid DESC LIMIT 1", (chat_id,)).fetchone()
                 return {"importId": str(import_row["id"]) if import_row else "", "chatId": chat_id, "taskId": None, "status": str(existing["status"]), "messageCount": len(old_messages), "addedMessageCount": 0, "duplicate": True, "participants": json.loads(existing["participants_json"] or "[]")}
 
+            _check_chat_library_capacity(conn, len(added_messages))
             existing_status = str(existing["status"] or "done")
             should_start = ai_enabled and existing_status != "processing"
             status = "processing" if should_start or (ai_enabled and existing_status == "processing") else existing_status
@@ -1189,6 +1206,7 @@ def store_chat_record(
                 import_id = f"imp-{uuid.uuid4().hex[:10]}"
                 conn.execute("INSERT INTO imports (id,file_name,type,size,customer,project,status,progress,imported_at,transcript_id,sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (import_id, file_name, "聊天记录", f"{len(all_messages)} 条", customer_name, project_name, status, 20 if status == "processing" else 100, imported_at, chat_id, None))
         else:
+            _check_chat_library_capacity(conn, len(messages))
             chat_id = f"chat-{uuid.uuid4().hex[:10]}"
             import_id = f"imp-{uuid.uuid4().hex[:10]}"
             title = f"微信聊天 · {customer_name}"
@@ -2421,8 +2439,8 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.2"),
-        "apiRevision": 20,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.3"),
+        "apiRevision": 21,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -3680,13 +3698,15 @@ class Handler(BaseHTTPRequestHandler):
                 types = [x for x in q("types").split(",") if x]
                 start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp()) if start_date else None
                 end_ts = int(datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()) if end_date else None
-                raw = wechat_engine.fetch_messages(account, username, start_ts=start_ts)
+                raw = wechat_engine.fetch_messages(account, username, start_ts=start_ts, end_ts=end_ts, render_types=types)
                 messages, _ = wechat_engine.normalize_messages(
                     raw, account=account, username=username,
                     start_ts=start_ts, end_ts=end_ts, render_types=types,
                 )
                 preview = messages[:80]
-                self._json({"status": "success", "total": len(messages), "messages": preview})
+                self._json({"status": "success", "total": len(messages), "messages": preview, "limit": wechat_engine.MAX_IMPORT_MESSAGES, "overLimit": False})
+            except wechat_engine.MessageLimitExceeded as exc:
+                self._json({"status": "success", "total": None, "messages": [], "limit": wechat_engine.MAX_IMPORT_MESSAGES, "overLimit": True, "message": str(exc)})
             except Exception as exc:
                 self._json({"status": "error", "error": str(exc)}, 502)
             return
@@ -3765,8 +3785,8 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.2"),
-                "apiRevision": 20,
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.3"),
+                "apiRevision": 21,
             })
             return
         if path == "/api/diagnostics":
@@ -3906,6 +3926,12 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not_found"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
+        try:
+            self._handle_post()
+        except ChatCapacityError as exc:
+            self._json({"error": "chat_capacity_exceeded", "message": str(exc)}, 413)
+
+    def _handle_post(self) -> None:
         path = urlparse(self.path).path
         if int(self.headers.get("Content-Length", "0") or "0") > 135 * 1024 * 1024:
             self._json({"error": "request_too_large", "message": "请求超过 135 MB，请分批或压缩后重试"}, 413)
@@ -4413,6 +4439,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "screenshot_not_recognized"}, 400)
                     return
                 self._json({"id": stored.get("importId") or stored.get("id"), "status": stored.get("status", "processing"), "chatId": stored.get("chatId"), "messageCount": stored.get("messageCount"), "addedMessageCount": stored.get("addedMessageCount", 0), "duplicate": stored.get("duplicate", False)}, 201)
+            except ChatCapacityError:
+                raise
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
             return

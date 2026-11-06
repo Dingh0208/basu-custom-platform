@@ -1,47 +1,31 @@
 param(
-  [string]$Python = "python"
+  [string]$Python = "python",
+  [ValidateSet("nsis", "nsis-web", "all")]
+  [string]$Target = "all"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-Write-Host "1/4 Building frontend..."
+Write-Host "1/3 Building frontend..."
 & npm run build
 if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
 
-Write-Host "2/4 Building Python sidecar..."
+Write-Host "2/3 Building Python sidecar..."
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build-sidecar.ps1") -Python $Python
 if ($LASTEXITCODE -ne 0) { throw "sidecar build failed" }
 
-Write-Host "3/4 Packaging Electron win-unpacked..."
-& npx electron-builder --win dir
-if ($LASTEXITCODE -ne 0) { throw "electron-builder dir packaging failed" }
-
-Write-Host "3.5/4 Normalizing packaged executable integrity levels..."
-$packagedExes = @(
-  (Join-Path $root "release\win-unpacked\ClientHub.exe"),
-  (Join-Path $root "release\win-unpacked\resources\ai-sidecar\clienthub-ai.exe"),
-  (Join-Path $root "release\win-unpacked\resources\ffmpeg\ffmpeg.exe"),
-  (Join-Path $root "release\win-unpacked\resources\wechat-engine\wechat-backend.exe"),
-  (Join-Path $root "release\win-unpacked\resources\wechat-engine\native\wechatdb_broker.exe")
-)
-foreach ($exe in $packagedExes) {
-  if (Test-Path $exe) { & icacls $exe /setintegritylevel Medium | Out-Null }
+Write-Host "3/3 Building $Target installer..."
+if ($Target -eq "all") {
+  & npx electron-builder --win nsis-web --x64 --publish never
+  if ($LASTEXITCODE -ne 0) { throw "Web installer packaging failed" }
+  # Write offline metadata last: existing offline installations retain their
+  # cached-installer differential path instead of switching update formats.
+  & npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
+} else {
+  & npx electron-builder --win $Target --x64 --publish never
 }
+if ($LASTEXITCODE -ne 0) { throw "electron-builder $Target packaging failed" }
 
-Write-Host "4/4 Building selectable-path NSIS installer..."
-$nsisDir = Get-ChildItem "$env:LOCALAPPDATA\electron-builder\Cache\nsis" -Directory -ErrorAction SilentlyContinue |
-  Where-Object { Test-Path (Join-Path $_.FullName "Bin\makensis.exe") } |
-  Sort-Object Name -Descending | Select-Object -First 1
-if (-not $nsisDir) { throw "NSIS cache not found; run electron-builder once first" }
-$makensis = Join-Path $nsisDir.FullName "Bin\makensis.exe"
-$version = (& node -p "require('./package.json').version").Trim()
-if (-not $version) { throw "Unable to read package version" }
-$installer = Join-Path $root "release\ClientHub Setup $version.exe"
-& $makensis "/DAPP_DIR=$root\release\win-unpacked" "/DOUT_FILE=$installer" "/V2" (Join-Path $PSScriptRoot "installer.nsi")
-if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
-
-if (Test-Path $installer) { & icacls $installer /setintegritylevel Medium | Out-Null }
-
-Write-Host "Installer output: $installer"
+Write-Host "Installer output is in $root\release"

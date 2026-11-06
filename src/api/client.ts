@@ -164,6 +164,8 @@ export async function archiveImports(ids: string[], customer: string, project: s
   }, 10000);
 }
 
+export class ChatCapacityError extends Error {}
+
 async function fetchJson<T>(path: string, init?: RequestInit, timeoutMs = 2000): Promise<T | null> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -173,9 +175,16 @@ async function fetchJson<T>(path: string, init?: RequestInit, timeoutMs = 2000):
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 413) {
+        const error = await res.json();
+        if (error.error === 'chat_capacity_exceeded') throw new ChatCapacityError(error.message);
+      }
+      return null;
+    }
     return (await res.json()) as T;
-  } catch {
+  } catch (error) {
+    if (error instanceof ChatCapacityError) throw error;
     return null;
   } finally {
     window.clearTimeout(timer);
@@ -287,7 +296,7 @@ export async function updateTranscriptSegments(id: string, segments: import('../
 }
 
 export async function fetchChat(id: string): Promise<ChatRecord | null> {
-  return fetchJson<ChatRecord>(`/api/chats/${encodeURIComponent(id)}`, undefined, 2200);
+  return fetchJson<ChatRecord>(`/api/chats/${encodeURIComponent(id)}`, undefined, 10000);
 }
 
 export async function transcribeAttachment(sourceType: 'chat' | 'transcript', id: string, attachmentId: string) {
@@ -532,7 +541,7 @@ export async function previewWechatMessages(
   startDate = '',
   endDate = '',
   types: string[] = [],
-): Promise<{ total: number; messages: Array<{ id: string; sender: string; sentAt: string; content: string }> } | null> {
+): Promise<{ total: number | null; limit?: number; overLimit?: boolean; message?: string; messages: Array<{ id: string; sender: string; sentAt: string; content: string }> } | null> {
   const params = new URLSearchParams({ account, username, startDate, endDate, types: types.join(',') });
   return fetchJson(`/api/wechat/messages?${params.toString()}`, undefined, 120000);
 }
@@ -565,7 +574,7 @@ export async function createChatImport(text: string, meta?: { fileName?: string;
   return fetchJson('/api/imports/chat', {
     method: 'POST',
     body: JSON.stringify({ text, ...meta }),
-  });
+  }, 10000);
 }
 
 export async function createChatScreenshot(

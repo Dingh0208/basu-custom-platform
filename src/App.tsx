@@ -18,6 +18,7 @@ import NotificationCenter from './components/NotificationCenter';
 import { initialImports, transcriptRecord } from './mock/data';
 import type { ChatRecord, CustomerProfile, ImportRecord, ProjectListItem, SearchResult, TranscriptRecord, View } from './types';
 import {
+  ChatCapacityError,
   createChatImport,
   createChatScreenshot,
   createImport,
@@ -365,6 +366,7 @@ export default function App() {
     if (sidecarOnline) {
       let duplicates = 0;
       let failed = 0;
+      const capacityErrors = new Set<string>();
       for (const file of files) {
         try {
           const type = inferType(file.name);
@@ -416,14 +418,15 @@ export default function App() {
           });
           if (!result) failed += 1;
           else if (result.duplicate) duplicates += 1;
-        } catch {
+        } catch (error) {
           failed += 1;
+          if (error instanceof ChatCapacityError) capacityErrors.add(error.message);
         }
       }
       const data = await fetchImports();
       if (data) setImports(data);
       const suffix = failed ? `，${failed} 个文件处理失败` : '';
-      showToast(duplicates > 0 ? `${files.length} 个文件已提交，其中 ${duplicates} 个重复文件已跳过${suffix}` : `已提交 ${files.length - failed} 个文件到本地 Sidecar 处理${suffix}`);
+      showToast(capacityErrors.size ? [...capacityErrors].join('；') : duplicates > 0 ? `${files.length} 个文件已提交，其中 ${duplicates} 个重复文件已跳过${suffix}` : `已提交 ${files.length - failed} 个文件到本地 Sidecar 处理${suffix}`);
       return;
     }
 
@@ -465,7 +468,6 @@ export default function App() {
       // 过滤掉已归档的项目
       setProjects(filterActiveProjects(projectData));
     }
-    showToast('微信聊天记录已进入分析队列，完成后可在客户 360 查看');
   }
 
   async function handleDeleteRecord(record: ImportRecord) {
@@ -491,7 +493,13 @@ export default function App() {
   async function handlePasteText(text: string) {
     if (sidecarOnline) {
       const selected = projects.find((project) => project.name === selectedProject);
-      const result = await pasteImport(text, { project: selectedProject, customer: selected?.customer || selectedCustomer });
+      let result;
+      try {
+        result = await pasteImport(text, { project: selectedProject, customer: selected?.customer || selectedCustomer });
+      } catch (error) {
+        showToast(error instanceof ChatCapacityError ? error.message : '聊天导入失败，请重试');
+        return;
+      }
       if (!result) {
         showToast('无法识别这段聊天记录，请检查格式后重试');
         return;

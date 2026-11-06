@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ChatParticipant, ChatRecord, TodoRecord } from '../types';
+import type { ChatAnalysis, ChatParticipant, ChatRecord, TodoRecord } from '../types';
 import { API_BASE, createCustomerRequirement, fetchChat, reanalyzeChat, updateChatParticipants } from '../api/client';
 import AttachmentList from './AttachmentList';
 import TodoModal from './TodoModal';
@@ -36,6 +36,7 @@ function timeOf(value: string) {
 export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, onChatUpdate, onRequirement }: ChatWorkspaceProps) {
   const [todoSeed, setTodoSeed] = useState<Partial<TodoRecord> | null>(null);
   const [query, setQuery] = useState('');
+  const [messagePage, setMessagePage] = useState(1);
   const [activeTab, setActiveTab] = useState<'summary' | 'qa' | 'requirements'>('summary');
   const [participants, setParticipants] = useState<ChatParticipant[]>(record.participants);
   const [roleEditorOpen, setRoleEditorOpen] = useState(false);
@@ -44,6 +45,8 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
   useEffect(() => {
     setParticipants(record.participants);
   }, [record.id]);
+
+  useEffect(() => { setMessagePage(1); }, [record.id, query]);
 
   const roleMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -57,7 +60,15 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
     return record.messages.filter((m) => m.content.toLowerCase().includes(q) || m.sender.toLowerCase().includes(q));
   }, [record.messages, query]);
 
-  const analysis = record.analysis;
+  const pageCount = Math.max(1, Math.ceil(messages.length / 100));
+  const currentPage = Math.min(messagePage, pageCount);
+  const visibleMessages = messages.slice((currentPage - 1) * 100, currentPage * 100);
+  const hasAnalysis = Object.keys(record.analysis || {}).length > 0;
+  const analysis: ChatAnalysis = {
+    summary: '', topic: '', participants: [], keyQa: [], requirements: [],
+    commitments: [], nextActions: [], tags: [], ...record.analysis,
+  };
+  const analysisStatus = record.status === 'processing' ? 'AI 分析中' : record.status === 'failed' ? 'AI 分析失败，可重试' : record.status === 'cancelled' ? 'AI 分析已取消' : hasAnalysis ? '已分析' : '未进行 AI 分析';
   const customerName = record.customer || participants.find((p) => p.role === 'customer')?.name || '客户';
   const meName = participants.find((p) => p.role === 'me')?.name || '我';
   const attachments = record.attachments ?? [];
@@ -105,11 +116,11 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
           <span className="sep">/</span>
           <span>客户</span><span className="sep">/</span><span>{customerName}</span><span className="sep">/</span>
           <strong>{record.title}</strong>
-          <span className="badge done">已完成</span>
+          <span className={`badge ${record.status === 'processing' ? 'processing' : record.status === 'failed' ? 'danger' : 'done'}`}>{record.status === 'processing' ? '分析中' : record.status === 'failed' ? '分析失败' : hasAnalysis ? '已分析' : '原文已保存'}</span>
           <span className={`badge ${sidecarOnline ? 'done' : 'warn'}`}>{sidecarOnline ? 'Sidecar 已连接' : '内置 Mock'}</span>
         </div>
         <div className="top-actions">
-          <button className="btn" onClick={handleReanalyze}><IconRefresh size={15} />重新分析</button>
+          <button className="btn" disabled={!sidecarOnline || record.status === 'processing'} onClick={handleReanalyze}><IconRefresh size={15} />{hasAnalysis ? '重新分析' : '开始 AI 分析'}</button>
           <button className="btn" onClick={() => onToast('聊天记录导出已生成（原型模拟）')}><IconDownload size={15} />导出记录</button>
           <button className="btn primary" onClick={() => setTodoSeed({ customer: record.customer, project: record.project, sourceType: 'chat', sourceId: record.id, sourceQuote: analysis.summary })}><IconPlus size={15} />添加待办</button>
         </div>
@@ -144,7 +155,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                   <div><div className="participant-name">{p.name}</div><div className="participant-role">{roleLabel(p.role)}</div></div>
                 </div>
               ))}
-              <div className="small-note" style={{ marginTop: 14 }}>“我”由 Sidecar 根据聊天内容推断，当前判断为 <strong style={{ color: '#344054' }}>{meName}</strong>。如果不对，请点“调整角色”。</div>
+              <div className="small-note" style={{ marginTop: 14 }}>根据导入消息标记，“我”为 <strong style={{ color: '#344054' }}>{meName}</strong>。如果不对，请点“调整角色”。</div>
             </div>
           </section>
           <section className="card">
@@ -165,8 +176,15 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
               </div>
             </div>
             {record.corrections?.length ? <details className="evidence-note"><summary>查看 {record.corrections.length} 项成员或角色人工校正</summary>{record.corrections.map((item, index) => <div key={index}><strong>{item.createdAt}</strong><div>修改前：{item.before}</div><div>修改后：{item.after}</div></div>)}</details> : null}
+            {messages.length > 100 && <div className="chat-pagination">
+              <span>共 {messages.length.toLocaleString()} 条 · 第 {currentPage} / {pageCount} 页，每页 100 条</span>
+              <button className="btn ghost" disabled={currentPage === 1} onClick={() => setMessagePage(1)}>首页</button>
+              <button className="btn ghost" disabled={currentPage === 1} onClick={() => setMessagePage(currentPage - 1)}>上一页</button>
+              <button className="btn ghost" disabled={currentPage === pageCount} onClick={() => setMessagePage(currentPage + 1)}>下一页</button>
+              <button className="btn ghost" disabled={currentPage === pageCount} onClick={() => setMessagePage(pageCount)}>末页</button>
+            </div>}
             <div className="chat-body">
-              {messages.map((message) => {
+              {visibleMessages.map((message) => {
                 const role = roleMap[message.sender] ?? 'customer';
                 const messageAttachments = attachments.filter((attachment) => attachment.messageId === message.id);
                 return (
@@ -195,7 +213,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
           <div className="card summary-card">
             <div className="summary-head">
               <div className="summary-top">
-                <div className="title-wrap"><span className="card-title">AI 对话解析</span><span className="ai-badge">✦ AI 生成</span></div>
+                <div className="title-wrap"><span className="card-title">AI 对话解析</span><span className="ai-badge">{hasAnalysis ? '✦ AI 生成' : analysisStatus}</span></div>
                 <button className="btn ghost" style={{ height: 28, padding: '0 8px', fontSize: 11 }} onClick={() => onToast('对话解析已更新')}>刷新</button>
               </div>
               <div className="tabs">
@@ -205,7 +223,8 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
               </div>
             </div>
             <div className="summary-body">
-              {activeTab === 'summary' && (
+              {!hasAnalysis && <div className="empty-panel">{analysisStatus}。原始聊天已保存在本地，可直接阅读和搜索；需要生成摘要时，请点击“开始 AI 分析”。</div>}
+              {hasAnalysis && activeTab === 'summary' && (
                 <>
                   <div className="summary-section">
                     <div className="summary-label">聊天主题</div>
@@ -225,7 +244,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                   </div>
                 </>
               )}
-              {activeTab === 'qa' && (
+              {hasAnalysis && activeTab === 'qa' && (
                 <div className="qa-list">
                   {analysis.keyQa.length === 0 && <div className="empty-panel">本次聊天以闲聊为主，未识别出明确问答</div>}
                   {analysis.keyQa.map((qa, index) => (
@@ -237,7 +256,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                   ))}
                 </div>
               )}
-              {activeTab === 'requirements' && (
+              {hasAnalysis && activeTab === 'requirements' && (
                 <div className="requirement-list">
                   {analysis.requirements.length === 0 && <div className="empty-panel">本次聊天未形成明确需求</div>}
                   {analysis.requirements.map((req, index) => (
@@ -269,7 +288,7 @@ export default function ChatWorkspace({ record, sidecarOnline, onBack, onToast, 
                 </div>
               )}
             </div>
-            <div className="evidence-note">{analysis.confidence !== undefined ? `原文证据覆盖 ${Math.round(analysis.confidence * 100)}% · 已核对 ${analysis.evidenceCount || 0} 条` : '历史解析 · 原文证据待核对'} · {record.messageCount} 条消息</div>
+            <div className="evidence-note">{hasAnalysis ? analysis.confidence !== undefined ? `原文证据覆盖 ${Math.round(analysis.confidence * 100)}% · 已核对 ${analysis.evidenceCount || 0} 条` : '历史解析 · 原文证据待核对' : analysisStatus} · {record.messageCount} 条消息</div>
           </div>
         </aside>
       </div>

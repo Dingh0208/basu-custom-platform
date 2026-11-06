@@ -14,12 +14,16 @@ type Props = {
 
 export default function AttachmentList({ sourceId, sourceType, attachments, sidecarOnline, onToast }: Props) {
   const [items, setItems] = useState(attachments);
+  const [attachmentPage, setAttachmentPage] = useState(1);
   const [selected, setSelected] = useState<ChatAttachment | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewError, setPreviewError] = useState(false);
   const processing = items.some((item) => item.transcriptStatus === 'processing');
+  const pageCount = Math.max(1, Math.ceil(items.length / 50));
+  const currentPage = Math.min(attachmentPage, pageCount);
 
+  useEffect(() => { setAttachmentPage(1); }, [sourceId]);
   useEffect(() => { setItems(attachments); setSelected(null); }, [sourceId]);
   useEffect(() => { setItems(attachments); }, [attachments]);
   useEffect(() => {
@@ -85,7 +89,7 @@ export default function AttachmentList({ sourceId, sourceType, attachments, side
   return <>
     <div className="attachment-list" aria-live="polite">
       {items.length === 0 && <div className="empty-hint">暂无附件</div>}
-      {items.map((item) => <div className="attachment-item" key={item.id}>
+      {items.slice((currentPage - 1) * 50, currentPage * 50).map((item) => <div className="attachment-item" key={item.id}>
         <button className="attachment-open" onClick={() => item.storedName ? setSelected(item) : onToast('原始附件未离线保存，请在微信中查看或重新导入')}>
           {item.kind === 'image' && item.storedName && !/\.tiff?$/i.test(item.name) ? <img className="attachment-thumb" loading="lazy" src={`${API_BASE}/api/files/${encodeURIComponent(item.storedName)}`} alt={item.name} /> : <span className="attachment-ico"><IconFile size={17} /></span>}
           <span className="attachment-main"><span className="attachment-name" title={item.name}>{item.name}</span><span className="attachment-label">{item.storedName ? '已离线保存 · 点击预览' : '原始附件未保存'}</span></span>
@@ -95,6 +99,11 @@ export default function AttachmentList({ sourceId, sourceType, attachments, side
         {item.transcriptError && <div className="attachment-transcript" role="alert">{item.transcriptError}</div>}
       </div>)}
     </div>
+    {items.length > 50 && <div className="chat-pagination">
+      <span>附件第 {currentPage} / {pageCount} 页</span>
+      <button className="btn ghost" disabled={currentPage === 1} onClick={() => setAttachmentPage(currentPage - 1)}>上一页附件</button>
+      <button className="btn ghost" disabled={currentPage === pageCount} onClick={() => setAttachmentPage(currentPage + 1)}>下一页附件</button>
+    </div>}
     <Modal open={!!selected} title={selected?.name || '附件预览'} subtitle="本机离线副本" onClose={() => setSelected(null)} className="attachment-preview">
       <div className="modal-body">
         {selected?.kind === 'image' && !tiff && <img className="attachment-preview-image" src={url} alt={selected.name} />}

@@ -57,36 +57,34 @@ jobs:
           python -m unittest discover -s services/ai -p "test_*.py"
           if ($LASTEXITCODE -ne 0) { throw "Sidecar regression tests failed" }
           powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python python
-          if (Test-Path "release/ai-sidecar/.env") { throw "Refusing to package services/ai/.env into a release" }
+          if (Get-ChildItem release/ai-sidecar/clienthub-ai -Recurse -Force -Filter .env) { throw "Refusing to package services/ai/.env into a release" }
 
-      - name: Build and publish NSIS installer
+      - name: Build web and offline installers
+        shell: pwsh
+        run: |
+          npx electron-builder --win nsis-web --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "Web installer packaging failed" }
+          npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
+          if ($LASTEXITCODE -ne 0) { throw "Offline installer packaging failed" }
+
+      - name: Verify frozen runtime and bundled parsers
+        run: |
+          node scripts/verify-release.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Release metadata verification failed" }
+          python scripts/verify-packaged-sidecar.py
+
+      - name: Publish complete release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --publish always
-
-      - name: Set release title and notes
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('node:fs');
-            const tag = context.ref.replace('refs/tags/', '');
-            const notesPath = `docs/RELEASE-NOTES-${tag}.md`;
-            const body = fs.readFileSync(notesPath, 'utf8');
-            const releases = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 100,
-            });
-            const release = releases.data.find((item) => item.tag_name === tag);
-            if (!release) throw new Error(`Release for ${tag} was not created by electron-builder`);
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.id,
-              name: `ClientHub ${tag}`,
-              body,
-              draft: false,
-            });
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = [regex]::Escape($env:RELEASE_TAG.TrimStart('v'))
+          $assets = @((Get-ChildItem release,release/nsis-web -File | Where-Object { $_.Name -match "$version.*\.(exe|blockmap|nsis\.7z)$" }).FullName) + @((Get-Item release/latest.yml).FullName)
+          gh release create $env:RELEASE_TAG @assets --draft --verify-tag --title "ClientHub $env:RELEASE_TAG" --notes-file "docs/RELEASE-NOTES-$env:RELEASE_TAG.md"
+          if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Release publication failed" }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

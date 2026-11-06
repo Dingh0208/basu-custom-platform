@@ -178,6 +178,68 @@ class SalesTests(unittest.TestCase):
         chat = self.request("/api/chats/" + result["chatId"])[1]
         self.assertEqual((chat["customer"], chat["project"], chat["status"]), ("测试客户", "测试项目", "done"))
 
+    def test_chat_import_capacity_returns_actionable_error_without_creating_records(self):
+        main.save_app_settings({"aiImportEnabled": False})
+        with patch.object(main.wechat_engine, "MAX_IMPORT_MESSAGES", 2), patch("main.start_task") as start, patch("main.maas_request") as model:
+            status, result = self.request("/api/imports/chat", "POST", {"text": "我: 消息一\n客户: 消息二\n我: 消息三"})
+        self.assertEqual(status, 413)
+        self.assertIn("分批", result["message"])
+        start.assert_not_called()
+        model.assert_not_called()
+        with main.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM chats").fetchone()[0], 0)
+
+    def test_chat_library_capacity_counts_only_new_messages_and_preserves_history(self):
+        participants = [{"name": "我", "role": "me"}, {"name": "客户", "role": "customer"}]
+        messages = [{"id": f"wx-id-{i}", "sender": "我" if i % 2 else "客户", "sentAt": "2026-11-03", "content": f"消息{i}"} for i in range(7)]
+        with patch.object(main, "CHAT_LIBRARY_MESSAGE_LIMIT", 5), patch("main.start_task") as start:
+            first = main.store_chat_record(messages[:2], participants, "capacity.txt", ai_enabled=False, conversation_key="wechat:capacity")
+            main.store_chat_record(messages[1:5], participants, "capacity.txt", ai_enabled=False, conversation_key="wechat:capacity")
+            duplicate = main.store_chat_record(messages[1:5], participants, "capacity.txt", ai_enabled=False, conversation_key="wechat:capacity")
+            self.assertEqual((duplicate["messageCount"], duplicate["addedMessageCount"]), (5, 0))
+            with self.assertRaisesRegex(main.ChatCapacityError, "备份"):
+                main.store_chat_record(messages[5:], participants, "capacity.txt", ai_enabled=False, conversation_key="wechat:capacity")
+            with self.assertRaises(main.ChatCapacityError):
+                main.store_chat_record(messages[5:], participants, "another.txt", ai_enabled=False, conversation_key="wechat:another")
+        start.assert_not_called()
+        chat = self.request("/api/chats/" + first["chatId"])[1]
+        self.assertEqual((chat["messageCount"], len(chat["messages"]), chat["analysis"]), (5, 5, {}))
+        with main.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM chats").fetchone()[0], 1)
+
+    def test_wechat_preview_capacity_reports_overflow_without_a_fake_exact_count(self):
+        raw = [{"localId": i, "createTime": int(datetime(2026, 11, 3, 12).timestamp()), "senderDisplayName": "我" if i % 2 else "客户", "content": "虚构消息"} for i in range(3)]
+        with patch.object(main.wechat_engine, "fetch_messages", return_value=raw):
+            status, result = self.request("/api/wechat/messages?account=test&username=test&startDate=2026-11-03&types=text")
+        self.assertEqual((status, result["total"], result["overLimit"]), (200, 3, False))
+        with patch.object(main.wechat_engine, "fetch_messages", side_effect=main.wechat_engine.MessageLimitExceeded("请缩小日期范围分批导入")):
+            status, result = self.request("/api/wechat/messages?account=test&username=test")
+        self.assertEqual((status, result["total"], result["overLimit"], result["messages"]), (200, None, True, []))
+        self.assertEqual(result["limit"], 5000)
+        self.assertIn("分批", result["message"])
+
+    def test_wechat_capacity_failure_does_not_leave_media_copies(self):
+        engine = main.wechat_engine
+        raw = [{"localId": i, "senderDisplayName": "我" if i % 2 else "客户", "content": "虚构图片", "renderType": "image"} for i in range(2)]
+        def copy_media(attachments, directory):
+            for attachment in attachments:
+                attachment["storedName"] = f"capacity-test-{attachment['id']}.png"
+                (directory / attachment["storedName"]).write_bytes(b"synthetic")
+        for race in (False, True):
+            with self.subTest(concurrent_limit=race), patch.object(engine, "list_sessions", return_value={"sessions": [{"username": "test", "name": "虚构会话"}]}), patch.object(engine, "fetch_messages", return_value=raw), patch.object(engine, "_account_self_name", return_value="我"), patch.object(engine, "copy_local_media", side_effect=copy_media) as copy:
+                before = set(main.UPLOAD_DIR.iterdir())
+                if race:
+                    with patch.object(main, "store_chat_record", side_effect=main.ChatCapacityError("本机容量已满")):
+                        with self.assertRaises(main.ChatCapacityError):
+                            engine.import_conversation(account="test", username="test")
+                    copy.assert_called_once()
+                else:
+                    with patch.object(main, "CHAT_LIBRARY_MESSAGE_LIMIT", 1):
+                        with self.assertRaises(main.ChatCapacityError):
+                            engine.import_conversation(account="test", username="test")
+                    copy.assert_not_called()
+                self.assertEqual(set(main.UPLOAD_DIR.iterdir()), before)
+
     def test_chat_reimport_merges_only_new_messages_into_canonical_conversation(self):
         participants = [{"name": "我", "role": "me"}, {"name": "客户甲", "role": "customer"}]
         original = [

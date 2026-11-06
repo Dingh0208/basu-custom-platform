@@ -112,5 +112,36 @@ class WechatEngineStartupTests(unittest.TestCase):
         self.assertNotIn("解包临时目录", message)
 
 
+class WechatMessageCapacityTests(unittest.TestCase):
+    def test_over_limit_is_rejected_instead_of_silently_truncating(self):
+        with patch.object(engine, "_messages_page", return_value={"messages": [
+            {"localId": index, "content": "测试"} for index in range(6)
+        ], "hasMore": False}):
+            with self.assertRaises(engine.MessageLimitExceeded):
+                engine.fetch_messages("test", "chat", max_messages=5)
+
+    def test_date_and_type_filters_apply_before_capacity_limit(self):
+        items = [
+            {"localId": 1, "createTime": 300, "renderType": "text"},
+            {"localId": 2, "createTime": 200, "renderType": "image"},
+            {"localId": 3, "createTime": 190, "renderType": "text"},
+            {"localId": 4, "createTime": 180, "renderType": "text"},
+            {"localId": 5, "createTime": 90, "renderType": "text"},
+        ]
+        with patch.object(engine, "_messages_page", return_value={"messages": items, "hasMore": False}):
+            result = engine.fetch_messages("test", "chat", max_messages=2, start_ts=100, end_ts=200, render_types=["text"])
+        self.assertEqual([item["localId"] for item in result], [4, 3])
+
+    def test_exact_limit_with_more_unselected_records_is_not_reported_as_overflow(self):
+        items = [{"createTime": 100, "renderType": "text"} for _ in range(500)]
+        with patch.object(engine, "_messages_page", side_effect=[
+            {"messages": items, "hasMore": True},
+            {"messages": [{"createTime": 50, "renderType": "image"}], "hasMore": False},
+        ]) as pages:
+            result = engine.fetch_messages("test", "chat", max_messages=500, render_types=["text"])
+        self.assertEqual(len(result), 500)
+        self.assertEqual(pages.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

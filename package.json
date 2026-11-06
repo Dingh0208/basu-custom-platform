@@ -1,6 +1,6 @@
 {
   "name": "clienthub",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
   "main": "electron/main.cjs",
@@ -63,7 +63,7 @@
         "to": "ffmpeg"
       },
       {
-        "from": "release/ai-sidecar",
+        "from": "release/ai-sidecar/clienthub-ai",
         "to": "ai-sidecar"
       }
     ],
@@ -71,6 +71,12 @@
       "target": "nsis"
     },
     "nsis": {
+      "artifactName": "ClientHub-Setup-${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "nsisWeb": {
+      "artifactName": "ClientHub-Web-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },

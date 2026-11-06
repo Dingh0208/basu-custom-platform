@@ -159,7 +159,7 @@ export interface ChatRecord {
   importedAt: string;
   participants: ChatParticipant[];
   messages: ChatMessage[];
-  analysis: ChatAnalysis;
+  analysis: Partial<ChatAnalysis>;
   corrections?: CorrectionRecord[];
   attachments?: ChatAttachment[];
   status: string;

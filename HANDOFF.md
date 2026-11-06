@@ -8,7 +8,33 @@
 
 ### 0.1 当前任务
 
-本轮 AI 延迟、完整输出、JSON 恢复及配套修复已随 **ClientHub v0.3.2 / Sidecar API20** 正式发布并设为 Latest。用户明确要求保留完整回复、不设置输出预算，接受完整澄清超过 10 秒并保留当前模型。发布提交 `fe195267576680a47440402ce46659eece35949a`，Windows CI `41617820135` 成功，107 项回归、前端构建、Sidecar 和 NSIS 打包通过；中文更新说明及三个发布资产已核验。此前用户已切换当前 Web 到 `0.3.0 / API20`，一次自行发起的真实澄清 36 秒完成，14 个问题、6 条证据保存成功；本轮发布未再次重启本机服务，也未安装新包。具体耗时不保证任意资料在 10 秒内完成。
+当前任务是用户要求的 **更新下载优化、安装包压缩、发布带更新说明的新版本**。本机已完成 v0.3.3 / API21 的源码、打包和隔离验证；**尚待提交推送、标签 CI 和公开 Release 验证，不能把本机通过等同于已发布**。API21 聊天修复是此前完成但尚未发布的改动，本轮一同交付。
+
+#### 最新一轮：安装包体积与更新下载优化（2026-11-06）
+
+- 保留 NSIS 完整离线包作为应用内更新通道，增加可选 NSIS Web 小型在线安装器。两者安装同一套完整组件，不删 Electron、FFmpeg、微信引擎、OCR 模型或文档依赖。在线包只是下载入口小，首次安装仍要下载完整载荷；完整离线包仍可无网络安装。
+- Python Sidecar 从 PyInstaller `--onefile` 改为 `--onedir`。源输出位于 `release/ai-sidecar/clienthub-ai/`，extraResources 将它整体复制为 `resources/ai-sidecar/`；启动入口仍为 `resources/ai-sidecar/clienthub-ai.exe`，依赖在 `_internal/`。让 NSIS 压缩各依赖并支持后续复用稳定文件，减少每次重新压缩整个 EXE 带来的差分变化，也免去 Sidecar 启动时的自解包。安装目录会变大，这是解压后的完整依赖，不是功能删减。
+- 相同 Python3.12 环境、相同源码和同样 7z 参数（mx9、1MiB 字典、非固实）对比：旧单文件 114,060,419 bytes，新目录式 87,854,222 bytes，减少约 23%。本机完整安装器 359,925,261 bytes（343.3 MiB），Web 引导器 692,369 bytes（约 676 KiB），完整在线载荷 360,112,269 bytes。**这是本机测量；CI FFmpeg/依赖版本可能不同，公开资产以最终 Release 为准。**
+- 用本机 updater 缓存的真实 v0.3.2 安装器（只读，先核验原 SHA512）与两版 blockmap，运行 electron-updater 6.3.9 的真实 GenericDifferentialDownloader，经本地 HTTP 单 Range 下载重建：25 次请求、112,013,281 bytes，较本机新整包减少 68.88%；重建 SHA512 与 latest.yml 一致。不能据此承诺 GitHub 网络耗时。证据在忽略的 `build/verify-v033-delta.json` 和同名 cjs/log，新克隆不保证存在。
+- **纠正调查中的假设**：updater 默认已启用差分/Web，重复写 false 不提速，已撤销这些空改动；blockmapFiles 替换整个 URL pathname 中的版本，包括 tag 目录，旧 blockmap 地址正确，不需要往新 Release 复制旧 blockmap。GitHubProvider 明确禁用 multipart 多 Range，不能声称此版启用了多 Range 并发。
+- 构建顺序：先 `--win nsis-web --x64 --publish never`（输出在 `release/nsis-web/`），再 `--win nsis --x64 --prepackaged release/win-unpacked --publish never`；后者最后生成根目录 `latest.yml`，必须指向离线 exe 且不能含 Web packages，保留旧客户端安装器缓存的差分路径。**不能只发布 Web 或拿 Web 的 latest.yml 覆盖根文件**，否则首次转换会变为整包下载并失去离线入口。
+- CI 先测试/构建双安装器、`scripts/verify-release.cjs` 校验版本/通道/载荷 SHA512，再 `scripts/verify-packaged-sidecar.py` 在随机端口、临时数据库和虚构文件上验证冻结运行时，最后将 5 项资产全部上传草稿后发布 Latest。未齐全不能提前公开。
+- 当前本机验证：114 项 Python 回归（23.903秒）、TypeScript/Vite 构建、冻结 Sidecar 0.3.3/API21、FFmpeg、DOC/DOCX/XLS/XLSX/PPT/PPTX/EML/图片 OCR/扫描 PDF 共九类解析、完整安装器 7z 完整性、安装元数据和 SHA512 均通过。无真实模型调用、无真实数据库修改、未停止用户正在运行的程序、未连接远程服务器。
+- 本机 NSIS 生成临时卸载器初次退出码2：workspace 生成的 EXE 继承 Low 完整性，不能写系统 Temp。仅为本次命令设置 `TEMP/TMP=build/v033-nsis-temp` 并把该任务专用目录设为 Low 后构建通过；不修改系统 Temp 或全局执行策略。最初验证脚本读取 package.json 需显式 UTF-8（Windows 默认 GBK）；已修正。afterPack 的 Medium 修正继续保留。
+- 设置页版本不再硬编码 0.2.9，而从 package.json 读取。README、主 PRD、发布说明与脚本已同步；最终 CI、Release 地址和实际资产大小待发布后补写本节。
+
+此前 AI 延迟、完整输出、JSON 恢复及配套修复已随 v0.3.2 发布并设为 Latest。用户明确要求保留完整回复、不设置输出预算，接受完整澄清超过 10 秒并保留当前模型。发布提交 `fe195267576680a47440402ce46659eece35949a`，Windows CI `41617820135` 成功，107 项回归、前端构建、Sidecar 和 NSIS 打包通过。用户自行发起的真实澄清 36 秒完成，14 个问题、6 条证据保存成功；具体耗时不保证任意资料在 10 秒内完成。
+
+#### 最新一轮：微信导入提示、聊天白屏和容量约束（API21，2026-11-03）
+
+- 根因：App 的 `handleWechatImported` 固定“进入分析队列”提示覆盖弹窗的真实完成提示；现场 `aiImportEnabled=false`，聊天 `analysis={}`，后端并未启动 AI。`ChatWorkspace` 直接访问空 analysis 的数组 `.length` 触发白屏，原始 83 条消息仍在。
+- 已删除固定队列提示，弹窗只报告新增/累计数量和资料已更新；说明 AI 按开关执行。聊天 analysis 类型改为 Partial，页面补齐默认字段，未分析明确显示未分析，原文可读/搜索，手动开始 AI 的入口保留。
+- 聊天消息每页 100 条，搜索仍覆盖完整消息，搜索/切换记录重置首页；附件索引每页 50 项。完整详情请求超时放宽为 10 秒，未实现服务端分页。
+- 旧微信读取最多 5,000 条并静默截断，日期/类型过滤在截断后。现在先筛选后计数，第 5,001 条拒绝，预览返回 overLimit 和下界提示，禁止开始提取，缩小日期后恢复。后端存储也核验每次 5,000 条。
+- 本机累计上限 100,000 条，沿用 PRD 9.9 的支持目标；事务内按去重新增计数，纯重复不占额度。超限 HTTP 413，文件/粘贴导入显示具体原因并停止降级导入；微信后台任务保留错误供用户调整范围。容量拒绝不改历史、不调用 AI、不遗留本次媒体副本，不自动删数据。
+- 虚构文本累计 10 万条保存 13.509 秒、详情 HTTP 读取/解码 0.449 秒、响应 34.74 MiB；Edge mock 首屏 1.236 秒、全量搜索末尾标记 0.084 秒。5,000 个附件分页后末页切换由约 2.927 秒降到 0.066 秒。样本与限制见 `docs/CHAT-CAPACITY-2026-11-03.md`，不作为媒体或 AI 时延保证。
+- 验证：114 项 Python 回归通过（24.249 秒）、TypeScript/Vite 构建通过；浏览器虚构未分析/已分析详情、微信导入完成提示、超限/日期恢复、文件/粘贴错误、10 万消息分页/搜索均通过。现场白屏链接及“资料→预览”路径只读复核：83 条消息正常展示，未分析提示正确、零页面异常、零写请求，未记录业务正文或截图。
+- 初次切换检查无活动任务/导入，数据目录仍为项目 `services/ai/data`。当前 Windows 中等完整性会话无法读取旧服务可执行路径/命令行，安全重启脚本因此在停止任何进程前退出；本轮不是自动审核拒绝。`build/start-latest-web.ps1` 更新为校验 API21，用户在管理员 PowerShell 执行成功后，实际核验健康为 **0.3.2/API21**、Web HTTP200、数据目录不变、AI 开关仍关闭、前后端错误日志均为空。没有绕过进程身份校验或启动重复服务。重启后现场原聊天和资料预览再次通过，打开约 0.4 秒，无异常或写请求。
 
 #### 发布构建修正（2026-11-03）
 
@@ -59,9 +85,9 @@
 ### 0.2 当前代码和工作区状态
 
 - 当前分支：`main`。
-- 本轮修复及发布文件已提交推送；工作区仍有此前的无关未跟踪实验文件，未纳入发布。不能 reset、clean 或覆盖，先执行 `git status --short --branch`，只处理能归因于当前任务的文件。
+- 上轮 v0.3.2 发布文件已提交推送；本轮 API21 修复尚未提交。工作区仍有此前的无关未跟踪实验文件，未纳入发布。不能 reset、clean 或覆盖，先执行 `git status --short --branch`，只处理能归因于当前任务的文件。
 - 当前最新正式版本为 `v0.3.2`，上一正式版本为 `v0.3.0`；v0.3.1 因 CI 失败未生成 Release，保留标签。v0.3.2 已公开并标记为 Latest。
-- 当前源码 Sidecar API revision 是 **20**，应用版本为 `0.3.2`；`main` 和 `v0.3.2` 标签已推送，发布提交 `fe195267576680a47440402ce46659eece35949a`。正式 Release 包含 API19/20 修复，后续交接记录提交不移动标签。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本。
+- 当前源码 Sidecar API revision 是 **21**，应用版本为 `0.3.3`；上一发布 `main` 和 `v0.3.2` 标签已推送，发布提交 `fe195267576680a47440402ce46659eece35949a`。正式 Release 包含 API19/20 修复，本轮 API21 尚未发布，不移动标签。API17 本机安装验收记录 `docs/DELIVERY-API17-2026-11-03.md` 只代表先前版本。
 - 本次新增/重点文件：
   - `services/ai/clarifications.py`：需求澄清 SQLite 表、迁移、快照、问题、证据、回答、生命周期、增量资料和指标统计。
   - `services/ai/main.py`：澄清 API、持久化任务队列、模型调用、分批分析、追问、回写和指标/复制记录接口。

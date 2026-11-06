@@ -25,6 +25,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+MAX_IMPORT_MESSAGES = 5000
+
+
+class MessageLimitExceeded(ValueError):
+    pass
+
 
 def _find_backend() -> Path | None:
     candidates = []
@@ -390,7 +396,7 @@ def _messages_page(account: str, username: str, limit: int, offset: int, order: 
     )
 
 
-def fetch_messages(account: str, username: str, max_messages: int = 5000, start_ts: int | None = None) -> list[dict]:
+def fetch_messages(account: str, username: str, max_messages: int = MAX_IMPORT_MESSAGES, start_ts: int | None = None, end_ts: int | None = None, render_types: list[str] | None = None) -> list[dict]:
     """Fetch messages, newest-first when a lower date bound exists.
 
     The original backend has no start/end query parameters; fetching newest
@@ -401,21 +407,34 @@ def fetch_messages(account: str, username: str, max_messages: int = 5000, start_
     offset = 0
     page_size = 500
     order = "desc" if start_ts else "asc"
+    selected = set(render_types or [])
     crossed_start = False
-    while len(messages) < max_messages:
+    while True:
         data = _messages_page(account, username, page_size, offset, order)
         batch = data.get("messages") or []
-        messages.extend(batch)
+        for item in batch:
+            timestamp = int(item.get("createTime") or 0)
+            if start_ts and timestamp < start_ts:
+                continue
+            if end_ts and timestamp > end_ts:
+                continue
+            if selected and str(item.get("renderType") or "text") not in selected:
+                continue
+            messages.append(item)
+            if len(messages) > max_messages:
+                raise MessageLimitExceeded(f"本次范围内消息超过 {max_messages:,} 条，请缩小日期范围分批导入；没有截断或保存部分消息。")
         if start_ts and batch:
             oldest = min(int(item.get("createTime") or 0) for item in batch)
             if oldest < start_ts:
                 crossed_start = True
         if not batch or not data.get("hasMore") or len(batch) < page_size or crossed_start:
             break
+        if order == "asc" and end_ts and min(int(item.get("createTime") or 0) for item in batch) > end_ts:
+            break
         offset += len(batch)
     if order == "desc":
         messages = list(reversed(messages))
-    return messages[:max_messages]
+    return messages
 
 
 _RENDER_LABELS = {
@@ -599,7 +618,7 @@ def import_conversation(
     start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp()) if start_date else None
     end_ts = int(datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()) if end_date else None
     progress(15, "正在读取聊天消息…")
-    raw = fetch_messages(account, username, start_ts=start_ts)
+    raw = fetch_messages(account, username, start_ts=start_ts, end_ts=end_ts, render_types=render_types)
     progress(40, "正在按日期和记录类型筛选…")
     messages, attachments = normalize_messages(
         raw,
@@ -624,19 +643,27 @@ def import_conversation(
             _, new_messages = main_module._merge_chat_messages(json.loads(existing["messages_json"] or "[]"), messages)
         else:
             new_messages = messages
+        if new_messages:
+            main_module._check_chat_library_capacity(conn, len(new_messages))
     new_message_ids = {str(message.get("id") or "") for message in new_messages}
     new_attachments = [item for item in attachments if str(item.get("messageId") or "") in new_message_ids]
     copy_local_media(new_attachments, main_module.UPLOAD_DIR)
-    stored = store_chat_record(
-        messages,
-        participants,
-        file_name,
-        customer,
-        project or "—",
-        attachments=new_attachments,
-        conversation_key=conversation_key,
-        legacy_session_name=safe_name,
-    )
+    try:
+        stored = store_chat_record(
+            messages,
+            participants,
+            file_name,
+            customer,
+            project or "—",
+            attachments=new_attachments,
+            conversation_key=conversation_key,
+            legacy_session_name=safe_name,
+        )
+    except main_module.ChatCapacityError:
+        for attachment in new_attachments:
+            if attachment.get("storedName"):
+                (main_module.UPLOAD_DIR / attachment["storedName"]).unlink(missing_ok=True)
+        raise
     if stored is None:
         raise ValueError("没有足够消息，无法创建聊天记录")
     with main_module.db() as conn:

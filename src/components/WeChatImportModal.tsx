@@ -48,6 +48,8 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   const [endDate, setEndDate] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>(['text', 'image', 'voice', 'video', 'file', 'link']);
   const [previewTotal, setPreviewTotal] = useState<number | null>(null);
+  const [previewLimit, setPreviewLimit] = useState(5000);
+  const [previewOverLimit, setPreviewOverLimit] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [prepared, setPrepared] = useState(false);
@@ -170,11 +172,15 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   useEffect(() => {
     if (!open || !status?.available || !account || !selectedUsername) return;
     let mounted = true;
+    setPreviewing(true);
+    setPreviewTotal(null);
+    setPreviewOverLimit(false);
     const timer = window.setTimeout(() => {
-      setPreviewing(true);
       previewWechatMessages(account, selectedUsername, startDate, endDate, selectedTypes).then((data) => {
         if (mounted) {
           setPreviewTotal(data?.total ?? null);
+          setPreviewLimit(data?.limit ?? 5000);
+          setPreviewOverLimit(data?.overLimit ?? false);
           setPreviewing(false);
         }
       });
@@ -220,6 +226,10 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   }
 
   async function handleImport() {
+    if (previewOverLimit) {
+      onToast(`本次超过 ${previewLimit.toLocaleString()} 条，请缩小日期范围分批导入`);
+      return;
+    }
     if (!prepared) {
       onToast('请先点击“更新微信库”，完成数据库解密后再提取');
       return;
@@ -253,7 +263,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   }
 
   return (
-    <Modal open={open} title="从微信聊天库提取" subtitle="选择账号、会话、日期和记录类型；提取后自动进入聊天解析与客户 360" onClose={onClose} className="wechat-import-modal">
+    <Modal open={open} title="从微信聊天库提取" subtitle="选择账号、会话、日期和记录类型；原文保存到本地，AI 分析按设置开关执行" onClose={onClose} className="wechat-import-modal">
       <div className="wechat-import-body">
         <div className="wechat-session-pane">
           <div className="wechat-pane-head">
@@ -371,7 +381,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
           </div>
           <div className="wechat-preview-box">
             <span>预计消息数</span>
-            <strong>{previewing ? '统计中…' : previewTotal == null ? '选择会话后统计' : `${previewTotal} 条`}</strong>
+            <strong>{previewing ? '统计中…' : previewOverLimit ? `超过 ${previewLimit.toLocaleString()} 条，请缩小日期范围` : previewTotal == null ? selectedSession ? '暂无法统计' : '选择会话后统计' : `${previewTotal} 条`}</strong>
           </div>
           {importJob && importJob.status !== 'idle' && (
             <div className="wechat-job-box">
@@ -379,12 +389,12 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
               <div className="wechat-progress-track"><span style={{ width: `${importJob.progress || 0}%` }} /></div>
             </div>
           )}
-          <div className="small-note">同一会话合并为一条累计记录，重复消息自动跳过；AI 分析按设置开关执行。</div>
+          <div className="small-note">单次最多 {previewLimit.toLocaleString()} 条，请按日期分批；同一会话合并为累计记录，重复消息自动跳过。本机累计最多 100,000 条；AI 分析按设置开关执行。</div>
         </div>
       </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={!prepared || !selectedSession || !selectedTypes.length || importing || !status?.available} onClick={handleImport}>
+        <button className="btn primary" disabled={!prepared || !selectedSession || !selectedTypes.length || importing || previewing || previewOverLimit || !status?.available} onClick={handleImport}>
           {importing ? `提取中 ${importJob?.progress || 0}%` : '开始提取'}
         </button>
       </div>
