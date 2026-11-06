@@ -19,7 +19,8 @@
 - **纠正调查中的假设**：updater 默认已启用差分/Web，重复写 false 不提速，已撤销这些空改动；blockmapFiles 替换整个 URL pathname 中的版本，包括 tag 目录，旧 blockmap 地址正确，不需要往新 Release 复制旧 blockmap。GitHubProvider 明确禁用 multipart 多 Range，不能声称此版启用了多 Range 并发。
 - 构建顺序：先 `--win nsis-web --x64 --publish never`（输出在 `release/nsis-web/`），再 `--win nsis --x64 --prepackaged release/win-unpacked --publish never`；后者最后生成根目录 `latest.yml`，必须指向离线 exe 且不能含 Web packages，保留旧客户端安装器缓存的差分路径。**不能只发布 Web 或拿 Web 的 latest.yml 覆盖根文件**，否则首次转换会变为整包下载并失去离线入口。
 - CI 先测试/构建双安装器、`scripts/verify-release.cjs` 校验版本/通道/载荷 SHA512，再 `scripts/verify-packaged-sidecar.py` 在随机端口、临时数据库和虚构文件上验证冻结运行时，最后将 5 项资产全部上传草稿后发布 Latest。未齐全不能提前公开。
-- 当前本机验证：114 项 Python 回归（23.903秒）、TypeScript/Vite 构建、冻结 Sidecar 0.3.3/API21、FFmpeg、DOC/DOCX/XLS/XLSX/PPT/PPTX/EML/图片 OCR/扫描 PDF 共九类解析、完整安装器 7z 完整性、安装元数据和 SHA512 均通过。无真实模型调用、无真实数据库修改、未停止用户正在运行的程序、未连接远程服务器。
+- GitHub 发布工作流 `42149222308` 成功；Windows CI 中 Python 回归、前端/Sidecar/双安装器构建、实际冻结运行时九类解析、发布元数据校验、上传均通过。v0.3.3 已于 2026-11-06 正式 Latest，Release: `https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.3`。公开资产：完整离线安装器 365,590,237 bytes、blockmap 381,694 bytes、NSIS Web 引导器 692,343 bytes、在线完整载荷 365,405,116 bytes、`latest.yml` 347 bytes。已下载公开 `latest.yml` 核对其 SHA512/size 指向离线安装器，而不是在线包。CI 比本机的文件数多于上述四个资产：发布页资产已直接核对五项。
+- 本机验证另有 114 项 Python 回归（23.903秒）、TypeScript/Vite 构建、冻结 Sidecar 0.3.3/API21、FFmpeg、DOC/DOCX/XLS/XLSX/PPT/PPTX/EML/图片 OCR/扫描 PDF 共九类解析、完整安装器 7z 完整性，全部通过。无真实模型调用、无真实数据库修改、未停止用户正在运行的程序、未连接远程服务器。
 - 本机 NSIS 生成临时卸载器初次退出码2：workspace 生成的 EXE 继承 Low 完整性，不能写系统 Temp。仅为本次命令设置 `TEMP/TMP=build/v033-nsis-temp` 并把该任务专用目录设为 Low 后构建通过；不修改系统 Temp 或全局执行策略。最初验证脚本读取 package.json 需显式 UTF-8（Windows 默认 GBK）；已修正。afterPack 的 Medium 修正继续保留。
 - 设置页版本不再硬编码 0.2.9，而从 package.json 读取。README、主 PRD、发布说明与脚本已同步；最终 CI、Release 地址和实际资产大小待发布后补写本节。
 
