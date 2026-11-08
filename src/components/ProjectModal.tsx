@@ -5,6 +5,8 @@ import Modal from './Modal';
 type ProjectModalProps = {
   open: boolean;
   customerName: string;
+  customerOptions?: Array<{ name: string; company: string }>;
+  onCustomerChange?: (customer: string) => void;
   project?: CustomerProject | null;
   onClose: () => void;
   onSave: (data: Partial<CustomerProject>) => Promise<boolean>;
@@ -14,7 +16,7 @@ type ProjectModalProps = {
 
 const stages = ['需求', '报价', '方案', '签约', '交付'];
 
-export default function ProjectModal({ open, customerName, project, onClose, onSave, onDelete, onClarification }: ProjectModalProps) {
+export default function ProjectModal({ open, customerName, customerOptions, onCustomerChange, project, onClose, onSave, onDelete, onClarification }: ProjectModalProps) {
   const [form, setForm] = useState({ name: '', stage: '需求', budget: '', targetLaunchDate: '', owner: '', description: '' });
   const [saving, setSaving] = useState(false);
 
@@ -35,7 +37,7 @@ export default function ProjectModal({ open, customerName, project, onClose, onS
   }
 
   async function save() {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || !customerName) return;
     setSaving(true);
     const ok = await onSave({
       name: form.name.trim(),
@@ -57,9 +59,13 @@ export default function ProjectModal({ open, customerName, project, onClose, onS
   }
 
   return (
-    <Modal open={open} title={project ? '编辑项目' : '新建项目'} subtitle={`客户：${customerName} · 项目用于聚合预算、阶段、时间和关联沟通`} onClose={onClose} className="project-modal">
+    <Modal open={open} title={project ? '编辑项目' : '新建项目'} subtitle={`客户：${customerName || '请选择客户'} · 项目用于聚合预算、阶段、时间和关联沟通`} onClose={onClose} className="project-modal">
       <div className="customer-form-body">
         <div className="customer-form-grid">
+          {onCustomerChange && <label>所属客户<select value={customerName} onChange={(event) => onCustomerChange(event.target.value)} disabled={saving} required>
+            <option value="">请选择客户</option>
+            {customerOptions?.map((customer) => <option key={customer.name} value={customer.name}>{customer.name}{customer.company ? ` · ${customer.company}` : ''}</option>)}
+          </select></label>}
           <label>项目名称<input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="例如：会员小程序商城" /></label>
           <label>当前阶段<select value={form.stage} onChange={(e) => set('stage', e.target.value)}>{stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
           <label>预算<input value={form.budget} onChange={(e) => set('budget', e.target.value)} placeholder="例如：8–10 万" /></label>
@@ -72,7 +78,7 @@ export default function ProjectModal({ open, customerName, project, onClose, onS
         {project && onDelete && <button className="btn danger-btn" style={{ marginRight: 'auto' }} onClick={remove}>删除项目</button>}
         {project && onClarification && <button className="btn" onClick={onClarification} disabled={saving}>需求澄清</button>}
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={save} disabled={saving || !form.name.trim()}>{saving ? '保存中…' : '保存项目'}</button>
+        <button className="btn primary" onClick={save} disabled={saving || !form.name.trim() || !customerName}>{saving ? '保存中…' : '保存项目'}</button>
       </div>
     </Modal>
   );

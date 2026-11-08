@@ -49,12 +49,14 @@ class SalesTests(unittest.TestCase):
     def setUp(self):
         main.init_db()
         with main.db() as conn:
-            for table in ("clarification_answers", "clarification_evidence", "clarification_questions", "clarification_sources", "clarification_records", "todos", "requirements", "projects", "archived_projects", "customers", "imports", "chats", "tasks", "customer_match_audits"):
+            for table in ("clarification_answers", "clarification_evidence", "clarification_questions", "clarification_sources", "clarification_records", "todos", "requirements", "projects", "archived_projects", "customers", "imports", "chats", "tasks", "customer_match_audits", "mail_messages"):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("DELETE FROM transcripts WHERE id!='tr-001'")
             conn.execute("INSERT OR IGNORE INTO transcripts(id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES ('tr-001','测试通话','test.m4a','1 MB',60,'2026-10-20','测试客户','测试公司','测试项目','audio','[]','{}')")
             conn.execute("UPDATE transcripts SET customer='测试客户',project='测试项目',imported_at='2026-10-20 10:00',summary_json=?",
                          (json.dumps({"needs": "统一检索需求", "oneLine": "销售测试", "nextActions": "发送报价", "objections": "预算需要审批"}, ensure_ascii=False),))
+            conn.execute("DELETE FROM settings WHERE key LIKE 'mail.%'")
+        main._secure_mail_password_path().unlink(missing_ok=True)
         main.update_customer("测试客户", {"owner": "负责人甲", "company": "统一检索公司"})
         self.project = main.create_project("测试客户", {"name": "测试项目", "owner": "负责人甲"})
         self.deadline = (date.today() - timedelta(days=1)).isoformat()
@@ -1769,6 +1771,370 @@ class SalesTests(unittest.TestCase):
         self.assertGreater(len(body), 1000)
         document = Document(io.BytesIO(body))
         self.assertIn('请确认一期成功指标。', '\n'.join(paragraph.text for paragraph in document.paragraphs))
+
+    def test_mail_configuration_and_manual_button_never_connect_implicitly(self):
+        with patch("main._write_secure_mail_password") as write_secret, patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection") as connect:
+            status, config = self.request("/api/mail/config", "POST", {"email": "sales@qq.com", "password": "synthetic-test-secret"})
+            self.assertEqual((status, config["configured"], config["host"], config["port"]), (200, True, "imap.qq.com", 993))
+            self.assertNotIn("password", config)
+            write_secret.assert_called_once_with("sales@qq.com", "synthetic-test-secret")
+            self.assertEqual(self.request("/api/mail/config")[0], 200)
+            self.assertEqual(self.request("/api/mail/messages")[1]["messages"], [])
+            with patch("main.mail_sync.test_connection", return_value={"idleSupported": False}) as test_connection:
+                status, tested = self.request("/api/mail/test", "POST", {})
+            self.assertEqual((status, tested["status"], tested["idleSupported"]), (200, "ok", False))
+            test_connection.assert_called_once_with("imap.qq.com", 993, "sales@qq.com", "synthetic-test-secret")
+            with patch("main.start_task") as start:
+                status, started = self.request("/api/mail/sync", "POST", {})
+                repeated_status, repeated = self.request("/api/mail/sync", "POST", {})
+            self.assertEqual((status, started["status"]), (202, "started"))
+            self.assertEqual((repeated_status, repeated["taskId"]), (202, started["taskId"]))
+            start.assert_called_once()
+            self.assertEqual(start.call_args.args[1], main.process_mail_discovery)
+            self.assertEqual(self.request("/api/mail/config", "POST", {"email": "other@qq.com", "password": "another-synthetic-secret"})[0], 400)
+            write_secret.assert_called_once()
+            connect.assert_not_called()
+            self.assertEqual(self.request("/api/health")[1]["apiRevision"], 23)
+
+    @unittest.skipUnless(os.name == "nt", "Windows DPAPI credential storage")
+    def test_mail_secret_is_encrypted_account_bound_and_excluded_from_backup(self):
+        secret = "synthetic-mail-test-secret"
+        with patch("main.mail_sync.open_connection") as connect:
+            config = main.save_mail_config({"email": "sales@qq.com", "password": secret})
+            self.assertTrue(config["configured"])
+            self.assertEqual(main._read_secure_mail_password(), secret)
+            self.assertNotIn(secret.encode(), main._secure_mail_password_path().read_bytes())
+            self.assertNotIn(secret, json.dumps(self.request("/api/mail/config")[1]))
+            with main.db() as conn:
+                self.assertFalse(any(secret in str(row["value"]) for row in conn.execute("SELECT value FROM settings")))
+            archive, _ = main.create_backup_archive()
+            with zipfile.ZipFile(io.BytesIO(archive)) as backup:
+                self.assertFalse(any(".dpapi" in name or "mail-imap-password" in name for name in backup.namelist()))
+            with main.db() as conn:
+                conn.execute("UPDATE settings SET value='other@qq.com' WHERE key='mail.email'")
+            self.assertFalse(main._read_secure_mail_password())
+            self.assertFalse(main.get_mail_config()["configured"])
+            connect.assert_not_called()
+
+    def test_startup_does_not_resume_mailbox_network_access(self):
+        running = main.create_task("mail_sync")
+        queued = main.create_task("mail_import")
+        discovery = main.create_task("mail_discover")
+        main.set_task_running(running)
+        message = EmailMessage()
+        message.set_content("邮件已下载到本机，重启只恢复解析")
+        with patch("main.start_task"):
+            _, _, child_id = main._store_mail_message(message.as_bytes(), 1)
+        with patch.object(sys, "argv", ["main.py", "--port", "0"]), patch("main.SidecarHTTPServer") as server, patch("main.launch_task") as launch, patch("main.mail_sync.open_connection") as connect:
+            server.return_value.serve_forever.side_effect = KeyboardInterrupt
+            main.main()
+        self.assertEqual([call.args[0]["id"] for call in launch.call_args_list], [child_id])
+        self.assertEqual(main.get_task(running)["status"], "failed")
+        self.assertEqual(main.get_task(queued)["status"], "failed")
+        self.assertEqual(main.get_task(discovery)["status"], "failed")
+        connect.assert_not_called()
+
+    def test_mail_parse_failure_can_be_retried_without_losing_manual_assignment(self):
+        message = EmailMessage()
+        message["From"] = "unknown@example.test"
+        message["Subject"] = "可重试的邮件"
+        message.set_content("客户希望确认一期交付范围。")
+        raw = message.as_bytes()
+        config = {"email": "sales@qq.com"}
+        with main.db() as conn:
+            conn.execute("INSERT INTO mail_messages(uid_validity,uid,subject,discovered_at) VALUES('903',1,'可重试的邮件',?)", (main.task_now(),))
+        payload = {"email": "sales@qq.com", "uidValidity": "903", "messages": [{"uid": 1}]}
+        with patch("main.get_mail_config", return_value=config), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection"), patch("main.mail_sync.select_inbox", return_value="903"), patch("main.mail_sync.search_uids", return_value=[1]), patch("main.mail_sync.fetch_message", return_value=raw), patch("main.start_task", side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)), patch("main.summarize_transcript") as summarize:
+            first_task = main.create_task("mail_import", payload=payload)
+            with patch("main.document_ingest.extract", side_effect=ValueError("模拟本地解析失败")):
+                main._run_task(first_task, main.process_mail_import)
+            self.assertEqual(main.get_task(first_task)["status"], "failed")
+            self.assertEqual(main.list_mail_messages()["total"], 1)
+            self.assertIn("失败", main.list_mail_messages()["messages"][0]["error"])
+            with main.db() as conn:
+                record = conn.execute("SELECT * FROM imports").fetchone()
+                self.assertEqual(record["customer"], "待归档")
+                conn.execute("UPDATE imports SET customer='测试客户',project='测试项目' WHERE id=?", (record["id"],))
+            second_task = main.create_task("mail_import", payload=payload)
+            main._run_task(second_task, main.process_mail_import)
+            self.assertEqual(main.get_task(second_task)["status"], "succeeded")
+            self.assertEqual(main.list_mail_messages()["total"], 0)
+            with main.db() as conn:
+                records = conn.execute("SELECT * FROM imports").fetchall()
+                self.assertEqual(len(records), 1)
+                self.assertEqual((records[0]["customer"], records[0]["project"], records[0]["status"]), ("测试客户", "测试项目", "done"))
+            summarize.assert_not_called()
+
+    def test_mail_uid_validity_change_restarts_date_search_without_auto_sync(self):
+        main._save_mail_cursor("old-mailbox", 1000)
+        with patch("main.get_mail_config", return_value={"email": "sales@qq.com"}), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection"), patch("main.mail_sync.select_inbox", return_value="904"), patch("main.mail_sync.search_uids", return_value=[]) as search, patch("main.mail_sync.fetch_message") as fetch:
+            task_id = main.create_task("mail_discover", payload={"email": "sales@qq.com"})
+            main._run_task(task_id, main.process_mail_discovery)
+        self.assertEqual(search.call_args.args[1:], (0, date.today() - timedelta(days=30)))
+        self.assertEqual(main._mail_cursor(), ("904", 0))
+        self.assertEqual(main.get_task(task_id)["status"], "succeeded")
+        fetch.assert_not_called()
+
+    def test_mail_oversize_stops_before_downloading_body(self):
+        with patch("main.mail_sync.open_connection") as connect:
+            client = connect.return_value
+            client.uid.return_value = ("OK", [b"1 (RFC822.SIZE 26214401)"])
+            with self.assertRaisesRegex(main.mail_sync.MessageTooLarge, "25 MB"):
+                main.mail_sync.fetch_message(client, 1)
+            client.uid.assert_called_once_with("FETCH", "1", "(RFC822.SIZE)")
+
+    def test_mail_discovery_never_imports_and_selected_imports_deduplicate_without_ai(self):
+        class FakeImap:
+            capabilities = (b"IMAP4REV1",)
+
+            def __init__(self, messages, uids):
+                self.messages = messages
+                self.uids = uids
+                self.search_args = None
+                self.body_uids = []
+
+            def select(self, mailbox, readonly=False):
+                self.assert_inbox = (mailbox, readonly)
+                return "OK", [b"2"]
+
+            def response(self, name):
+                return "UIDVALIDITY", [b"901"]
+
+            def uid(self, command, *args):
+                if command == "SEARCH":
+                    self.search_args = args
+                    return "OK", [b" ".join(str(uid).encode() for uid in self.uids)]
+                uid = int(args[0])
+                raw = self.messages[uid]
+                if args[1] == "(RFC822.SIZE)":
+                    return "OK", [(f"{uid} (RFC822.SIZE {len(raw)})".encode(), b"")]
+                if args[1] == "(BODY.PEEK[HEADER.FIELDS (DATE FROM SUBJECT)])":
+                    return "OK", [(b"HEADER", raw.split(b"\n\n", 1)[0] + b"\n\n")]
+                if args[1] != "(BODY.PEEK[])":
+                    raise AssertionError("邮件正文必须以 PEEK 只读拉取")
+                self.body_uids.append(uid)
+                return "OK", [(f"{uid} (RFC822 {{{len(raw)}}}".encode(), raw)]
+
+            def logout(self):
+                return "BYE", [b"logout"]
+
+        def make_email(subject, body, attachment=None):
+            message = EmailMessage()
+            message["From"] = "客户 <client@example.test>"
+            message["To"] = "sales@qq.com"
+            message["Subject"] = subject
+            message["Date"] = "Fri, 06 Nov 2026 12:00:00 +0800"
+            message.set_content(body)
+            if attachment:
+                message.add_attachment(attachment, maintype="text", subtype="plain", filename="需求说明.txt")
+            return message.as_bytes()
+
+        first = make_email("报价沟通", "客户希望六月上线。", "需要先确认预算。".encode("utf-8"))
+        second = make_email("会议安排", "请在周五前提供方案。")
+        third = make_email("项目补充", "还需要支持批量导出。")
+        first_server = FakeImap({1: first, 2: second}, [1, 2])
+        next_server = FakeImap({3: third, 4: first}, [1, 2, 3, 4])
+        with main.db() as conn:
+            conn.execute("UPDATE customers SET email='client@example.test' WHERE name='测试客户'")
+        with patch("main._write_secure_mail_password"), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"):
+            main.save_mail_config({"email": "sales@qq.com", "password": "synthetic-test-secret"})
+
+        def run_child(task_id, runner, *args):
+            main._run_task(task_id, runner, *args)
+
+        with patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.start_task", side_effect=run_child), patch("main.mail_sync.open_connection", side_effect=[first_server, first_server, next_server, next_server]) as open_imap, patch("main.summarize_transcript") as summarize:
+            for server, chosen_uids in ((first_server, [1]), (next_server, [3, 4])):
+                task_id = main.create_task("mail_discover", payload={"email": "sales@qq.com"})
+                main._run_task(task_id, main.process_mail_discovery)
+                self.assertEqual(main.get_task(task_id)["status"], "succeeded")
+                self.assertEqual(server.body_uids, [])
+                if server is first_server:
+                    self.assertEqual(self.request("/api/imports")[1], [])
+                    self.assertEqual(main.list_mail_messages()["total"], 2)
+                selected = {"email": "sales@qq.com", "uidValidity": "901", "messages": [{"uid": uid} for uid in chosen_uids]}
+                task_id = main.create_task("mail_import", payload=selected)
+                main._run_task(task_id, main.process_mail_import)
+                self.assertEqual(main.get_task(task_id)["status"], "succeeded")
+
+        self.assertEqual(first_server.search_args[1], "SINCE")
+        self.assertEqual(next_server.search_args, (None, "UID", "3:*"))
+        self.assertEqual(open_imap.call_count, 4)
+        self.assertEqual(first_server.body_uids, [1])
+        self.assertEqual(next_server.body_uids, [3, 4])
+        self.assertEqual([item["uid"] for item in main.list_mail_messages()["messages"]], [2])
+        summarize.assert_not_called()
+        with main.db() as conn:
+            records = conn.execute("SELECT * FROM imports WHERE type='邮件' ORDER BY imported_at, file_name").fetchall()
+            self.assertEqual(len(records), 2)
+            self.assertEqual({row["customer"] for row in records}, {"测试客户"})
+            cursor = {row["key"]: row["value"] for row in conn.execute("SELECT key,value FROM settings WHERE key LIKE 'mail.%'")}
+        self.assertEqual((cursor["mail.uid_validity"], cursor["mail.discovered_uid"], cursor["mail.last_import_count"]), ("901", "4", "1"))
+        attached_record = next(row for row in records if "报价沟通" in row["file_name"])
+        transcript = self.request("/api/transcripts/tr-" + attached_record["id"])[1]
+        self.assertIn("客户希望六月上线", " ".join(segment["text"] for segment in transcript["segments"]))
+        self.assertEqual(len(transcript["attachments"]), 2)
+
+    def test_mail_fetch_failure_does_not_advance_uid_past_unread_message(self):
+        class FakeImap:
+            capabilities = ()
+
+            def __init__(self, messages):
+                self.messages = messages
+
+            def select(self, mailbox, readonly=False):
+                return "OK", [b"2"]
+
+            def response(self, name):
+                return "UIDVALIDITY", [b"902"]
+
+            def uid(self, command, *args):
+                if command == "SEARCH":
+                    return "OK", [b"11 12"]
+                uid = int(args[0])
+                if args[1] == "(RFC822.SIZE)":
+                    return "OK", [(f"{uid} (RFC822.SIZE {len(self.messages[uid])})".encode(), b"")]
+                if uid == 12:
+                    return "NO", []
+                return "OK", [(f"{uid} (RFC822 {{{len(self.messages[uid])}}}".encode(), self.messages[uid])]
+
+            def logout(self):
+                return "BYE", [b"logout"]
+
+        message = EmailMessage()
+        message["From"] = "client@example.test"
+        message["Subject"] = "本地测试邮件"
+        message.set_content("虚构邮件正文")
+        raw = message.as_bytes()
+        with patch("main._write_secure_mail_password"), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"):
+            main.save_mail_config({"email": "sales@qq.com", "password": "synthetic-test-secret"})
+
+        def run_child(task_id, runner, *args):
+            main._run_task(task_id, runner, *args)
+
+        with patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.start_task", side_effect=run_child), patch("main.mail_sync.open_connection", return_value=FakeImap({11: raw, 12: raw})):
+            task_id = main.create_task("mail_discover", payload={"email": "sales@qq.com"})
+            main._run_task(task_id, main.process_mail_discovery)
+
+        self.assertEqual(main.get_task(task_id)["status"], "failed")
+        self.assertEqual(main._mail_cursor(), ("902", 11))
+        self.assertEqual(self.request("/api/imports")[1], [])
+
+    def add_mail_candidate(self, uid, validity="905", size=1024):
+        with main.db() as conn:
+            conn.execute("INSERT INTO mail_messages(uid_validity,uid,subject,sender,sent_at,size,discovered_at) VALUES(?,?,?,?,?,?,?)",
+                         (validity, uid, f"候选邮件 {uid}", "client@example.test", "2026-11-06 12:00", size, main.task_now()))
+
+    def test_mail_list_is_paginated_searchable_and_does_not_import_or_connect(self):
+        for uid in range(1, 54):
+            self.add_mail_candidate(uid)
+        with patch("main.mail_sync.open_connection") as connect:
+            status, first = self.request("/api/mail/messages?limit=50")
+            second = self.request("/api/mail/messages?limit=50&offset=50")[1]
+            searched = self.request("/api/mail/messages?query=" + quote("候选邮件 53"))[1]
+        self.assertEqual((status, first["total"], len(first["messages"]), len(second["messages"])), (200, 53, 50, 3))
+        self.assertEqual(searched["messages"][0]["uid"], 53)
+        self.assertEqual(self.request("/api/imports")[1], [])
+        self.assertEqual(main._mail_cursor(), ("", 0))
+        connect.assert_not_called()
+
+    def test_mail_import_requires_explicit_valid_selection_and_reuses_only_same_task(self):
+        self.add_mail_candidate(1)
+        self.add_mail_candidate(2)
+        self.add_mail_candidate(3, size=main.mail_sync.MAX_MESSAGE_BYTES + 1)
+        config = {"email": "sales@qq.com", "configured": True}
+        payload = {"email": "sales@qq.com", "uidValidity": "905", "messages": [{"uid": 1}]}
+        with patch("main.get_mail_config", return_value=config), patch("main.start_task") as start, patch("main.mail_sync.open_connection") as connect:
+            for value in ({}, {**payload, "messages": []}, {**payload, "messages": [{"uid": 999}]},
+                          {**payload, "messages": [{"uid": True}]}, {**payload, "messages": [{"uid": 3}]},
+                          {**payload, "messages": [{"uid": 1}] * 101}, {**payload, "email": "other@qq.com"},
+                          {**payload, "uidValidity": "old"}):
+                self.assertEqual(self.request("/api/mail/import", "POST", value)[0], 400)
+            status, task = self.request("/api/mail/import", "POST", payload)
+            main.set_task_running(task["taskId"])
+            main.set_task_progress(task["taskId"], 10, stage="正在导入")
+            repeated_status, repeated = self.request("/api/mail/import", "POST", payload)
+            self.assertEqual((status, repeated_status, repeated["taskId"]), (202, 202, task["taskId"]))
+            self.assertEqual(self.request("/api/mail/import", "POST", {**payload, "messages": [{"uid": 2}]})[0], 400)
+            self.assertEqual(self.request("/api/mail/discover", "POST", {})[0], 400)
+            start.assert_called_once()
+            self.assertEqual(start.call_args.args[1], main.process_mail_import)
+            connect.assert_not_called()
+
+    def test_mail_partial_import_retry_skips_success_and_never_fetches_unselected_mail(self):
+        for uid in (1, 2, 3):
+            self.add_mail_candidate(uid)
+        main._save_mail_cursor("905", 3)
+        raw_by_uid = {}
+        for uid in (1, 2):
+            message = EmailMessage()
+            message["Subject"] = f"明确选择的邮件 {uid}"
+            message.set_content(f"虚构邮件正文 {uid}")
+            raw_by_uid[uid] = message.as_bytes()
+        calls = []
+        def fetch(client, uid):
+            calls.append(uid)
+            if uid == 2 and calls.count(2) == 1:
+                raise main.mail_sync.MailSyncError("模拟网络断开")
+            return raw_by_uid[uid]
+        payload = {"email": "sales@qq.com", "uidValidity": "905", "messages": [{"uid": 1}, {"uid": 2}]}
+        with patch("main.get_mail_config", return_value={"email": "sales@qq.com", "configured": True}), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection"), patch("main.mail_sync.select_inbox", return_value="905"), patch("main.mail_sync.fetch_message", side_effect=fetch), patch("main.start_task", side_effect=lambda task_id, runner, *args: main._run_task(task_id, runner, *args)), patch("main.summarize_transcript") as summarize:
+            task_id = main.create_task("mail_import", payload=payload)
+            main._run_task(task_id, main.process_mail_import)
+            self.assertEqual(main.get_task(task_id)["status"], "failed")
+            self.assertEqual([item["uid"] for item in main.list_mail_messages()["messages"]], [3, 2])
+            retried = main.start_mail_operation("mail_import", payload)
+            self.assertEqual(main.get_task(retried["taskId"])["status"], "succeeded")
+            summarize.assert_not_called()
+        self.assertEqual(calls, [1, 2, 2])
+        self.assertEqual(main._mail_cursor(), ("905", 3))
+        self.assertEqual([item["uid"] for item in main.list_mail_messages()["messages"]], [3])
+        self.assertEqual(len(self.request("/api/imports")[1]), 2)
+
+    def test_mail_import_rejects_stale_mailbox_before_downloading(self):
+        self.add_mail_candidate(1)
+        payload = {"email": "sales@qq.com", "uidValidity": "905", "messages": [{"uid": 1}]}
+        with patch("main.get_mail_config", return_value={"email": "sales@qq.com"}), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection"), patch("main.mail_sync.select_inbox", return_value="906"), patch("main.mail_sync.fetch_message") as fetch:
+            task_id = main.create_task("mail_import", payload=payload)
+            main._run_task(task_id, main.process_mail_import)
+        self.assertEqual(main.get_task(task_id)["status"], "failed")
+        self.assertIn("过期", main.get_task(task_id)["error"])
+        self.assertEqual(main.list_mail_messages()["total"], 1)
+        fetch.assert_not_called()
+
+    def test_mail_discovery_batches_headers_and_continues_without_losing_unselected(self):
+        header = {"subject": "虚构候选邮件", "sender": "client@example.test", "sentAt": "2026-11-06 12:00", "size": 1024}
+        with patch("main.get_mail_config", return_value={"email": "sales@qq.com"}), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection"), patch("main.mail_sync.select_inbox", return_value="905"), patch("main.mail_sync.search_uids", side_effect=[list(range(1, 202)), [201]]) as search, patch("main.mail_sync.fetch_headers", return_value=header) as headers, patch("main.mail_sync.fetch_message") as body:
+            for expected in (200, 201):
+                task_id = main.create_task("mail_discover", payload={"email": "sales@qq.com"})
+                main._run_task(task_id, main.process_mail_discovery)
+                self.assertEqual(main.get_task(task_id)["status"], "succeeded")
+                self.assertEqual(main.list_mail_messages()["total"], expected)
+        self.assertEqual(headers.call_count, 201)
+        self.assertEqual(search.call_args_list[1].args[1], 200)
+        self.assertEqual(self.request("/api/imports")[1], [])
+        body.assert_not_called()
+
+    def test_mail_account_change_clears_candidates_but_preserves_materials(self):
+        with patch("main._write_secure_mail_password"), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection") as connect:
+            main.save_mail_config({"email": "first@qq.com", "password": "synthetic-test-secret"})
+            self.add_mail_candidate(1)
+            main._save_mail_cursor("905", 1)
+            self.import_record("kept-material")
+            main.save_mail_config({"email": "second@qq.com", "password": "synthetic-test-secret"})
+            self.assertEqual(main.list_mail_messages()["total"], 0)
+            self.assertEqual(main._mail_cursor(), ("", 0))
+            self.assertEqual(len(self.request("/api/imports")[1]), 1)
+            connect.assert_not_called()
+
+    def test_mail_discovery_retry_rejects_changed_account_before_connecting(self):
+        task_id = main.create_task("mail_discover", payload={"email": "old@qq.com"})
+        with patch("main.get_mail_config", return_value={"email": "new@qq.com"}), patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection") as connect:
+            main._run_task(task_id, main.process_mail_discovery)
+        self.assertEqual(main.get_task(task_id)["status"], "failed")
+        self.assertIn("账号已改变", main.get_task(task_id)["error"])
+        self.assertEqual(main._mail_cursor(), ("", 0))
+        self.assertEqual(main.list_mail_messages()["total"], 0)
+        connect.assert_not_called()
 
 
 if __name__ == '__main__':

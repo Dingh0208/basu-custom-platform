@@ -42,6 +42,15 @@ class WechatEngineStartupTests(unittest.TestCase):
         kwargs["stdout"].write("[PYI-123:ERROR] Could not create temporary directory!\n")
         return Mock(returncode=4294967295, poll=Mock(return_value=4294967295))
 
+    def test_import_does_not_reuse_a_different_active_selection(self):
+        with patch.object(engine, "_import_job", {"status": "idle"}), patch.object(engine.threading, "Thread") as thread:
+            first = engine.start_import(account="synthetic-account", username="client-a", render_types=["text"])
+            repeated = engine.start_import(account="synthetic-account", username="client-a", render_types=["text"])
+            self.assertEqual(first["jobId"], repeated["jobId"])
+            thread.assert_called_once()
+            with self.assertRaisesRegex(ValueError, "另一个微信"):
+                engine.start_import(account="synthetic-account", username="client-b", render_types=["text"])
+
     def test_spawn_uses_writable_private_temp_and_resets_frozen_parent_environment(self):
         with patch.dict(os.environ, {"TEMP": "missing-parent-temp", "_PYI_APPLICATION_HOME_DIR": "old-sidecar-extraction"}), patch.object(engine.subprocess, "Popen") as popen:
             engine._spawn()

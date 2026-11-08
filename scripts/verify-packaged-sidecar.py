@@ -56,7 +56,7 @@ def verify(app_dir):
                             raise TimeoutError("Frozen runtime did not become healthy")
                         time.sleep(0.2)
                 version = json.loads((Path(__file__).resolve().parents[1] / "package.json").read_text(encoding="utf-8"))["version"]
-                assert health["version"] == version and health["apiRevision"] == 21, health
+                assert health["version"] == version and health["apiRevision"] == 23, health
                 api("/api/settings/app", {"aiImportEnabled": False})
 
                 from docx import Document
@@ -111,7 +111,7 @@ def verify(app_dir):
                     transcript = api("/api/transcripts/" + item["transcriptId"])
                     assert expected in "\n".join(segment["text"] for segment in transcript["segments"]), sample.name
                     print("PASS frozen parser:", sample.name, flush=True)
-                print(f"PASS packaged v{version}/API21, FFmpeg, nine parsers, isolated data", flush=True)
+                print(f"PASS packaged v{version}/API23, FFmpeg, nine parsers, isolated data", flush=True)
             except Exception:
                 log.seek(0)
                 print(log.read().decode("utf-8", errors="replace"))

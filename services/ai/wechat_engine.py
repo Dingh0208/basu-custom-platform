@@ -710,12 +710,17 @@ def start_import(
     customer: str = "",
     project: str = "",
 ) -> dict:
+    selection = {"account": account, "username": username, "startDate": start_date, "endDate": end_date,
+                 "types": sorted(render_types or []), "customer": customer, "project": project}
     with _job_lock:
         if _import_job.get("status") == "running":
+            if _import_job.get("selection") != selection:
+                raise ValueError("另一个微信提取任务正在运行，请完成后再提交")
             return dict(_import_job)
         job_id = f"wximport-{uuid.uuid4().hex[:10]}"
         _import_job.update({
             "jobId": job_id,
+            "selection": selection,
             "status": "running",
             "progress": 2,
             "message": "正在连接微信聊天库…",

@@ -362,10 +362,11 @@ export default function App() {
   }
 
   async function handleAddFiles(files: File[], chatScreenshot = false) {
-    if (!files.length) return;
+    if (!files.length) return [];
     if (sidecarOnline) {
       let duplicates = 0;
       let failed = 0;
+      const failedFiles: File[] = [];
       const capacityErrors = new Set<string>();
       for (const file of files) {
         try {
@@ -381,6 +382,7 @@ export default function App() {
           if (type === '图片' && chatScreenshot) {
             if (file.size > 12 * 1024 * 1024) {
               failed += 1;
+              failedFiles.push(file);
               showToast(`${file.name} 超过聊天截图的 12 MB 限制`);
               continue;
             }
@@ -396,11 +398,13 @@ export default function App() {
               continue;
             }
             failed += 1;
+            failedFiles.push(file);
             continue;
           }
           const media = type === '音频' || type === '视频';
           if (file.size > 100 * 1024 * 1024) {
             failed += 1;
+            failedFiles.push(file);
             showToast(`${file.name} 超过 100 MB，请压缩或拆分后重新导入`);
             continue;
           }
@@ -416,10 +420,11 @@ export default function App() {
             contentBase64,
             mimeType: file.type || (media ? (type === '视频' ? 'video/mp4' : 'audio/mpeg') : undefined),
           });
-          if (!result) failed += 1;
+          if (!result) { failed += 1; failedFiles.push(file); }
           else if (result.duplicate) duplicates += 1;
         } catch (error) {
           failed += 1;
+          failedFiles.push(file);
           if (error instanceof ChatCapacityError) capacityErrors.add(error.message);
         }
       }
@@ -427,7 +432,7 @@ export default function App() {
       if (data) setImports(data);
       const suffix = failed ? `，${failed} 个文件处理失败` : '';
       showToast(capacityErrors.size ? [...capacityErrors].join('；') : duplicates > 0 ? `${files.length} 个文件已提交，其中 ${duplicates} 个重复文件已跳过${suffix}` : `已提交 ${files.length - failed} 个文件到本地 Sidecar 处理${suffix}`);
-      return;
+      return failedFiles;
     }
 
     const newRecords: ImportRecord[] = files.map((file, index) => {
@@ -448,6 +453,7 @@ export default function App() {
     });
     setImports((records) => [...newRecords, ...records]);
     showToast(`已导入 ${files.length} 个文件，正在识别客户与转写（本地模拟）`);
+    return [];
   }
 
   async function refreshImports() {
@@ -655,7 +661,7 @@ export default function App() {
             <div className="empty-panel" style={{ margin: 24 }}>正在加载聊天记录…</div>
           )
         ) : view === 'settings' ? (
-          <SettingsPage onToast={showToast} onDataChanged={refreshImports} />
+          <SettingsPage onToast={showToast} onDataChanged={refreshImports} onOpenMailImport={() => navigateTo('import', { mail: '1' })} />
         ) : view === 'projects' ? (
           <ProjectPage key={projectFocus} initialProject={projectFocus} onToast={showToast} onCustomer={openCustomer} onClarification={openClarification} />
         ) : view === 'todos' ? (

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppSettings, BackupSummary, Diagnostics, LlmConfig, LlmModelsResult, ProjectListItem, WeChatStatus } from '../types';
+import type { AppSettings, BackupSummary, Diagnostics, LlmConfig, LlmModelsResult, MailConfig, ProjectListItem, WeChatStatus } from '../types';
 import {
   clearLlmApiKey,
   downloadBackup,
@@ -8,6 +8,7 @@ import {
   fetchBackups,
   fetchDiagnostics,
   fetchLlmConfig,
+  fetchMailConfig,
   getHealth,
   getWechatStatus,
   pullLlmModels,
@@ -15,7 +16,9 @@ import {
   restoreProject,
   saveAppSettings,
   saveLlmConfig,
+  saveMailConfig,
   startWechatEngine,
+  testMailConnection,
   testLlmConfig,
 } from '../api/client';
 import type { Health } from '../api/client';
@@ -25,9 +28,10 @@ import appPackage from '../../package.json';
 type SettingsPageProps = {
   onToast: (message: string) => void;
   onDataChanged: () => Promise<void>;
+  onOpenMailImport: () => void;
 };
 
-type SettingsSectionId = 'llm' | 'import' | 'data' | 'archived' | 'diagnostics' | 'updates' | 'notifications' | 'about';
+type SettingsSectionId = 'llm' | 'import' | 'data' | 'archived' | 'diagnostics' | 'updates' | 'notifications' | 'about' | 'mail';
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: string }> = [
   { id: 'llm', label: '大模型', hint: '配置音频、文本和图像分析使用的模型' },
@@ -38,6 +42,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: str
   { id: 'updates', label: '更新', hint: '控制自动更新检查和检查频率' },
   { id: 'notifications', label: '通知', hint: '设置待办到期提醒和免打扰时间' },
   { id: 'about', label: '隐私与关于', hint: '查看密钥存储、版本和本地文件说明' },
+  { id: 'mail', label: '邮箱', hint: '配置 QQ 邮箱并手动拉取收件箱' },
 ];
 
 const ALIYUN_BAILIAN = 'https://bailian.console.aliyun.com/';
@@ -70,7 +75,7 @@ function healthLabel(health: Health | null, diagnostics: Diagnostics | null) {
   return diagnostics.status === 'ok' ? '运行正常' : '需要检查';
 }
 
-export default function SettingsPage({ onToast, onDataChanged }: SettingsPageProps) {
+export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport }: SettingsPageProps) {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [asrModel, setAsrModel] = useState('qwen3-asr-flash');
@@ -102,6 +107,11 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedError, setArchivedError] = useState(false);
   const [restoringProjectId, setRestoringProjectId] = useState<string | null>(null);
+  const [mailConfig, setMailConfig] = useState<MailConfig | null>(null);
+  const [mailEmail, setMailEmail] = useState('');
+  const [mailPassword, setMailPassword] = useState('');
+  const [mailBusy, setMailBusy] = useState<'save' | 'test' | null>(null);
+  const [mailMessage, setMailMessage] = useState('');
   const backupInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -127,7 +137,7 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([fetchLlmConfig(), fetchAppSettings(), fetchBackups(), getHealth(), fetchDiagnostics(), getWechatStatus()]).then(([llm, app, backupList, health, diag, wechat]) => {
+    Promise.all([fetchLlmConfig(), fetchAppSettings(), fetchBackups(), getHealth(), fetchDiagnostics(), getWechatStatus(), fetchMailConfig()]).then(([llm, app, backupList, health, diag, wechat, mail]) => {
       if (!mounted) return;
       if (llm) {
         setBaseUrl(llm.baseUrl || '');
@@ -142,6 +152,10 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
       setSidecarHealth(health);
       setDiagnostics(diag);
       if (wechat) setWechatStatus(wechat);
+      if (mail) {
+        setMailConfig(mail);
+        setMailEmail(mail.email);
+      }
     });
     return () => { mounted = false; };
   }, []);
@@ -382,6 +396,29 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
     setAppMessage(enabled ? '新导入资料将自动分析' : '新导入资料将只做本地解析');
   }
 
+  async function saveMailbox() {
+    setMailBusy('save');
+    setMailMessage('');
+    const result = await saveMailConfig({ email: mailEmail, ...(mailPassword ? { password: mailPassword } : {}) });
+    setMailBusy(null);
+    if (!result) {
+      setMailMessage('保存失败，请检查邮箱地址和本地服务连接');
+      return;
+    }
+    setMailConfig(result);
+    setMailEmail(result.email);
+    setMailPassword('');
+    setMailMessage('邮箱配置已保存；保存操作不会连接或拉取邮件');
+  }
+
+  async function testMailbox() {
+    setMailBusy('test');
+    setMailMessage('正在测试 QQ 邮箱 IMAP 连接…');
+    const result = await testMailConnection();
+    setMailBusy(null);
+    setMailMessage(!result ? '连接测试失败，请检查本地服务' : result.status === 'ok' ? '连接成功，可到导入中心勾选邮件' : `连接失败：${result.error || '请检查邮箱地址和授权码'}`);
+  }
+
   async function exportBackup() {
     setBackupBusy('export');
     setBackupMessage('正在生成备份…');
@@ -536,6 +573,23 @@ export default function SettingsPage({ onToast, onDataChanged }: SettingsPagePro
           </section>
           <section className="card settings-section" id="settings-about" hidden={activeSection !== 'about'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">08</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub {appPackage.version} · API revision {sidecarHealth?.apiRevision ?? '—'}</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
+          </section>
+          <section className="card settings-section" id="settings-mail" hidden={activeSection !== 'mail'}>
+            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">09</span><div><div className="card-title">QQ 邮箱</div><div className="card-sub">IMAP 收件箱 · 手动拉取</div></div></div></div>
+            <div className="settings-form-stack">
+              <label>邮箱地址<input type="email" value={mailEmail} onChange={(event) => setMailEmail(event.target.value)} placeholder="name@qq.com" autoComplete="email" /></label>
+              <label>IMAP 服务器<input value="imap.qq.com:993 · SSL" readOnly /></label>
+              <label>IMAP 授权码<input type="password" value={mailPassword} onChange={(event) => setMailPassword(event.target.value)} placeholder={mailConfig?.configured ? '已加密保存，留空表示不修改' : '输入 QQ 邮箱授权码'} autoComplete="new-password" /></label>
+              <div className="settings-actions settings-actions-spaced">
+                <button className="btn" onClick={() => void saveMailbox()} disabled={mailBusy !== null || !mailEmail.trim()}>{mailBusy === 'save' ? '保存中…' : '保存配置'}</button>
+                <button className="btn" onClick={() => void testMailbox()} disabled={mailBusy !== null || !mailConfig?.configured || mailEmail.trim().toLowerCase() !== mailConfig.email || !!mailPassword}>{mailBusy === 'test' ? '测试中…' : '测试连接'}</button>
+                <button className="btn primary" onClick={onOpenMailImport} disabled={mailBusy !== null || !mailConfig?.configured || mailEmail.trim().toLowerCase() !== mailConfig.email || !!mailPassword}>选择邮件导入</button>
+              </div>
+              <div className="small-note">仅收件箱；首次读取近 30 天，之后增量更新列表。勾选并提交的邮件才进入资料，邮件只做本地解析，不自动进行 AI 分析。</div>
+              {mailConfig?.lastDiscoverAt && <div className="settings-last-backup">上次更新列表：{formatBackupDate(mailConfig.lastDiscoverAt)}</div>}
+              {mailConfig?.lastImportAt && <div className="settings-last-backup">上次导入：{formatBackupDate(mailConfig.lastImportAt)} · 处理 {mailConfig.lastImportCount} 封</div>}
+              {mailMessage && <div className="llm-result settings-feedback" aria-live="polite">{mailMessage}</div>}
+            </div>
           </section>
         </aside>
       </div>

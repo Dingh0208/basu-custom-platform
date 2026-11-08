@@ -39,6 +39,8 @@ pnpm electron:start
 
 ### 1. 导入中心
 
+- 本地文件、微信数据库筛选的聊天记录、勾选的邮箱邮件可加入待导入清单，一次提交；只有明确勾选并提交的邮件才会进入资料；
+- 邮件列表须手动刷新，只读取头信息，不自动下载正文或同步；支持搜索、分页和跨页选择；
 - 拖拽 / 批量选择文件（音频、视频、PDF、Word、Excel、PPT、图片、压缩包、聊天记录）；
 - 最近导入支持删除：删除文件、转写/聊天内容、关联需求和附件，并重新计算客户项目统计；
 - 粘贴文本：弹窗输入聊天记录，生成一条导入记录；
@@ -52,6 +54,8 @@ pnpm electron:start
 - 文档、原始图片与邮件附件会本机保存、预览或下载，并纳入检索及备份。每个导入文件最大 100 MB；PDF/PPT/多页图片最多 200 页，提取最多 100,000 字。
 - 最近导入保留至少 360px 高度，左侧内容可滚动查看，AI 任务列表位于导入记录之后。
 - 「待归档」为独立页面，点击未归档资料直接定位；可查看详情、预览已解析内容，批量确认客户、项目与负责人。
+
+项目页默认显示全部项目，可按客户姓名或公司搜索并筛选该客户项目。
 
 ### 2. 转写与摘要
 
@@ -255,7 +259,7 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 https://github.com/Dingh0208/basu-custom-platform/releases
 ```
 
-当前发布版本为 [v0.3.3](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.3)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.3/ClientHub-Setup-0.3.3.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.3.md)。另提供[小型在线安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.3/ClientHub-Web-Setup-0.3.3.exe)（安装时需下载完整组件）。本版优化安装压缩与差分复用，并包含此前尚未发布的微信导入容量提示及未分析聊天白屏修复，Sidecar API revision 为 21。
+当前版本为 [v0.3.4](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.4)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.4/ClientHub-Setup-0.3.4.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.4.md)。另提供[小型在线安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.4/ClientHub-Web-Setup-0.3.4.exe)（安装时需下载完整组件）。本版加入 QQ 邮箱勾选导入、多来源统一导入清单，并修复项目页客户筛选，Sidecar API revision 为 23。
 
 离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发。已经做了这些轻量化：
 

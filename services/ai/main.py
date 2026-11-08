@@ -39,8 +39,9 @@ import clarifications
 import document_ingest
 import audio_pipeline
 import notifications
+import mail_sync
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -85,6 +86,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_LOCK = threading.RLock()
+MAIL_SYNC_LOCK = threading.Lock()
 
 MAAS_BASE_URL = os.getenv("MAAS_BASE_URL", "https://maas.qianwenaiapi.com/compatible-mode/v1").rstrip("/")
 MAAS_API_KEY = os.getenv("MAAS_API_KEY", "").strip()
@@ -266,6 +268,20 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS mail_messages (
+                uid_validity TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '',
+                sent_at TEXT NOT NULL DEFAULT '',
+                size INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'available',
+                import_id TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                discovered_at TEXT NOT NULL,
+                imported_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(uid_validity, uid)
+            );
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -303,6 +319,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_archived_projects_archived_at ON archived_projects(archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_status_updated_at ON tasks(status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_import_id ON tasks(import_id);
+            CREATE INDEX IF NOT EXISTS idx_mail_messages_status_sent_at ON mail_messages(status, sent_at DESC);
             CREATE INDEX IF NOT EXISTS idx_corrections_source ON corrections(source_id, created_at);
             """
         )
@@ -2253,6 +2270,350 @@ def _delete_secure_api_key() -> None:
         pass
 
 
+def _secure_mail_password_path() -> Path:
+    return DATA_DIR / "mail-imap-password.dpapi"
+
+
+def _read_secure_mail_password() -> str:
+    path = _secure_mail_password_path()
+    if os.name != "nt" or not path.exists():
+        return ""
+    try:
+        saved = json.loads(_dpapi_unprotect(path.read_bytes()))
+        if saved["email"] != _mail_setting_rows().get("mail.email"):
+            return ""
+        return str(saved["password"]).strip()
+    except Exception:
+        return ""
+
+
+def _write_secure_mail_password(email: str, value: str) -> None:
+    if os.name != "nt":
+        raise RuntimeError("邮箱授权码需要 Windows DPAPI 安全存储")
+    path = _secure_mail_password_path()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_bytes(_dpapi_protect(json.dumps({"email": email, "password": value})))
+    temporary.replace(path)
+
+
+def _mail_setting_rows() -> dict[str, str]:
+    with db() as conn:
+        return {
+            str(row["key"]): str(row["value"] or "")
+            for row in conn.execute("SELECT key,value FROM settings WHERE key LIKE 'mail.%'").fetchall()
+        }
+
+
+def get_mail_config() -> dict:
+    rows = _mail_setting_rows()
+    with db() as conn:
+        available_count = conn.execute("SELECT COUNT(*) FROM mail_messages WHERE status='available'").fetchone()[0]
+    last_import_at = rows.get("mail.last_import_at", rows.get("mail.last_sync_at", ""))
+    last_import_count = int(rows.get("mail.last_import_count", rows.get("mail.last_sync_count", "0")) or 0)
+    return {
+        "email": rows.get("mail.email", ""),
+        "host": "imap.qq.com",
+        "port": 993,
+        "configured": bool(rows.get("mail.email") and _read_secure_mail_password()),
+        "lastDiscoverAt": rows.get("mail.last_discover_at", ""),
+        "lastImportAt": last_import_at,
+        "lastImportCount": last_import_count,
+        "availableCount": int(available_count),
+        "lastSyncAt": last_import_at,
+        "lastSyncCount": last_import_count,
+    }
+
+
+def save_mail_config(data: dict) -> dict:
+    email = str(data.get("email") or "").strip().casefold()
+    password = str(data.get("password") or "").strip()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("请输入有效的邮箱地址")
+    if len(password) > 512 or "\x00" in password:
+        raise ValueError("邮箱授权码格式无效")
+    rows = _mail_setting_rows()
+    if email != rows.get("mail.email", "") and not password:
+        raise ValueError("更换邮箱账号时请重新输入授权码")
+    if not password and not _read_secure_mail_password():
+        raise ValueError("请输入邮箱授权码")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM tasks WHERE kind IN ('mail_sync','mail_discover','mail_import') AND status IN ('queued','running')").fetchone():
+            raise ValueError("邮箱任务正在运行，请完成后再修改配置")
+        if password:
+            _write_secure_mail_password(email, password)
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('mail.email',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (email,),
+        )
+        if email != rows.get("mail.email", ""):
+            conn.execute("DELETE FROM settings WHERE key LIKE 'mail.%' AND key<>'mail.email'")
+            conn.execute("DELETE FROM mail_messages")
+    return get_mail_config()
+
+
+def test_mail_connection() -> dict:
+    config = get_mail_config()
+    password = _read_secure_mail_password()
+    if not config["email"] or not password:
+        raise ValueError("请先保存邮箱地址和授权码")
+    return mail_sync.test_connection("imap.qq.com", 993, config["email"], password)
+
+
+def _mail_cursor() -> tuple[str, int]:
+    rows = _mail_setting_rows()
+    return rows.get("mail.uid_validity", ""), int(rows.get("mail.discovered_uid", "0") or 0)
+
+
+def _save_mail_cursor(uid_validity: str, last_uid: int) -> None:
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (("mail.uid_validity", uid_validity), ("mail.discovered_uid", str(last_uid))),
+        )
+
+
+def list_mail_messages(query: str = "", limit: int = 50, offset: int = 0) -> dict:
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    term = str(query or "").strip()[:120]
+    where = "status='available'"
+    values: list[object] = []
+    if term:
+        where += " AND (subject LIKE ? COLLATE NOCASE OR sender LIKE ? COLLATE NOCASE)"
+        values.extend((f"%{term}%", f"%{term}%"))
+    with db() as conn:
+        total = int(conn.execute(f"SELECT COUNT(*) FROM mail_messages WHERE {where}", values).fetchone()[0])
+        rows = conn.execute(
+            f"SELECT uid_validity,uid,subject,sender,sent_at,size,error FROM mail_messages WHERE {where} ORDER BY sent_at DESC,uid DESC LIMIT ? OFFSET ?",
+            (*values, limit, offset),
+        ).fetchall()
+    return {
+        "messages": [{
+            "uidValidity": str(row["uid_validity"]), "uid": int(row["uid"]),
+            "subject": str(row["subject"]), "sender": str(row["sender"]),
+            "sentAt": str(row["sent_at"]), "size": int(row["size"]), "error": str(row["error"]),
+        } for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+def _mark_mail_message(uid_validity: str, uid: int, *, status: str, import_id: str = "", error: str = "") -> None:
+    with db() as conn:
+        conn.execute(
+            "UPDATE mail_messages SET status=?,import_id=?,error=?,imported_at=? WHERE uid_validity=? AND uid=?",
+            (status, import_id, error[:500], task_now() if status == "imported" else "", uid_validity, uid),
+        )
+
+
+def _mail_customer(conn: sqlite3.Connection, sender: str) -> str:
+    if not sender:
+        return "待归档"
+    rows = conn.execute("SELECT name FROM customers WHERE lower(trim(email))=?", (sender,)).fetchall()
+    return str(rows[0]["name"]) if len(rows) == 1 else "待归档"
+
+
+def _store_mail_message(raw: bytes, uid: int) -> tuple[str, bool, str | None]:
+    digest = hashlib.sha256(raw).hexdigest()
+    metadata = mail_sync.message_metadata(raw)
+    subject = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", metadata["subject"])
+    subject = re.sub(r"\s+", " ", subject).strip()[:90] or "无主题邮件"
+    file_name = f"{subject} {uid}.eml"
+    imported_at = metadata["sentAt"] or now_time()
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT * FROM imports WHERE sha256=?", (digest,)).fetchone()
+        if existing and existing["status"] in {"done", "inbox"}:
+            return str(existing["id"]), True, None
+        if existing:
+            import_id = str(existing["id"])
+            active = conn.execute("SELECT id FROM tasks WHERE import_id=? AND kind='import_document' AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1", (import_id,)).fetchone()
+            if active:
+                return import_id, False, str(active["id"])
+            conn.execute("UPDATE imports SET status='processing',progress=0 WHERE id=?", (import_id,))
+        else:
+            import_id = f"imp-{uuid.uuid4().hex[:10]}"
+            customer = _mail_customer(conn, metadata["sender"])
+            conn.execute(
+                "INSERT INTO imports (id,file_name,type,size,customer,project,status,progress,imported_at,transcript_id,sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (import_id, file_name, "邮件", f"{max(1, round(len(raw) / 1024))} KB", customer, "—", "processing", 0, imported_at, None, digest),
+            )
+        path = UPLOAD_DIR / f"{import_id}.eml"
+        path.write_bytes(raw)
+        child_id = f"task-{uuid.uuid4().hex[:12]}"
+        now = task_now()
+        payload = {"importId": import_id, "path": str(path), "aiEnabled": False}
+        conn.execute("INSERT INTO tasks(id,kind,import_id,status,payload_json,created_at,updated_at) VALUES (?, 'import_document', ?, 'queued', ?, ?, ?)", (child_id, import_id, json.dumps(payload), now, now))
+    start_task(child_id, process_document, import_id, path, False)
+    return import_id, False, child_id
+
+
+def process_mail_discovery(task_id: str | None = None) -> None:
+    if not MAIL_SYNC_LOCK.acquire(blocking=False):
+        raise RuntimeError("邮箱操作已在运行")
+    client = None
+    try:
+        ensure_task_active(task_id)
+        with db() as conn:
+            task_row = conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
+        payload = json.loads(task_row["payload_json"] or "{}") if task_row else {}
+        config = get_mail_config()
+        password = _read_secure_mail_password()
+        if not config["email"] or not password:
+            raise ValueError("请先在设置中保存 QQ 邮箱地址和授权码")
+        if payload.get("email") != config["email"]:
+            raise ValueError("邮箱账号已改变，请重新刷新邮件列表")
+        client = mail_sync.open_connection("imap.qq.com", 993, config["email"], password)
+        uid_validity = mail_sync.select_inbox(client)
+        saved_validity, last_uid = _mail_cursor()
+        if saved_validity != uid_validity:
+            last_uid = 0
+            with db() as conn:
+                conn.execute("DELETE FROM mail_messages WHERE status<>'imported'")
+            _save_mail_cursor(uid_validity, 0)
+        uids = mail_sync.search_uids(client, last_uid, date.today() - timedelta(days=30))[:200]
+        ensure_task_active(task_id)
+        for index, uid in enumerate(uids, 1):
+            ensure_task_active(task_id)
+            set_task_progress(task_id, int((index - 1) * 100 / max(1, len(uids))), stage=f"正在读取第 {index} / {len(uids)} 封邮件的列表")
+            metadata = mail_sync.fetch_headers(client, uid)
+            with db() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO mail_messages(uid_validity,uid,subject,sender,sent_at,size,discovered_at) VALUES(?,?,?,?,?,?,?)",
+                    (uid_validity, uid, metadata["subject"], metadata["sender"], metadata["sentAt"], int(metadata["size"]), task_now()),
+                )
+            _save_mail_cursor(uid_validity, uid)
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES('mail.last_discover_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (task_now(),),
+            )
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+        MAIL_SYNC_LOCK.release()
+    set_task_progress(task_id, 100, stage=f"邮件列表已更新，发现 {len(uids)} 封新邮件；每次最多读取 200 封，可继续刷新")
+    finish_task(task_id, "succeeded", progress=100)
+
+
+def process_mail_import(task_id: str | None = None) -> None:
+    if not MAIL_SYNC_LOCK.acquire(blocking=False):
+        raise RuntimeError("邮箱操作已在运行")
+    client = None
+    try:
+        ensure_task_active(task_id)
+        with db() as conn:
+            task_row = conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
+        payload = json.loads(task_row["payload_json"] or "{}") if task_row else {}
+        selected = payload.get("messages") or []
+        uid_validity = str(payload.get("uidValidity") or "")
+        if not selected or len(selected) > 100:
+            raise ValueError("请选择 1 到 100 封邮件")
+        config = get_mail_config()
+        password = _read_secure_mail_password()
+        if not config["email"] or not password:
+            raise ValueError("请先在设置中保存 QQ 邮箱地址和授权码")
+        if payload.get("email") != config["email"]:
+            raise ValueError("邮箱账号已改变，请重新选择邮件")
+        client = mail_sync.open_connection("imap.qq.com", 993, config["email"], password)
+        current_validity = mail_sync.select_inbox(client)
+        if current_validity != uid_validity:
+            raise ValueError("邮箱列表已过期，请先刷新邮件列表")
+        imported_count = 0
+        for index, item in enumerate(selected, 1):
+            ensure_task_active(task_id)
+            uid = int(item["uid"])
+            with db() as conn:
+                candidate = conn.execute(
+                    "SELECT status FROM mail_messages WHERE uid_validity=? AND uid=?",
+                    (uid_validity, uid),
+                ).fetchone()
+            if candidate is not None and candidate["status"] == "imported":
+                continue
+            if candidate is None or candidate["status"] != "available":
+                raise ValueError("所选邮件已不可用，请刷新邮件列表后重试")
+            set_task_progress(task_id, int((index - 1) * 100 / len(selected)), stage=f"正在导入第 {index} / {len(selected)} 封已选邮件")
+            try:
+                raw = mail_sync.fetch_message(client, uid)
+                import_id, duplicate, child_id = _store_mail_message(raw, uid)
+                if not duplicate:
+                    if child_id is None:
+                        raise RuntimeError("邮件解析任务未能启动")
+                    while True:
+                        ensure_task_active(task_id)
+                        imported_task = get_task(child_id)
+                        if imported_task is None:
+                            raise RuntimeError("邮件解析任务丢失")
+                        if imported_task["status"] in TASK_TERMINAL:
+                            if imported_task["status"] != "succeeded":
+                                raise RuntimeError(f"邮件解析失败：{imported_task['error'] or imported_task['status']}")
+                            break
+                        time.sleep(0.2)
+                    imported_count += 1
+                _mark_mail_message(uid_validity, uid, status="imported", import_id=import_id)
+            except Exception as exc:
+                _mark_mail_message(uid_validity, uid, status="available", error=str(exc))
+                raise
+        ensure_task_active(task_id)
+        with db() as conn:
+            conn.executemany(
+                "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (("mail.last_import_at", task_now()), ("mail.last_import_count", str(imported_count))),
+            )
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+        MAIL_SYNC_LOCK.release()
+    set_task_progress(task_id, 100, stage=f"已处理 {len(selected)} 封所选邮件")
+    finish_task(task_id, "succeeded", progress=100)
+
+
+def start_mail_operation(kind: str, data: dict) -> dict:
+    config = get_mail_config()
+    if not config["configured"]:
+        raise ValueError("请先保存邮箱地址和授权码")
+    payload: dict = {"email": config["email"]}
+    if kind == "mail_import":
+        messages = data.get("messages")
+        validity = str(data.get("uidValidity") or "")
+        if data.get("email") != config["email"]:
+            raise ValueError("邮箱账号已改变，请重新选择邮件")
+        if not isinstance(messages, list) or not 1 <= len(messages) <= 100 or not validity.isdigit():
+            raise ValueError("请选择 1 到 100 封有效邮件")
+        if any(not isinstance(item, dict) or type(item.get("uid")) is not int or item["uid"] <= 0 for item in messages):
+            raise ValueError("所选邮件标识无效")
+        payload.update({"uidValidity": validity, "messages": [{"uid": uid} for uid in sorted({item["uid"] for item in messages})]})
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        active = conn.execute("SELECT id,kind,payload_json FROM tasks WHERE kind IN ('mail_sync','mail_discover','mail_import') AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1").fetchone()
+        if active:
+            active_payload = json.loads(active["payload_json"] or "{}")
+            active_payload.pop("stage", None)
+            if active["kind"] == kind and active_payload == payload:
+                return {"status": "running", "taskId": str(active["id"])}
+            raise ValueError("另一个邮箱任务正在运行，请完成后再操作")
+        if kind == "mail_import":
+            for item in payload["messages"]:
+                row = conn.execute("SELECT status,size FROM mail_messages WHERE uid_validity=? AND uid=?", (payload["uidValidity"], item["uid"])).fetchone()
+                if not row or row["status"] not in {"available", "imported"}:
+                    raise ValueError("所选邮件已不可用，请刷新列表后重试")
+                if row["size"] > mail_sync.MAX_MESSAGE_BYTES:
+                    raise ValueError("所选邮件超过 25 MB，请单独导入 EML 文件")
+        task_id = f"task-{uuid.uuid4().hex[:12]}"
+        now = task_now()
+        conn.execute("INSERT INTO tasks(id,kind,status,payload_json,created_at,updated_at) VALUES (?,?, 'queued', ?, ?, ?)", (task_id, kind, json.dumps(payload), now, now))
+    start_task(task_id, process_mail_discovery if kind == "mail_discover" else process_mail_import)
+    return {"status": "started", "taskId": task_id}
+
+
 def _llm_setting_rows() -> dict[str, str]:
     with db() as conn:
         return {
@@ -2439,8 +2800,8 @@ def get_diagnostics() -> dict:
         "service": "clienthub-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.3"),
-        "apiRevision": 21,
+        "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.4"),
+        "apiRevision": 23,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
         "databaseSize": database_size,
@@ -3386,6 +3747,12 @@ def launch_task(task: dict) -> bool:
             return False
         start_task(str(task["id"]), process_import_real, import_id, path, str(payload.get("mimeType") or "audio/mpeg"))
         return True
+    if kind in {"mail_discover", "mail_import"}:
+        start_task(str(task["id"]), process_mail_discovery if kind == "mail_discover" else process_mail_import)
+        return True
+    if kind == "mail_sync":
+        finish_task(str(task["id"]), "failed", error="请到导入中心刷新邮件列表并勾选要导入的邮件")
+        return False
     if kind == "import_document":
         path = Path(str(payload.get("path") or ""))
         if not path.is_file():
@@ -3755,6 +4122,15 @@ class Handler(BaseHTTPRequestHandler):
                 "hasKey": bool(config["apiKey"]),
             })
             return
+        if path == "/api/mail/config":
+            self._json(get_mail_config())
+            return
+        if path == "/api/mail/messages":
+            try:
+                self._json(list_mail_messages(q("query"), int(q("limit", "50")), int(q("offset", "0"))))
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if path == "/api/settings/llm/models":
             self._json(list_llm_models())
             return
@@ -3785,8 +4161,8 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.3"),
-                "apiRevision": 21,
+                "version": os.getenv("CLIENTHUB_APP_VERSION", "0.3.4"),
+                "apiRevision": 23,
             })
             return
         if path == "/api/diagnostics":
@@ -4175,6 +4551,27 @@ class Handler(BaseHTTPRequestHandler):
                     "hasKey": bool(saved["apiKey"]),
                 })
             except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/mail/config":
+            try:
+                self._json(save_mail_config(data))
+            except Exception as exc:
+                self._json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/mail/test":
+            try:
+                self._json({"status": "ok", **test_mail_connection()})
+            except Exception as exc:
+                self._json({"status": "error", "error": str(exc)})
+            return
+
+        if path in {"/api/mail/sync", "/api/mail/discover", "/api/mail/import"}:
+            try:
+                self._json(start_mail_operation("mail_import" if path == "/api/mail/import" else "mail_discover", data), 202)
+            except ValueError as exc:
                 self._json({"error": str(exc)}, 400)
             return
 
@@ -4719,10 +5116,11 @@ def main() -> None:
         threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
     init_db()
     backfill_requirements()
-    # Resume queued/running tasks after a process crash.
+    # Mailbox access only resumes from an explicit user action.
     with db() as conn:
-        conn.execute("UPDATE tasks SET status='queued', error='上次进程中断，任务已恢复', updated_at=? WHERE status='running'", (task_now(),))
-        task_rows = conn.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at").fetchall()
+        conn.execute("UPDATE tasks SET status='failed', error='手动邮箱操作因应用关闭而中断，请在导入中心重试', updated_at=?, finished_at=? WHERE kind IN ('mail_sync','mail_discover','mail_import') AND status IN ('queued','running')", (task_now(), task_now()))
+        conn.execute("UPDATE tasks SET status='queued', error='上次进程中断，任务已恢复', updated_at=? WHERE status='running' AND kind NOT IN ('mail_sync','mail_discover','mail_import')", (task_now(),))
+        task_rows = conn.execute("SELECT * FROM tasks WHERE status='queued' AND kind NOT IN ('mail_sync','mail_discover','mail_import') ORDER BY created_at").fetchall()
         pending = conn.execute("SELECT id,type,transcript_id FROM imports WHERE status='processing'").fetchall()
     task_import_ids = {str(row["import_id"] or "") for row in task_rows}
     for row in task_rows:

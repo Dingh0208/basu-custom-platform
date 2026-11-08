@@ -423,6 +423,46 @@ export interface AppSettings {
   quietEnd: string;
 }
 
+export interface MailConfig {
+  email: string;
+  host: string;
+  port: number;
+  configured: boolean;
+  lastSyncAt: string;
+  lastSyncCount: number;
+  lastDiscoverAt: string;
+  lastImportAt: string;
+  lastImportCount: number;
+  availableCount: number;
+}
+
+export interface MailMessage {
+  uidValidity: string;
+  uid: number;
+  subject: string;
+  sender: string;
+  sentAt: string;
+  size: number;
+  error: string;
+}
+
+export interface WeChatImportSelection {
+  account: string;
+  username: string;
+  startDate: string;
+  endDate: string;
+  types: string[];
+  customer: string;
+  project: string;
+  messageCount: number;
+}
+
+export interface MailConnectionTest {
+  status: 'ok' | 'error';
+  error?: string;
+  idleSupported?: boolean;
+}
+
 export interface WorkspaceNotification {
   id: string;
   todoId: string;

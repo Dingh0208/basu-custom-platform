@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { WeChatImportSelection, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 import {
-  getWechatImportStatus,
   getWechatPrepareStatus,
   getWechatSessions,
   getWechatStatus,
-  importWechatChat,
   previewWechatMessages,
   startWechatEngine,
   startWechatPrepare,
@@ -16,7 +14,7 @@ import Modal from './Modal';
 type WeChatImportModalProps = {
   open: boolean;
   onClose: () => void;
-  onImported: () => void;
+  onSelected: (selection: WeChatImportSelection) => void;
   onToast: (message: string) => void;
 };
 
@@ -37,7 +35,7 @@ const TYPE_OPTIONS = [
   { value: 'voip', label: '通话' },
 ];
 
-export default function WeChatImportModal({ open, onClose, onImported, onToast }: WeChatImportModalProps) {
+export default function WeChatImportModal({ open, onClose, onSelected, onToast }: WeChatImportModalProps) {
   const [status, setStatus] = useState<WeChatStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [sessions, setSessions] = useState<WeChatSession[]>([]);
@@ -51,10 +49,8 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
   const [previewLimit, setPreviewLimit] = useState(5000);
   const [previewOverLimit, setPreviewOverLimit] = useState(false);
   const [previewing, setPreviewing] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [prepared, setPrepared] = useState(false);
   const [prepareJob, setPrepareJob] = useState<WeChatJob | null>(null);
-  const [importJob, setImportJob] = useState<WeChatJob | null>(null);
 
   const selectedSession = sessions.find((item) => item.username === selectedUsername) ?? null;
   const visibleSessions = useMemo(() => {
@@ -103,7 +99,6 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
     setPreviewTotal(null);
     setPrepared(false);
     setPrepareJob(null);
-    setImportJob(null);
     getWechatStatus().then(async (result) => {
       if (!mounted) return;
       setStatus(result);
@@ -143,31 +138,6 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       window.clearInterval(timer);
     };
   }, [open, prepareJob?.status]);
-
-  useEffect(() => {
-    if (!open || importJob?.status !== 'running') return;
-    let mounted = true;
-    const timer = window.setInterval(async () => {
-      const job = await getWechatImportStatus();
-      if (!mounted || !job) return;
-      setImportJob(job);
-      if (job.status === 'done') {
-        window.clearInterval(timer);
-        setImporting(false);
-        onToast(job.addedMessageCount === 0 ? '没有发现新增消息，重复内容已自动跳过' : `本次新增 ${job.addedMessageCount ?? job.messageCount ?? 0} 条，累计 ${job.messageCount ?? 0} 条，资料已更新`);
-        onImported();
-        onClose();
-      } else if (job.status === 'failed') {
-        window.clearInterval(timer);
-        setImporting(false);
-        onToast(job.message || '微信聊天提取失败');
-      }
-    }, 900);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
-  }, [open, importJob?.status]);
 
   useEffect(() => {
     if (!open || !status?.available || !account || !selectedUsername) return;
@@ -225,7 +195,7 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
     setPrepareJob(job);
   }
 
-  async function handleImport() {
+  function handleImport() {
     if (previewOverLimit) {
       onToast(`本次超过 ${previewLimit.toLocaleString()} 条，请缩小日期范围分批导入`);
       return;
@@ -242,9 +212,11 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       onToast('请至少选择一种记录类型');
       return;
     }
-    setImporting(true);
-    setImportJob({ status: 'running', progress: 1, message: '正在排队提取…' });
-    const job = await importWechatChat({
+    if (!previewTotal || previewing) {
+      onToast('请等待消息统计完成，并选择含消息的范围');
+      return;
+    }
+    onSelected({
       account,
       username: selectedSession.username,
       startDate,
@@ -252,18 +224,13 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
       types: selectedTypes,
       customer: selectedSession.name,
       project: '',
+      messageCount: previewTotal,
     });
-    if (!job) {
-      setImporting(false);
-      setImportJob({ status: 'failed', progress: 0, message: '微信聊天提取失败' });
-      onToast('微信聊天提取失败，请检查微信解析引擎');
-      return;
-    }
-    setImportJob(job);
+    onClose();
   }
 
   return (
-    <Modal open={open} title="从微信聊天库提取" subtitle="选择账号、会话、日期和记录类型；原文保存到本地，AI 分析按设置开关执行" onClose={onClose} className="wechat-import-modal">
+    <Modal open={open} title="从微信聊天库提取" subtitle="选择会话、日期和记录类型，加入清单后统一导入" onClose={onClose} className="wechat-import-modal">
       <div className="wechat-import-body">
         <div className="wechat-session-pane">
           <div className="wechat-pane-head">
@@ -383,19 +350,13 @@ export default function WeChatImportModal({ open, onClose, onImported, onToast }
             <span>预计消息数</span>
             <strong>{previewing ? '统计中…' : previewOverLimit ? `超过 ${previewLimit.toLocaleString()} 条，请缩小日期范围` : previewTotal == null ? selectedSession ? '暂无法统计' : '选择会话后统计' : `${previewTotal} 条`}</strong>
           </div>
-          {importJob && importJob.status !== 'idle' && (
-            <div className="wechat-job-box">
-              <div className="wechat-job-line"><span>{importJob.message}</span><strong>{importJob.progress || 0}%</strong></div>
-              <div className="wechat-progress-track"><span style={{ width: `${importJob.progress || 0}%` }} /></div>
-            </div>
-          )}
           <div className="small-note">单次最多 {previewLimit.toLocaleString()} 条，请按日期分批；同一会话合并为累计记录，重复消息自动跳过。本机累计最多 100,000 条；AI 分析按设置开关执行。</div>
         </div>
       </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={!prepared || !selectedSession || !selectedTypes.length || importing || previewing || previewOverLimit || !status?.available} onClick={handleImport}>
-          {importing ? `提取中 ${importJob?.progress || 0}%` : '开始提取'}
+        <button className="btn primary" disabled={!prepared || !selectedSession || !selectedTypes.length || previewing || previewOverLimit || !previewTotal || !status?.available} onClick={handleImport}>
+          加入待导入清单
         </button>
       </div>
     </Modal>

@@ -1,4 +1,4 @@
-import type { AppSettings, BackupSummary, ChatRecord, ClarificationRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
+import type { AppSettings, BackupSummary, ChatRecord, ClarificationRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, MailConfig, MailConnectionTest, MailMessage, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -224,6 +224,10 @@ export async function fetchTasks(): Promise<TaskRecord[] | null> {
   return fetchJson<TaskRecord[]>('/api/tasks?limit=100', undefined, 5000);
 }
 
+export async function fetchTask(id: string): Promise<TaskRecord | null> {
+  return fetchJson<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}`, undefined, 5000);
+}
+
 export async function retryTask(id: string): Promise<TaskRecord | null> {
   return fetchJson<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST', body: '{}' }, 10000);
 }
@@ -418,6 +422,30 @@ export async function fetchProjects(): Promise<ProjectListItem[] | null> {
 
 export async function fetchAppSettings(): Promise<AppSettings | null> {
   return fetchJson<AppSettings>('/api/settings/app', undefined, 5000);
+}
+
+export async function fetchMailConfig(): Promise<MailConfig | null> {
+  return fetchJson<MailConfig>('/api/mail/config', undefined, 5000);
+}
+
+export async function saveMailConfig(data: { email: string; password?: string }): Promise<MailConfig | null> {
+  return fetchJson<MailConfig>('/api/mail/config', { method: 'POST', body: JSON.stringify(data) }, 5000);
+}
+
+export async function testMailConnection(): Promise<MailConnectionTest | null> {
+  return fetchJson<MailConnectionTest>('/api/mail/test', { method: 'POST', body: '{}' }, 25000);
+}
+
+export async function fetchMailMessages(query = '', offset = 0): Promise<{ messages: MailMessage[]; total: number; limit: number; offset: number } | null> {
+  return fetchJson(`/api/mail/messages?${new URLSearchParams({ query, offset: String(offset), limit: '50' })}`, undefined, 5000);
+}
+
+export async function discoverMailMessages(): Promise<{ status: string; taskId?: string } | null> {
+  return fetchJson('/api/mail/discover', { method: 'POST', body: '{}' }, 5000);
+}
+
+export async function importMailMessages(email: string, uidValidity: string, messages: Array<{ uid: number }>): Promise<{ status: string; taskId?: string } | null> {
+  return fetchJson('/api/mail/import', { method: 'POST', body: JSON.stringify({ email, uidValidity, messages }) }, 5000);
 }
 
 export async function saveAppSettings(data: Partial<AppSettings>): Promise<AppSettings | null> {

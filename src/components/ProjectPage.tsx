@@ -21,16 +21,21 @@ export default function ProjectPage({ initialProject, onToast, onCustomer, onCla
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [query, setQuery] = useState('');
+  const [customerFilter, setCustomerFilter] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectListItem | null>(null);
   const [newCustomer, setNewCustomer] = useState('');
+  const customerPickerRef = useRef<HTMLDivElement>(null);
 
   async function refresh() {
     const [projectData, customerData] = await Promise.all([fetchProjects(), fetchCustomers()]);
     // 过滤掉已归档的项目
     setProjects(filterActiveProjects(projectData ?? []));
-    setCustomers(customerData ?? []);
-    setNewCustomer((current) => current && customerData?.some((customer) => customer.name === current) ? current : customerData?.[0]?.name ?? '');
+    const nextCustomers = customerData ?? [];
+    setCustomers(nextCustomers);
+    setCustomerFilter((current) => current && nextCustomers.some((customer) => customer.name === current) ? current : '');
   }
 
   useEffect(() => { refresh(); }, []);
@@ -46,10 +51,38 @@ export default function ProjectPage({ initialProject, onToast, onCustomer, onCla
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!customerPickerRef.current?.contains(event.target as Node)) setCustomerPickerOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
+
   const filtered = useMemo(
-    () => projects.filter((project) => !project.archived && (!query.trim() || `${project.name}${project.customer}${project.customerCompany}${project.stage}${project.owner}`.toLowerCase().includes(query.trim().toLowerCase()))),
-    [projects, query],
+    () => projects.filter((project) => !project.archived
+      && (!customerFilter || project.customer === customerFilter)
+      && (!query.trim() || `${project.name}${project.customer}${project.customerCompany}${project.stage}${project.owner}`.toLowerCase().includes(query.trim().toLowerCase()))),
+    [customerFilter, projects, query],
   );
+
+  const visibleCustomers = useMemo(() => {
+    const normalized = customerSearch.trim().toLowerCase();
+    if (!normalized) return customers;
+    return customers.filter((customer) => `${customer.name}${customer.company}`.toLowerCase().includes(normalized));
+  }, [customerSearch, customers]);
+
+  const projectCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const project of projects) counts.set(project.customer, (counts.get(project.customer) ?? 0) + 1);
+    return counts;
+  }, [projects]);
+
+  function selectCustomer(name: string) {
+    setCustomerFilter(name);
+    setCustomerPickerOpen(false);
+    setCustomerSearch('');
+  }
 
   async function saveProject(data: Partial<ProjectListItem>) {
     const result = editingProject
@@ -78,19 +111,56 @@ export default function ProjectPage({ initialProject, onToast, onCustomer, onCla
   return (
     <>
       <header className="topbar">
-        <div className="crumbs"><strong>项目</strong><span className="badge done">{projects.length} 个项目</span></div>
+        <div className="crumbs"><strong>项目</strong><span className="badge done">{filtered.length} 个项目</span></div>
         <div className="top-actions">
-          <select className="select" value={newCustomer} onChange={(e) => setNewCustomer(e.target.value)} style={{ height: 30, marginRight: 6 }}>
-            {customers.map((customer) => <option key={customer.name} value={customer.name}>{customer.name} · {customer.company}</option>)}
-          </select>
-          <button className="btn primary" onClick={() => { setEditingProject(null); setModalOpen(true); }} disabled={!newCustomer}>+ 新建项目</button>
+          <div className="project-customer-picker" ref={customerPickerRef}
+            onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setCustomerPickerOpen(false); }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setCustomerPickerOpen(false);
+                customerPickerRef.current?.querySelector('button')?.focus();
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="project-customer-trigger"
+              aria-haspopup="dialog"
+              aria-expanded={customerPickerOpen}
+              aria-label={`按客户筛选项目：${customerFilter || '全部项目'}`}
+              onClick={() => { setCustomerSearch(''); setCustomerPickerOpen((open) => !open); }}
+            >
+              <span>{customerFilter || '全部项目'}</span><span className="project-customer-chevron" aria-hidden="true" />
+            </button>
+            {customerPickerOpen && (
+              <div className="project-customer-menu" role="dialog" aria-label="按客户筛选项目">
+                <div className="project-customer-search search-box">
+                  <IconSearch size={14} />
+                  <input autoFocus value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="搜索客户" aria-label="搜索客户" />
+                </div>
+                <div className="project-customer-options" role="listbox" aria-label="客户">
+                  <button type="button" role="option" aria-selected={!customerFilter} className={!customerFilter ? 'selected' : ''} onClick={() => selectCustomer('')}>
+                    <span>全部项目</span><small>{projects.length}</small>
+                  </button>
+                  {visibleCustomers.map((customer) => (
+                    <button type="button" role="option" aria-selected={customerFilter === customer.name} className={customerFilter === customer.name ? 'selected' : ''} key={customer.name} onClick={() => selectCustomer(customer.name)}>
+                      <span><strong>{customer.name}</strong><small>{customer.company || '—'}</small></span>
+                      <small>{projectCounts.get(customer.name) ?? 0}</small>
+                    </button>
+                  ))}
+                  {!visibleCustomers.length && <div className="project-customer-empty">没有匹配的客户</div>}
+                </div>
+              </div>
+            )}
+          </div>
+          <button className="btn primary" onClick={() => { setEditingProject(null); setNewCustomer(customerFilter); setModalOpen(true); }} disabled={!customers.length}>+ 新建项目</button>
         </div>
       </header>
 
       <div className="project-workspace">
         <section className="card project-list-card">
           <div className="card-head">
-            <div><div className="card-title">全部项目</div><div className="card-sub">项目与客户档案双向同步；修改项目会更新客户 360</div></div>
+            <div><div className="card-title">{customerFilter ? `${customerFilter}的项目` : '全部项目'}</div><div className="card-sub">项目与客户档案双向同步；修改项目会更新客户 360</div></div>
             <div className="search-box" style={{ marginLeft: 'auto' }}><IconSearch size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索项目 / 客户 / 阶段 / 负责人" /></div>
           </div>
           <div style={{ overflow: 'auto' }}>
@@ -110,7 +180,7 @@ export default function ProjectPage({ initialProject, onToast, onCustomer, onCla
                     <td><button className="btn" style={{ height: 24, padding: '0 7px', fontSize: 10 }} onClick={() => { setEditingProject(project); setModalOpen(true); }}>编辑</button></td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={9}><div className="empty-panel">暂无项目；可在客户档案中创建，或点击右上角新建</div></td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={9}><div className="empty-panel">{query.trim() ? '没有符合搜索条件的项目' : customerFilter ? `${customerFilter}暂无项目，可点击右上角新建` : '暂无项目；可在客户档案中创建，或点击右上角新建'}</div></td></tr>}
               </tbody>
             </table>
           </div>
@@ -120,6 +190,8 @@ export default function ProjectPage({ initialProject, onToast, onCustomer, onCla
       <ProjectModal
         open={modalOpen}
         customerName={editingProject?.customer || newCustomer}
+        customerOptions={customers}
+        onCustomerChange={editingProject ? undefined : setNewCustomer}
         project={editingProject}
         onClose={() => setModalOpen(false)}
         onSave={saveProject}
