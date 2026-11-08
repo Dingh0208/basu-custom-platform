@@ -104,7 +104,6 @@ function startPackagedSidecar() {
   const sidecarExe = path.join(process.resourcesPath, 'ai-sidecar', 'clienthub-ai.exe');
   if (!fs.existsSync(sidecarExe)) return false;
   killStaleSidecars();
-  const dataDir = path.join(app.getPath('userData'), 'wechat-data');
   sidecarProc = spawn(sidecarExe, ['--host', '127.0.0.1', '--port', '8765', '--parent-pid', String(process.pid)], {
     cwd: path.dirname(sidecarExe),
     windowsHide: true,
@@ -119,10 +118,6 @@ function startPackagedSidecar() {
       FFMPEG_PATH: fs.existsSync(path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe'))
         ? path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe')
         : '',
-      WECHAT_DATA_ANALYSIS_BACKEND: path.join(process.resourcesPath, 'wechat-engine', 'wechat-backend.exe'),
-      WECHAT_DATA_ANALYSIS_DATA_DIR: dataDir,
-      WECHAT_DATA_ANALYSIS_OUTPUT_DIR: path.join(dataDir, 'output'),
-      WECHAT_DATA_ANALYSIS_PORT: '10393',
     },
   });
   try {

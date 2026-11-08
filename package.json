@@ -48,17 +48,6 @@
     ],
     "extraResources": [
       {
-        "from": "services/wechat-engine",
-        "to": "wechat-engine",
-        "filter": [
-          "**/*",
-          "!README.md",
-          "!native/__init__.py",
-          "!native/macos/**",
-          "!native/weflow_wasm/sns_image_fixture.json"
-        ]
-      },
-      {
         "from": "services/ffmpeg",
         "to": "ffmpeg"
       },

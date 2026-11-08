@@ -17,8 +17,7 @@ def verify(app_dir):
     resources = app_dir / "resources"
     executable = resources / "ai-sidecar" / "clienthub-ai.exe"
     ffmpeg = resources / "ffmpeg" / "ffmpeg.exe"
-    engine = resources / "wechat-engine" / "wechat-backend.exe"
-    assert executable.is_file() and ffmpeg.is_file() and engine.is_file()
+    assert executable.is_file() and ffmpeg.is_file()
     assert not list((resources / "ai-sidecar").rglob(".env")), "Bundled credentials"
     subprocess.run([str(ffmpeg), "-version"], check=True, capture_output=True, timeout=15)
     with socket.socket() as listener:
@@ -29,9 +28,7 @@ def verify(app_dir):
         root = Path(temporary)
         env = dict(os.environ, CLIENTHUB_DATA_DIR=str(root / "data"),
                    CLIENTHUB_ENV_FILE=str(root / "absent.env"), MAAS_API_KEY="",
-                   MAAS_BASE_URL="http://127.0.0.1:1", FFMPEG_PATH=str(ffmpeg),
-                   WECHAT_DATA_ANALYSIS_BACKEND=str(engine),
-                   WECHAT_DATA_ANALYSIS_DATA_DIR=str(root / "wechat"))
+                   MAAS_BASE_URL="http://127.0.0.1:1", FFMPEG_PATH=str(ffmpeg))
 
         def api(route, data=None):
             request = urllib.request.Request(f"http://127.0.0.1:{port}{route}",

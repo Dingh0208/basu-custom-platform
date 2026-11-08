@@ -467,7 +467,7 @@ export default function App() {
     }
   }
 
-  async function handleWechatImported() {
+  async function handleImportSubmitted() {
     await refreshImports();
     const projectData = await fetchProjects();
     if (projectData) {
@@ -618,7 +618,7 @@ export default function App() {
             onPasteText={handlePasteText}
             onOpenRecord={(record) => handleOpenRecord(record, 'import')}
             onToast={showToast}
-            onWechatImported={handleWechatImported}
+            onImportSubmitted={handleImportSubmitted}
             onDeleteRecord={handleDeleteRecord}
             projects={projects}
             customers={customers.map((customer) => customer.name)}

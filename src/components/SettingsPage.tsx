@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppSettings, BackupSummary, Diagnostics, LlmConfig, LlmModelsResult, MailConfig, ProjectListItem, WeChatStatus } from '../types';
+import type { AppSettings, BackupSummary, Diagnostics, LlmConfig, LlmModelsResult, MailConfig, ProjectListItem } from '../types';
 import {
   clearLlmApiKey,
   downloadBackup,
@@ -10,14 +10,12 @@ import {
   fetchLlmConfig,
   fetchMailConfig,
   getHealth,
-  getWechatStatus,
   pullLlmModels,
   restoreBackup,
   restoreProject,
   saveAppSettings,
   saveLlmConfig,
   saveMailConfig,
-  startWechatEngine,
   testMailConnection,
   testLlmConfig,
 } from '../api/client';
@@ -38,7 +36,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string; hint: str
   { id: 'import', label: '导入偏好', hint: '设置新资料的默认负责人、项目和处理方式' },
   { id: 'data', label: '数据与备份', hint: '管理本地数据库、附件和备份文件' },
   { id: 'archived', label: '已归档内容', hint: '查看和恢复已归档的项目和客户' },
-  { id: 'diagnostics', label: '本地诊断', hint: '查看 Sidecar、FFmpeg 和微信引擎状态' },
+  { id: 'diagnostics', label: '本地诊断', hint: '查看 Sidecar 和 FFmpeg 状态' },
   { id: 'updates', label: '更新', hint: '控制自动更新检查和检查频率' },
   { id: 'notifications', label: '通知', hint: '设置待办到期提醒和免打扰时间' },
   { id: 'about', label: '隐私与关于', hint: '查看密钥存储、版本和本地文件说明' },
@@ -97,9 +95,6 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
   const [appMessage, setAppMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [sidecarHealth, setSidecarHealth] = useState<Health | null>(null);
-  const [wechatStatus, setWechatStatus] = useState<WeChatStatus | null>(null);
-  const [wechatStartBusy, setWechatStartBusy] = useState(false);
-  const [wechatStartResult, setWechatStartResult] = useState<Awaited<ReturnType<typeof startWechatEngine>> | null>(null);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
   const [diagnosticMessage, setDiagnosticMessage] = useState('');
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('llm');
@@ -137,7 +132,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([fetchLlmConfig(), fetchAppSettings(), fetchBackups(), getHealth(), fetchDiagnostics(), getWechatStatus(), fetchMailConfig()]).then(([llm, app, backupList, health, diag, wechat, mail]) => {
+    Promise.all([fetchLlmConfig(), fetchAppSettings(), fetchBackups(), getHealth(), fetchDiagnostics(), fetchMailConfig()]).then(([llm, app, backupList, health, diag, mail]) => {
       if (!mounted) return;
       if (llm) {
         setBaseUrl(llm.baseUrl || '');
@@ -151,7 +146,6 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
       if (backupList) setBackups(backupList);
       setSidecarHealth(health);
       setDiagnostics(diag);
-      if (wechat) setWechatStatus(wechat);
       if (mail) {
         setMailConfig(mail);
         setMailEmail(mail.email);
@@ -230,11 +224,10 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
 
   async function refreshDiagnostics() {
     setDiagnosticBusy(true);
-    setDiagnosticMessage('正在检测 Sidecar、FFmpeg 和微信引擎…');
-    const [health, diag, wechat, backupList] = await Promise.all([getHealth(), fetchDiagnostics(), getWechatStatus(), fetchBackups()]);
+    setDiagnosticMessage('正在检测 Sidecar 和 FFmpeg…');
+    const [health, diag, backupList] = await Promise.all([getHealth(), fetchDiagnostics(), fetchBackups()]);
     setSidecarHealth(health);
     setDiagnostics(diag);
-    if (wechat) setWechatStatus(wechat);
     if (backupList) setBackups(backupList);
     setDiagnosticBusy(false);
     if (!health || health.status !== 'ok') {
@@ -279,33 +272,6 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
     } catch {
       setDiagnosticBusy(false);
       setDiagnosticMessage('启动 Sidecar 时发生错误。请重新检测；若持续失败，请重启 ClientHub 并检查安装目录。');
-    }
-  }
-
-  async function startWechat() {
-    setWechatStartBusy(true);
-    setWechatStartResult(null);
-    const result = await startWechatEngine();
-    setWechatStartResult(result);
-    setWechatStartBusy(false);
-    if (result.status === 'ok') {
-      setWechatStatus((current) => ({
-        available: true,
-        accounts: current?.accounts || [],
-        accountInfos: current?.accountInfos || [],
-        prepared: current?.prepared,
-        prepareJob: current?.prepareJob,
-        port: 10393,
-      }));
-      void getWechatStatus().then((status) => { if (status) setWechatStatus(status); });
-    } else {
-      setWechatStatus((current) => ({
-        available: false,
-        accounts: current?.accounts || [],
-        accountInfos: current?.accountInfos || [],
-        error: result.error,
-        port: 10393,
-      }));
     }
   }
 
@@ -541,13 +507,10 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
 
         <aside className="settings-side-column">
           <section className="card settings-section" id="settings-diagnostics" hidden={activeSection !== 'diagnostics'}>
-            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">05</span><div><div className="card-title">本地服务与诊断</div><div className="card-sub">确认 Sidecar、FFmpeg 和微信引擎状态</div></div></div><button className="icon-btn" onClick={() => void refreshDiagnostics()} aria-label="刷新诊断" disabled={diagnosticBusy}><IconRefresh size={15} /></button></div>
+            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">05</span><div><div className="card-title">本地服务与诊断</div><div className="card-sub">确认 Sidecar 和 FFmpeg 状态</div></div></div><button className="icon-btn" onClick={() => void refreshDiagnostics()} aria-label="刷新诊断" disabled={diagnosticBusy}><IconRefresh size={15} /></button></div>
             <div className="diagnostic-status"><span className={`status-dot ${sidecarHealth?.status === 'ok' ? 'online' : ''}`} /><strong>{healthLabel(sidecarHealth, diagnostics)}</strong><span>127.0.0.1:{diagnostics?.port || 8765}</span></div>
-            <div className="settings-status-grid"><div><span>Sidecar</span><strong className={sidecarHealth?.status === 'ok' ? (sidecarHealth.apiRevision ?? 0) < 5 ? 'settings-warn' : 'settings-ok' : 'settings-warn'}>{sidecarHealth?.status === 'ok' ? `API ${sidecarHealth.apiRevision ?? '未知'}` : '未响应'}</strong></div><div><span>AI 模式</span><strong>{diagnostics?.mode === 'maas' || sidecarHealth?.mode === 'maas' ? 'MaaS' : sidecarHealth ? 'Mock' : '未检测'}</strong></div><div><span>FFmpeg</span><strong className={diagnostics?.ffmpeg.available ? 'settings-ok' : diagnostics ? 'settings-warn' : ''}>{diagnostics ? diagnostics.ffmpeg.available ? '可用' : '不可用' : sidecarHealth?.status === 'ok' ? '等待新版诊断' : '未检测'}</strong></div><div><span>微信引擎</span><strong className={wechatStatus?.available ? 'settings-ok' : diagnostics ? 'settings-warn' : ''}>{wechatStatus ? wechatStatus.available ? '可用' : '不可用' : sidecarHealth?.status === 'ok' ? '等待新版诊断' : '未检测'}</strong></div></div>
-            <div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => void startWechat()} disabled={wechatStartBusy || diagnosticBusy}>{wechatStartBusy ? '微信引擎启动中…' : '启动 / 检测微信引擎'}</button></div>
-            {wechatStartResult?.status === 'ok' && <div className="llm-result settings-feedback" role="status">微信引擎已响应（端口 {wechatStartResult.port || 10393}），可以重试微信数据导入。</div>}
-            {wechatStartResult?.status === 'failed' && <div className="wechat-repair-help" role="alert"><strong>微信引擎启动失败</strong><p>{wechatStartResult.error}</p><ol>{wechatStartResult.repairSteps?.map((step) => <li key={step}>{step}</li>)}</ol>{wechatStartResult.logPath && <small>日志：{wechatStartResult.logPath}</small>}</div>}
-            <div className="small-note">Sidecar 版本：{sidecarHealth?.version || '—'} · API：{sidecarHealth?.apiRevision ?? '—'} · 微信账号：{wechatStatus?.accounts?.length || 0} 个</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => void restartSidecar()} disabled={diagnosticBusy}>{diagnosticBusy ? '处理中…' : sidecarHealth?.status === 'ok' ? '重启本地服务' : '启动 / 重试服务'}</button><button className="btn" onClick={() => void refreshDiagnostics()} disabled={diagnosticBusy}>{diagnosticBusy ? '检测中…' : '重新检测'}</button></div>{diagnosticMessage && <div className="llm-result settings-feedback" aria-live="polite">{diagnosticMessage}</div>}
+            <div className="settings-status-grid"><div><span>Sidecar</span><strong className={sidecarHealth?.status === 'ok' ? (sidecarHealth.apiRevision ?? 0) < 5 ? 'settings-warn' : 'settings-ok' : 'settings-warn'}>{sidecarHealth?.status === 'ok' ? `API ${sidecarHealth.apiRevision ?? '未知'}` : '未响应'}</strong></div><div><span>AI 模式</span><strong>{diagnostics?.mode === 'maas' || sidecarHealth?.mode === 'maas' ? 'MaaS' : sidecarHealth ? 'Mock' : '未检测'}</strong></div><div><span>FFmpeg</span><strong className={diagnostics?.ffmpeg.available ? 'settings-ok' : diagnostics ? 'settings-warn' : ''}>{diagnostics ? diagnostics.ffmpeg.available ? '可用' : '不可用' : sidecarHealth?.status === 'ok' ? '等待新版诊断' : '未检测'}</strong></div></div>
+            <div className="small-note">Sidecar 版本：{sidecarHealth?.version || '—'} · API：{sidecarHealth?.apiRevision ?? '—'}</div><div className="settings-actions settings-actions-spaced"><button className="btn" onClick={() => void restartSidecar()} disabled={diagnosticBusy}>{diagnosticBusy ? '处理中…' : sidecarHealth?.status === 'ok' ? '重启本地服务' : '启动 / 重试服务'}</button><button className="btn" onClick={() => void refreshDiagnostics()} disabled={diagnosticBusy}>{diagnosticBusy ? '检测中…' : '重新检测'}</button></div>{diagnosticMessage && <div className="llm-result settings-feedback" aria-live="polite">{diagnosticMessage}</div>}
           </section>
 
           <section className="card settings-section" id="settings-import" hidden={activeSection !== 'import'}>

@@ -182,7 +182,7 @@ class SalesTests(unittest.TestCase):
 
     def test_chat_import_capacity_returns_actionable_error_without_creating_records(self):
         main.save_app_settings({"aiImportEnabled": False})
-        with patch.object(main.wechat_engine, "MAX_IMPORT_MESSAGES", 2), patch("main.start_task") as start, patch("main.maas_request") as model:
+        with patch.object(main, "CHAT_IMPORT_MESSAGE_LIMIT", 2), patch("main.start_task") as start, patch("main.maas_request") as model:
             status, result = self.request("/api/imports/chat", "POST", {"text": "我: 消息一\n客户: 消息二\n我: 消息三"})
         self.assertEqual(status, 413)
         self.assertIn("分批", result["message"])
@@ -208,39 +208,6 @@ class SalesTests(unittest.TestCase):
         self.assertEqual((chat["messageCount"], len(chat["messages"]), chat["analysis"]), (5, 5, {}))
         with main.db() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM chats").fetchone()[0], 1)
-
-    def test_wechat_preview_capacity_reports_overflow_without_a_fake_exact_count(self):
-        raw = [{"localId": i, "createTime": int(datetime(2026, 11, 3, 12).timestamp()), "senderDisplayName": "我" if i % 2 else "客户", "content": "虚构消息"} for i in range(3)]
-        with patch.object(main.wechat_engine, "fetch_messages", return_value=raw):
-            status, result = self.request("/api/wechat/messages?account=test&username=test&startDate=2026-11-03&types=text")
-        self.assertEqual((status, result["total"], result["overLimit"]), (200, 3, False))
-        with patch.object(main.wechat_engine, "fetch_messages", side_effect=main.wechat_engine.MessageLimitExceeded("请缩小日期范围分批导入")):
-            status, result = self.request("/api/wechat/messages?account=test&username=test")
-        self.assertEqual((status, result["total"], result["overLimit"], result["messages"]), (200, None, True, []))
-        self.assertEqual(result["limit"], 5000)
-        self.assertIn("分批", result["message"])
-
-    def test_wechat_capacity_failure_does_not_leave_media_copies(self):
-        engine = main.wechat_engine
-        raw = [{"localId": i, "senderDisplayName": "我" if i % 2 else "客户", "content": "虚构图片", "renderType": "image"} for i in range(2)]
-        def copy_media(attachments, directory):
-            for attachment in attachments:
-                attachment["storedName"] = f"capacity-test-{attachment['id']}.png"
-                (directory / attachment["storedName"]).write_bytes(b"synthetic")
-        for race in (False, True):
-            with self.subTest(concurrent_limit=race), patch.object(engine, "list_sessions", return_value={"sessions": [{"username": "test", "name": "虚构会话"}]}), patch.object(engine, "fetch_messages", return_value=raw), patch.object(engine, "_account_self_name", return_value="我"), patch.object(engine, "copy_local_media", side_effect=copy_media) as copy:
-                before = set(main.UPLOAD_DIR.iterdir())
-                if race:
-                    with patch.object(main, "store_chat_record", side_effect=main.ChatCapacityError("本机容量已满")):
-                        with self.assertRaises(main.ChatCapacityError):
-                            engine.import_conversation(account="test", username="test")
-                    copy.assert_called_once()
-                else:
-                    with patch.object(main, "CHAT_LIBRARY_MESSAGE_LIMIT", 1):
-                        with self.assertRaises(main.ChatCapacityError):
-                            engine.import_conversation(account="test", username="test")
-                    copy.assert_not_called()
-                self.assertEqual(set(main.UPLOAD_DIR.iterdir()), before)
 
     def test_chat_reimport_merges_only_new_messages_into_canonical_conversation(self):
         participants = [{"name": "我", "role": "me"}, {"name": "客户甲", "role": "customer"}]
@@ -753,20 +720,11 @@ class SalesTests(unittest.TestCase):
         self.assertIn('metrics', dashboard)
         self.assertGreaterEqual(self.request('/api/health')[1]['apiRevision'], 14)
 
-    def test_wechat_engine_start_reports_repair_steps_when_backend_is_missing(self):
-        with patch.object(main.wechat_engine, 'ensure_engine', side_effect=RuntimeError('未找到内置微信引擎 services/wechat-engine/wechat-backend.exe')):
-            status, result = self.request('/api/wechat/start', 'POST', {})
-        self.assertEqual(status, 503)
-        self.assertEqual(result['status'], 'failed')
-        self.assertTrue(result['logPath'].endswith('clienthub-wechat-engine.log'))
-        self.assertTrue(any('覆盖安装' in step for step in result['repairSteps']))
-
-    def test_wechat_engine_start_returns_health_after_launch(self):
-        with patch.object(main.wechat_engine, 'ensure_engine', return_value={'available': True, 'started': True, 'port': 10393}) as ensure_engine:
-            status, result = self.request('/api/wechat/start', 'POST', {})
-        ensure_engine.assert_called_once_with(force_retry=True)
-        self.assertEqual(status, 200)
-        self.assertEqual((result['status'], result['available'], result['port']), ('ok', True, 10393))
+    def test_wechat_library_endpoints_are_removed(self):
+        status, _ = self.request('/api/wechat/status')
+        self.assertEqual(status, 404)
+        status, _ = self.request('/api/wechat/import', 'POST', {})
+        self.assertEqual(status, 404)
 
     def test_deleting_one_shared_import_keeps_other_source_todos(self):
         for record_id in ('audio-a', 'audio-b'):

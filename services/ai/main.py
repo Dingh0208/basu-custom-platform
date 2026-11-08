@@ -96,9 +96,6 @@ MAAS_VISION_MODEL = os.getenv("MAAS_VISION_MODEL", "qwen3.8-omni-flash")
 FFMPEG = os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg")
 FFPROBE = os.getenv("FFPROBE_PATH") or shutil.which("ffprobe")
 
-# Import after .env loading so the bundled WeChat engine sees configured paths/port.
-import wechat_engine  # noqa: E402  (intentional import after environment loading)
-
 DEFAULT_TRANSCRIPT = {
     "id": "tr-001",
     "title": "通话记录 · 会员小程序",
@@ -1077,6 +1074,7 @@ def _merge_chat_messages(existing: list[dict], incoming: list[dict]) -> tuple[li
 
 
 CHAT_LIBRARY_MESSAGE_LIMIT = 100_000
+CHAT_IMPORT_MESSAGE_LIMIT = 5_000
 
 
 class ChatCapacityError(ValueError):
@@ -1102,8 +1100,8 @@ def store_chat_record(
     conversation_key: str = "",
     legacy_session_name: str = "",
 ) -> dict | None:
-    if len(messages) > wechat_engine.MAX_IMPORT_MESSAGES:
-        raise ChatCapacityError(f"单次最多导入 {wechat_engine.MAX_IMPORT_MESSAGES:,} 条聊天消息，请按日期分批导入；本次未保存。")
+    if len(messages) > CHAT_IMPORT_MESSAGE_LIMIT:
+        raise ChatCapacityError(f"单次最多导入 {CHAT_IMPORT_MESSAGE_LIMIT:,} 条聊天消息，请分批导入；本次未保存。")
     if len(messages) < 2:
         return None
     senders = list(dict.fromkeys(m["sender"] for m in messages))
@@ -2790,10 +2788,6 @@ def get_diagnostics() -> dict:
         database_size = DB_PATH.stat().st_size
     except OSError:
         database_size = 0
-    try:
-        wechat_backend = str(wechat_engine._find_backend() or "")
-    except Exception:
-        wechat_backend = os.getenv("WECHAT_DATA_ANALYSIS_BACKEND", "").strip()
     ffmpeg_path = FFMPEG or ""
     return {
         "status": "ok",
@@ -2808,7 +2802,6 @@ def get_diagnostics() -> dict:
         "backups": len(list(BACKUP_DIR.glob("clienthub-backup-*.zip"))),
         "apiKeyStorage": "Windows DPAPI" if os.name == "nt" else "本地配置回退",
         "ffmpeg": {"available": bool(ffmpeg_path and Path(ffmpeg_path).exists()), "path": ffmpeg_path},
-        "wechatEngine": {"available": bool(wechat_backend and Path(wechat_backend).exists()), "path": wechat_backend},
     }
 
 
@@ -4037,46 +4030,6 @@ class Handler(BaseHTTPRequestHandler):
                 result = sales.followup(conn, customer)
             self._json(result)
             return
-        if path == "/api/wechat/status":
-            self._json(wechat_engine.status())
-            return
-        if path == "/api/wechat/prepare/status":
-            self._json(wechat_engine.prepare_status())
-            return
-        if path == "/api/wechat/import/status":
-            self._json(wechat_engine.import_status())
-            return
-        if path == "/api/wechat/sessions":
-            try:
-                data = wechat_engine.list_sessions(q("account"), int(q("limit", "400") or 400))
-                self._json(data)
-            except Exception as exc:
-                self._json({"status": "error", "error": str(exc)}, 502)
-            return
-        if path == "/api/wechat/messages":
-            try:
-                account = q("account")
-                username = q("username")
-                if not username:
-                    self._json({"error": "username_required"}, 400)
-                    return
-                start_date = q("startDate")
-                end_date = q("endDate")
-                types = [x for x in q("types").split(",") if x]
-                start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp()) if start_date else None
-                end_ts = int(datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S").timestamp()) if end_date else None
-                raw = wechat_engine.fetch_messages(account, username, start_ts=start_ts, end_ts=end_ts, render_types=types)
-                messages, _ = wechat_engine.normalize_messages(
-                    raw, account=account, username=username,
-                    start_ts=start_ts, end_ts=end_ts, render_types=types,
-                )
-                preview = messages[:80]
-                self._json({"status": "success", "total": len(messages), "messages": preview, "limit": wechat_engine.MAX_IMPORT_MESSAGES, "overLimit": False})
-            except wechat_engine.MessageLimitExceeded as exc:
-                self._json({"status": "success", "total": None, "messages": [], "limit": wechat_engine.MAX_IMPORT_MESSAGES, "overLimit": True, "message": str(exc)})
-            except Exception as exc:
-                self._json({"status": "error", "error": str(exc)}, 502)
-            return
         if path == "/api/tasks":
             self._json(list_tasks(int(q("limit", "100") or 100)))
             return
@@ -4777,41 +4730,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"summary": summarize_transcript(transcript), "model": get_llm_config()["summaryModel"]})
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
-            return
-
-        if path == "/api/wechat/start":
-            try:
-                self._json({"status": "ok", **wechat_engine.ensure_engine(force_retry=True)})
-            except Exception as exc:
-                message = str(exc)
-                self._json({
-                    "status": "failed",
-                    "error": message,
-                    **wechat_engine.failure_details(message),
-                }, 503)
-            return
-
-        if path == "/api/wechat/prepare":
-            try:
-                self._json(wechat_engine.start_prepare(), 202)
-            except Exception as exc:
-                self._json({"status": "failed", "error": str(exc)}, 400)
-            return
-
-        if path == "/api/wechat/import":
-            try:
-                job = wechat_engine.start_import(
-                    account=str(data.get("account") or ""),
-                    username=str(data.get("username") or ""),
-                    start_date=str(data.get("startDate") or ""),
-                    end_date=str(data.get("endDate") or ""),
-                    render_types=[str(item) for item in (data.get("types") or []) if str(item)],
-                    customer=str(data.get("customer") or ""),
-                    project=str(data.get("project") or ""),
-                )
-                self._json(job, 202)
-            except Exception as exc:
-                self._json({"status": "failed", "error": str(exc)}, 400)
             return
 
         if path == "/api/imports/chat-screenshot":

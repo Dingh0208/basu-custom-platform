@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ImportRecord, MailMessage, ProjectListItem, TaskRecord, WeChatImportSelection } from '../types';
-import { cancelTask, fetchAppSettings, fetchTask, fetchTasks, getWechatImportStatus, importMailMessages, importWechatChat, retryTask, saveAppSettings } from '../api/client';
+import type { ImportRecord, MailMessage, ProjectListItem, TaskRecord } from '../types';
+import { cancelTask, fetchAppSettings, fetchTask, fetchTasks, importMailMessages, retryTask, saveAppSettings } from '../api/client';
 import { IconChat, IconFile, IconMic, IconRefresh, IconUpload } from './Icons';
 import Modal from './Modal';
-import WeChatImportModal from './WeChatImportModal';
 import MailImportModal from './MailImportModal';
 import { needsArchive } from './InboxArchive';
 
@@ -15,7 +14,7 @@ type ImportCenterProps = {
   onPasteText: (text: string) => void;
   onOpenRecord: (record: ImportRecord) => void;
   onToast: (message: string) => void;
-  onWechatImported: () => void;
+  onImportSubmitted: () => void;
   onDeleteRecord: (record: ImportRecord) => void;
   projects: ProjectListItem[];
   customers: string[];
@@ -27,7 +26,7 @@ type ImportCenterProps = {
 
 type PendingImport = {
   id: string;
-  kind: 'file' | 'wechat' | 'mail';
+  kind: 'file' | 'mail';
   name: string;
   detail: string;
   selected: boolean;
@@ -35,7 +34,6 @@ type PendingImport = {
   message?: string;
   file?: File;
   chatScreenshot?: boolean;
-  wechat?: WeChatImportSelection;
   mail?: MailMessage;
   email?: string;
 };
@@ -46,13 +44,12 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onWechatImported, onDeleteRecord, projects, customers, selectedCustomer, onCustomerChange, selectedProject, onProjectChange }: ImportCenterProps) {
+export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onImportSubmitted, onDeleteRecord, projects, customers, selectedCustomer, onCustomerChange, selectedProject, onProjectChange }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
-  const [wechatOpen, setWechatOpen] = useState(() => new URLSearchParams(window.location.search).get('wechat') === '1');
   const [mailOpen, setMailOpen] = useState(() => new URLSearchParams(window.location.search).get('mail') === '1');
   const [pending, setPending] = useState<PendingImport[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
@@ -148,15 +145,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
     }))]);
   }
 
-  function addWechat(selection: WeChatImportSelection) {
-    const id = `wechat:${JSON.stringify(selection)}`;
-    setPending((current) => current.some((item) => item.id === id) ? current : [...current, {
-      id, kind: 'wechat', name: `${selection.customer} · 微信聊天`,
-      detail: `${selection.startDate || '不限开始'} 至 ${selection.endDate || '不限结束'} · 预计 ${selection.messageCount} 条`,
-      selected: true, status: 'ready', wechat: selection,
-    }]);
-  }
-
   function addMail(email: string, messages: MailMessage[]) {
     setPending((current) => {
       const existing = new Set(current.map((item) => item.id));
@@ -192,21 +180,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           if (item.kind === 'file' && item.file) {
             const errors = await onAddFiles([item.file], item.chatScreenshot);
             if (errors.length) throw new Error('文件导入失败，请检查文件格式、大小或本地服务后重试');
-          } else if (item.kind === 'wechat' && item.wechat) {
-            let job = await importWechatChat(item.wechat);
-            if (!job) throw new Error('微信提取未能启动，请检查微信引擎或等待已有任务完成');
-            const jobId = job.jobId;
-            let missed = 0;
-            while (job.status === 'running') {
-              updatePending(ids, { message: `${job.message} ${job.progress ?? 0}%` });
-              await pause();
-              const next = await getWechatImportStatus();
-              if (!next) { if (++missed >= 5) throw new Error('无法读取微信提取进度，请检查服务后重试'); continue; }
-              missed = 0;
-              if (next.jobId !== jobId) throw new Error('微信提取任务已变化，请检查资料后重试');
-              job = next;
-            }
-            if (job.status !== 'done') throw new Error(job.message || '微信聊天提取失败');
           } else if (item.kind === 'mail' && item.mail && item.email) {
             const started = await importMailMessages(item.email, item.mail.uidValidity, unit.map((entry) => ({ uid: entry.mail!.uid })));
             if (!started?.taskId) throw new Error('邮件导入未能启动，请检查账号、候选列表或等待已有邮箱任务完成');
@@ -228,7 +201,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           const reason = error instanceof Error ? error.message : '导入失败，请重试';
           updatePending(ids, { status: 'failed', message: item.kind === 'mail' ? `${reason}；同组已成功邮件会保留，重试自动跳过` : reason });
         }
-        await onWechatImported();
+        await onImportSubmitted();
       }
     } finally {
       batchRunning.current = false;
@@ -262,9 +235,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           <span className={`badge ${sidecarOnline ? 'done' : 'warn'}`} style={{ marginLeft: 2 }}>{sidecarOnline ? 'Sidecar 已连接' : '内置 Mock'}</span>
         </div>
         <div className="top-actions">
-          <button className="btn" disabled={batchBusy} onClick={() => setWechatOpen(true)}>
-            <IconChat size={15} />从微信库提取
-          </button>
           <button className="btn" disabled={batchBusy} onClick={() => setMailOpen(true)}>
             <IconFile size={15} />选择邮箱邮件
           </button>
@@ -299,12 +269,11 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           >
             <div className="drop-icon"><IconUpload size={28} /></div>
             <div className="drop-title">多种来源，加入清单后统一导入</div>
-            <div className="drop-sub">本地文件、微信聊天和勾选的邮箱邮件，可以一次提交</div>
+            <div className="drop-sub">本地文件和勾选的邮箱邮件，可以一次提交</div>
             <div className="drop-actions">
               <button className="btn primary" disabled={batchBusy} onClick={() => fileInput.current?.click()}>选择文件</button>
               <button className="btn" disabled={batchBusy} onClick={() => setPasteOpen(true)}>粘贴文本</button>
               <button className="btn" disabled={batchBusy} onClick={() => imageInput.current?.click()}>聊天截图</button>
-              <button className="btn" disabled={batchBusy} onClick={() => setWechatOpen(true)}>从微信库提取</button>
               <button className="btn" disabled={batchBusy} onClick={() => setMailOpen(true)}>选择邮箱邮件</button>
             </div>
             <div className="drop-hint">单文件最大 100 MB · 普通图片自动 OCR · 聊天截图请使用专用入口</div>
@@ -473,12 +442,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
         </div>
       </Modal>
 
-      <WeChatImportModal
-        open={wechatOpen}
-        onClose={() => setWechatOpen(false)}
-        onSelected={addWechat}
-        onToast={onToast}
-      />
       <MailImportModal open={mailOpen} onClose={() => setMailOpen(false)} onSelected={addMail} />
     </>
   );
