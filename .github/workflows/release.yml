@@ -48,16 +48,21 @@ jobs:
           Copy-Item (Join-Path $bin "ffmpeg.exe") (Join-Path $dir "ffmpeg.exe") -Force
 
       - name: Build frontend
-        run: npm run build
+        run: |
+          python scripts/build-wechat-component.py
+          git diff --exit-code -- electron/wechat-component.json
+          if ($LASTEXITCODE -ne 0) { throw "Optional component checksum differs from the tagged source" }
+          npm run build
 
       - name: Build Python sidecar
         shell: pwsh
         run: |
           pip install pyinstaller -r services/ai/requirements-dev.txt
+          python scripts/generate-icon.py
           python -m unittest discover -s services/ai -p "test_*.py"
           if ($LASTEXITCODE -ne 0) { throw "Sidecar regression tests failed" }
           powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python python
-          if (Get-ChildItem release/ai-sidecar/clienthub-ai -Recurse -Force -Filter .env) { throw "Refusing to package services/ai/.env into a release" }
+          if (Get-ChildItem release/ai-sidecar/clientatlas-ai -Recurse -Force -Filter .env) { throw "Refusing to package services/ai/.env into a release" }
 
       - name: Build web and offline installers
         shell: pwsh
@@ -72,6 +77,7 @@ jobs:
           node scripts/verify-release.cjs
           if ($LASTEXITCODE -ne 0) { throw "Release metadata verification failed" }
           python scripts/verify-packaged-sidecar.py
+          python scripts/verify-wechat-component.py
 
       - name: Publish complete release
         shell: pwsh
@@ -80,8 +86,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $version = [regex]::Escape($env:RELEASE_TAG.TrimStart('v'))
-          $assets = @((Get-ChildItem release,release/nsis-web -File | Where-Object { $_.Name -match "$version.*\.(exe|blockmap|nsis\.7z)$" }).FullName) + @((Get-Item release/latest.yml).FullName)
-          gh release create $env:RELEASE_TAG @assets --draft --verify-tag --title "ClientHub $env:RELEASE_TAG" --notes-file "docs/RELEASE-NOTES-$env:RELEASE_TAG.md"
+          $assets = @((Get-ChildItem release,release/nsis-web -File | Where-Object { $_.Name -match "$version.*\.(exe|blockmap|nsis\.7z)$" }).FullName) + @((Get-Item release/latest.yml).FullName) + @((Get-Item "release/components/ClientAtlas-WeChat-Engine-$($env:RELEASE_TAG.TrimStart('v')).zip").FullName)
+          gh release create $env:RELEASE_TAG @assets --draft --verify-tag --title "ClientAtlas $env:RELEASE_TAG" --notes-file "docs/RELEASE-NOTES-$env:RELEASE_TAG.md"
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }
           gh release edit $env:RELEASE_TAG --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Release publication failed" }
@@ -89,5 +95,5 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: clienthub-setup
+          name: clientatlas-setup
           path: release/*.exe

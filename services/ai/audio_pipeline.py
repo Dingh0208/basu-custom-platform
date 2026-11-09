@@ -29,7 +29,7 @@ def transcribe(path, *, ffmpeg, cache_dir, cache_key, recognize, check_active,
             raise RuntimeError("转写已停止")
         check_active()
 
-    with tempfile.TemporaryDirectory(prefix="clienthub-asr-") as temp:
+    with tempfile.TemporaryDirectory(prefix="clientatlas-asr-") as temp:
         work = Path(temp)
         manifest = work / "chunks.csv"
         # Leave headroom below Qwen's 60-second limit for MP3 frame padding.

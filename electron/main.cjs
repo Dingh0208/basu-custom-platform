@@ -5,6 +5,7 @@ const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const { version: appVersion } = require('../package.json');
+const wechatComponent = require('./wechat-component.cjs');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -46,6 +47,10 @@ function sidecarPidPath() {
   return path.join(app.getPath('userData'), 'clienthub-ai.pid');
 }
 
+const legacyUserDataDirs = ['ClientHub', 'clienthub'].map((name) => path.join(app.getPath('appData'), name));
+const existingLegacyUserDataDir = legacyUserDataDirs.find((directory) => fs.existsSync(directory));
+app.setPath('userData', existingLegacyUserDataDir || path.join(app.getPath('appData'), 'ClientHub'));
+
 function readSidecarPid() {
   try {
     const pid = Number(fs.readFileSync(sidecarPidPath(), 'utf8').trim());
@@ -76,11 +81,11 @@ function portListenerPid(port) {
   }
 }
 
-function isClientHubSidecar(pid) {
+function isClientAtlasSidecar(pid) {
   if (process.platform !== 'win32' || !pid) return false;
   try {
     const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
-    return output.toLowerCase().includes('clienthub-ai.exe');
+    return /client(?:hub|atlas)-ai\.exe/i.test(output);
   } catch {
     return false;
   }
@@ -90,19 +95,23 @@ function killStaleSidecars() {
   if (process.platform !== 'win32') return;
   // Prefer the PID recorded by this installation. The port fallback handles
   // old builds that did not write a PID file, but only when the listener is
-  // actually ClientHub's sidecar.
+  // actually ClientAtlas' sidecar.
   const recordedPid = readSidecarPid();
   if (recordedPid) killProcessTree(recordedPid);
   removeSidecarPid(recordedPid);
   const listenerPid = portListenerPid(8765);
-  if (listenerPid && listenerPid !== process.pid && isClientHubSidecar(listenerPid)) {
+  if (listenerPid && listenerPid !== process.pid && isClientAtlasSidecar(listenerPid)) {
     killProcessTree(listenerPid);
   }
 }
 
 function startPackagedSidecar() {
-  const sidecarExe = path.join(process.resourcesPath, 'ai-sidecar', 'clienthub-ai.exe');
-  if (!fs.existsSync(sidecarExe)) return false;
+  const sidecarDir = path.join(process.resourcesPath, 'ai-sidecar');
+  const sidecarExe = ['clientatlas-ai.exe', 'clienthub-ai.exe']
+    .map((name) => path.join(sidecarDir, name))
+    .find((file) => fs.existsSync(file));
+  if (!sidecarExe) return false;
+  const wechatEngineDir = wechatComponent.componentPath(app.getPath('userData'), process.resourcesPath);
   killStaleSidecars();
   sidecarProc = spawn(sidecarExe, ['--host', '127.0.0.1', '--port', '8765', '--parent-pid', String(process.pid)], {
     cwd: path.dirname(sidecarExe),
@@ -110,14 +119,23 @@ function startPackagedSidecar() {
     stdio: 'ignore',
     env: {
       ...process.env,
+      CLIENTATLAS_APP_VERSION: app.getVersion(),
       CLIENTHUB_APP_VERSION: app.getVersion(),
+      CLIENTATLAS_DATA_DIR: path.join(app.getPath('userData'), 'clienthub-data'),
       CLIENTHUB_DATA_DIR: path.join(app.getPath('userData'), 'clienthub-data'),
+      CLIENTATLAS_ENV_FILE: fs.existsSync(path.join(process.resourcesPath, 'ai-sidecar', '.env'))
+        ? path.join(process.resourcesPath, 'ai-sidecar', '.env')
+        : path.join(app.getPath('userData'), 'clienthub.env'),
       CLIENTHUB_ENV_FILE: fs.existsSync(path.join(process.resourcesPath, 'ai-sidecar', '.env'))
         ? path.join(process.resourcesPath, 'ai-sidecar', '.env')
         : path.join(app.getPath('userData'), 'clienthub.env'),
       FFMPEG_PATH: fs.existsSync(path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe'))
         ? path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe')
         : '',
+      WECHAT_DATA_ANALYSIS_BACKEND: wechatEngineDir ? path.join(wechatEngineDir, 'wechat-backend.exe') : '',
+      WECHAT_DATA_ANALYSIS_DATA_DIR: path.join(app.getPath('userData'), 'wechat-data'),
+      WECHAT_DATA_ANALYSIS_OUTPUT_DIR: path.join(app.getPath('userData'), 'wechat-data', 'output'),
+      WECHAT_DATA_ANALYSIS_PORT: '10393',
     },
   });
   try {
@@ -230,7 +248,7 @@ function sendUpdateStatus(status, version = '', extra = {}) {
   }
   latestUpdateStatus = { status, version, ...extra };
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('clienthub:update-status', latestUpdateStatus);
+  mainWindow.webContents.send('clientatlas:update-status', latestUpdateStatus);
 }
 
 function createWindow() {
@@ -241,7 +259,7 @@ function createWindow() {
     minHeight: 800,
     backgroundColor: '#f5f6f8',
     show: false,
-    title: 'ClientHub · 客户信息聚合工作台',
+    title: 'ClientAtlas · 客户信息聚合工作台',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -268,9 +286,9 @@ function createWindow() {
   });
 }
 
-ipcMain.handle('clienthub:save-clarification-pdf', async (event, payload) => {
+ipcMain.handle('clientatlas:save-clarification-pdf', async (event, payload) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Invalid PDF sender');
-  if (!payload || typeof payload.title !== 'string' || typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('Invalid PDF content');
+  if (!payload || typeof payload.title !== 'string' || typeof payload.date !== 'string' || !Array.isArray(payload.groups) || !payload.groups.length || payload.groups.some(group => typeof group.label !== 'string' || !Array.isArray(group.questions) || group.questions.some(question => ['text', 'priority', 'category', 'source'].some(key => typeof question[key] !== 'string')))) throw new Error('Invalid PDF content');
   const filename = payload.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 100) || '需求澄清问题';
   const destination = await dialog.showSaveDialog(mainWindow, {
     title: '保存需求澄清问题 PDF',
@@ -278,10 +296,10 @@ ipcMain.handle('clienthub:save-clarification-pdf', async (event, payload) => {
     filters: [{ name: 'PDF 文档', extensions: ['pdf'] }],
   });
   if (destination.canceled || !destination.filePath) return { canceled: true };
-  const escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const { renderClarificationDocument } = await import('./clarification-document.mjs');
   const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false } });
   try {
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<html><head><meta charset="utf-8"><title>${escapeHtml(payload.title)}</title><style>body{font-family:"Microsoft YaHei",sans-serif;padding:36px;color:#1f3331;line-height:1.7}h1{font-size:22px;margin:0 0 6px}p{white-space:pre-wrap;font-size:14px}</style></head><body><h1>${escapeHtml(payload.title)}</h1><p>${escapeHtml(payload.text)}</p></body></html>`)}`);
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderClarificationDocument(payload))}`);
     const pdf = await printWindow.webContents.printToPDF({ pageSize: 'A4', printBackground: true });
     await fs.promises.writeFile(destination.filePath, pdf);
     return { canceled: false };
@@ -290,7 +308,7 @@ ipcMain.handle('clienthub:save-clarification-pdf', async (event, payload) => {
   }
 });
 
-ipcMain.handle('clienthub:check-updates', async () => {
+ipcMain.handle('clientatlas:check-updates', async () => {
   if (isDev) return { status: 'dev' };
   if (['progress', 'downloaded', 'installing'].includes(latestUpdateStatus?.status)) return { status: latestUpdateStatus.status };
   try {
@@ -301,9 +319,9 @@ ipcMain.handle('clienthub:check-updates', async () => {
   }
 });
 
-ipcMain.handle('clienthub:get-update-state', () => latestUpdateStatus);
+ipcMain.handle('clientatlas:get-update-state', () => latestUpdateStatus);
 
-ipcMain.handle('clienthub:download-update', async () => {
+ipcMain.handle('clientatlas:download-update', async () => {
   if (isDev) return { status: 'dev' };
   try {
     sendUpdateStatus('progress', latestUpdateStatus?.version || '', { percent: 0, transferred: 0, total: 0 });
@@ -314,16 +332,16 @@ ipcMain.handle('clienthub:download-update', async () => {
   }
 });
 
-ipcMain.handle('clienthub:install-update', () => {
+ipcMain.handle('clientatlas:install-update', () => {
   if (isDev) return false;
   sendUpdateStatus('installing', latestUpdateStatus?.version || '');
   autoUpdater.quitAndInstall();
   return true;
 });
 
-ipcMain.handle('clienthub:configure-updates', (_event, settings = {}) => configureAutoUpdater(settings));
+ipcMain.handle('clientatlas:configure-updates', (_event, settings = {}) => configureAutoUpdater(settings));
 
-ipcMain.handle('clienthub:show-reminder', (event, payload) => {
+ipcMain.handle('clientatlas:show-reminder', (event, payload) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || !Notification.isSupported()) return false;
   if (!payload || typeof payload.title !== 'string' || typeof payload.body !== 'string') return false;
   return new Promise((resolve) => {
@@ -336,17 +354,33 @@ ipcMain.handle('clienthub:show-reminder', (event, payload) => {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
-      mainWindow.webContents.send('clienthub:open-reminder', typeof payload.todoId === 'string' ? payload.todoId : '');
+      mainWindow.webContents.send('clientatlas:open-reminder', typeof payload.todoId === 'string' ? payload.todoId : '');
     });
     notice.show();
   });
 });
 
-ipcMain.handle('clienthub:restart-sidecar', async () => {
+ipcMain.handle('clientatlas:restart-sidecar', async () => {
   if (!app.isPackaged) return { status: 'dev' };
   stopPackagedSidecar();
   if (!startPackagedSidecar()) return { status: 'missing' };
   return waitForSidecarHealth();
+});
+
+ipcMain.handle('clientatlas:wechat-component-status', () => ({
+  installed: Boolean(wechatComponent.componentPath(app.getPath('userData'), process.resourcesPath)),
+}));
+
+ipcMain.handle('clientatlas:wechat-component-download', async (event) => {
+  const result = await wechatComponent.installComponent(app.getPath('userData'), process.resourcesPath, (percent) => {
+    if (!event.sender.isDestroyed()) event.sender.send('clientatlas:wechat-component-progress', percent);
+  });
+  if (result.installed && app.isPackaged) {
+    stopPackagedSidecar();
+    startPackagedSidecar();
+    await waitForSidecarHealth();
+  }
+  return result;
 });
 
 app.whenReady().then(() => {

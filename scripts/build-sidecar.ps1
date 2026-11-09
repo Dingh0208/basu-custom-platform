@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $distDir = Join-Path $root "release\ai-sidecar"
-$outDir = Join-Path $distDir "clienthub-ai"
+$outDir = Join-Path $distDir "clientatlas-ai"
 $workDir = Join-Path $root "build\ai-sidecar"
 $specDir = Join-Path $root "build\ai-sidecar-spec"
 
@@ -29,7 +29,7 @@ try {
   $env:PATH = "$env:SystemRoot\System32;$buildOriginalPath"
   # Let NSIS compress the dependencies individually. A one-file executable
   # recompresses them on every build, reducing cross-version block reuse.
-  & $Python -m PyInstaller --noconfirm --clean --onedir --name clienthub-ai `
+  & $Python -m PyInstaller --noconfirm --clean --onedir --name clientatlas-ai `
     --collect-data rapidocr_onnxruntime --collect-submodules rapidocr_onnxruntime `
     --collect-binaries onnxruntime --collect-binaries pypdfium2 --collect-binaries pypdfium2_raw `
     --exclude-module PyQt5 --exclude-module PySide6 `
@@ -50,6 +50,6 @@ if ($IncludeEnv -and (Test-Path $envFile)) {
 }
 
 # The workspace may stamp generated executables with Low integrity.
-& icacls (Join-Path $outDir "clienthub-ai.exe") /setintegritylevel Medium | Out-Null
+& icacls (Join-Path $outDir "clientatlas-ai.exe") /setintegritylevel Medium | Out-Null
 
-Write-Host "Built: $outDir\clienthub-ai.exe"
+Write-Host "Built: $outDir\clientatlas-ai.exe"

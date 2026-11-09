@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ClarificationRecord, ImportRecord, LlmConfig, ProjectListItem, TaskRecord } from '../types';
+import { customerLabel, needsAssociation } from '../materials';
+import { renderClarificationDocument, type ClarificationDocument } from '../../electron/clarification-document.mjs';
+import Modal from './Modal';
+import { getDesktopBridge } from '../desktopBridge';
 import {
   cancelTask,
   appendClarificationSources,
@@ -11,6 +15,7 @@ import {
   fetchImports,
   fetchLlmConfig,
   fetchProjects,
+  getHealth,
   fetchTasks,
   duplicateClarification,
   downloadClarificationWord,
@@ -36,7 +41,7 @@ type ClarificationWorkspaceProps = {
   onToast: (message: string) => void;
 };
 
-type ScopeFilter = 'all' | 'unarchived';
+type ScopeFilter = 'all' | 'unlinked';
 
 type ClarificationActionForm = {
   action: 'requirement' | 'project';
@@ -56,6 +61,7 @@ const CLARIFICATION_CATEGORIES = [
   '业务目标/指标', '用户与流程', '一期范围', '平台与交互', '数据迁移',
   '接口与第三方', '权限/安全/合规', '性能/可靠性', '工期/预算/合同', '验收/上线/运维/售后',
 ];
+const EXPORT_PRIORITIES = ['must_confirm', 'important', 'later'] as const;
 
 function materialState(record: ImportRecord) {
   if (record.status === 'done' && (record.type === '音频' || record.type === '视频') && !record.transcriptId) return { readable: true, label: '确认后转写', reason: '开始分析后才会对这份音视频执行转写' };
@@ -63,7 +69,7 @@ function materialState(record: ImportRecord) {
   if (record.status === 'processing') return { readable: false, label: '处理中', reason: '资料仍在解析，完成后才能分析' };
   if (record.status === 'failed') return { readable: false, label: '不可读', reason: '导入处理失败，请回到导入中心重试' };
   if (record.status === 'cancelled') return { readable: false, label: '不可读', reason: '导入任务已取消，请重新导入' };
-  return { readable: false, label: '待归档', reason: '尚未完成客户识别与解析' };
+  return { readable: false, label: '未解析', reason: '资料尚未完成解析' };
 }
 
 function toSource(record: ImportRecord) {
@@ -71,7 +77,7 @@ function toSource(record: ImportRecord) {
   return {
     sourceType: record.transcriptId?.startsWith('chat-') ? 'chat' : record.transcriptId ? 'transcript' : 'import',
     sourceId: record.id,
-    customerId: record.customer === '待归档' ? '' : record.customer,
+    customerId: ['', '待归档', '待确认'].includes(record.customer) ? '' : record.customer,
     projectId: record.project === '—' ? '' : record.project,
     displayName: record.fileName,
     sourceKind: record.type,
@@ -107,10 +113,6 @@ function questionStatusLabel(status: string) {
 
 function conclusionLabel(type: string) {
   return ({ fact: '已知事实', inference: '推断', gap: '资料未提及/信息不足', conflict: '资料冲突' } as Record<string, string>)[type] || '待核验';
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] || character));
 }
 
 function languageLabel(language: string) {
@@ -164,6 +166,9 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   const [recordDateFilter, setRecordDateFilter] = useState('all');
   const [outputCustomer, setOutputCustomer] = useState('');
   const [outputProject, setOutputProject] = useState('');
+  const [exportFormat, setExportFormat] = useState<'word' | 'pdf' | null>(null);
+  const [exportPriorities, setExportPriorities] = useState<string[]>([...EXPORT_PRIORITIES]);
+  const [exportBusy, setExportBusy] = useState(false);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
   const [assignmentCustomer, setAssignmentCustomer] = useState('');
   const [assignmentProject, setAssignmentProject] = useState('');
@@ -228,7 +233,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   }, [online, selectedRecord?.id, selectedRecord?.status]);
 
   const customers = useMemo(() => {
-    const values = [initialCustomer, ...imports.map((item) => item.customer), ...records.flatMap((record) => record.customers ?? [])].filter((item) => item && item !== '待归档');
+    const values = [initialCustomer, ...imports.map((item) => item.customer), ...records.flatMap((record) => record.customers ?? [])].filter((item) => item && !['待归档', '待确认'].includes(item));
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, 'zh-CN'));
   }, [imports, initialCustomer, records]);
 
@@ -301,6 +306,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     if (outputProject && (item.projectId || '未归属项目') !== outputProject) return false;
     return true;
   }), [outputCustomer, outputProject, selectedRecord?.questions]);
+  const exportQuestions = publicQuestions.filter((question) => exportPriorities.includes(question.priority));
   const visibleRecords = useMemo(() => {
     const cutoff = recordDateFilter === 'all' ? 0 : Date.now() - Number(recordDateFilter) * 24 * 60 * 60 * 1000;
     return records.filter((record) => {
@@ -317,7 +323,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   const filteredMaterials = useMemo(() => imports.filter((item) => {
     if (customerFilter && item.customer !== customerFilter) return false;
     if (projectFilter && item.project !== projectFilter) return false;
-    if (scopeFilter === 'unarchived' && item.status !== 'inbox' && !['', '待归档', '待确认'].includes(item.customer)) return false;
+    if (scopeFilter === 'unlinked' && !needsAssociation(item)) return false;
     return true;
   }), [customerFilter, imports, projectFilter, scopeFilter]);
 
@@ -326,7 +332,10 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     [imports, selectedIds],
   );
   const readableSelected = selectedMaterials.filter((item) => materialState(item).readable);
-  const allFilteredSelected = filteredMaterials.length > 0 && filteredMaterials.every((item) => selectedIds.has(item.id));
+  const sourceIds = new Set((selectedRecord?.sources ?? []).map((source) => source.sourceId));
+  const lockedSourceIds = selectedRecord && !['draft', 'awaiting_confirmation'].includes(selectedRecord.status) ? sourceIds : new Set<string>();
+  const selectableMaterials = filteredMaterials.filter((item) => !lockedSourceIds.has(item.id));
+  const allFilteredSelected = selectableMaterials.length > 0 && selectableMaterials.every((item) => selectedIds.has(item.id));
 
   function resetEditor() {
     setSelectedRecord(null);
@@ -349,12 +358,13 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   }
 
   async function openRecord(id: string) {
-    const detail = await fetchClarification(id);
+    const [detail, importData] = await Promise.all([fetchClarification(id), fetchImports()]);
     if (!detail) {
       onToast('无法打开需求澄清单，请重试');
       return;
     }
     setSelectedRecord(detail);
+    if (importData) setImports(importData);
     setEditorOpen(true);
     setConfirmOpen(false);
     setOutputCustomer('');
@@ -382,7 +392,14 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   }
 
   function toggleMaterial(id: string) {
-    if (!appendMode && selectedRecord && !['draft', 'awaiting_confirmation'].includes(selectedRecord.status)) return;
+    if (lockedSourceIds.has(id)) return;
+    if (!canEditMaterials) {
+      if (canAppendMaterials) {
+        setAppendMode(true);
+        setSelectedIds(new Set([id]));
+      }
+      return;
+    }
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -392,11 +409,17 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
   }
 
   function toggleFiltered() {
-    if (!appendMode && selectedRecord && !['draft', 'awaiting_confirmation'].includes(selectedRecord.status)) return;
+    if (!canEditMaterials) {
+      if (canAppendMaterials && selectableMaterials.length) {
+        setAppendMode(true);
+        setSelectedIds(new Set(selectableMaterials.map((item) => item.id)));
+      }
+      return;
+    }
     setSelectedIds((current) => {
       const next = new Set(current);
-      if (allFilteredSelected) filteredMaterials.forEach((item) => next.delete(item.id));
-      else filteredMaterials.forEach((item) => next.add(item.id));
+      if (allFilteredSelected) selectableMaterials.forEach((item) => next.delete(item.id));
+      else selectableMaterials.forEach((item) => next.add(item.id));
       return next;
     });
   }
@@ -527,8 +550,11 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     onToast(incremental ? '增量分析已开始，旧问题和证据会保留' : '分析已开始，完成后会保留在当前澄清单');
   }
 
-  function beginAppendSources() {
+  async function beginAppendSources() {
     if (!selectedRecord || ['draft', 'awaiting_confirmation', 'analyzing', 'archived'].includes(selectedRecord.status)) return;
+    const importData = await fetchImports();
+    if (!importData) { onToast('资料列表刷新失败，请重试'); return; }
+    setImports(importData);
     setAppendMode(true);
     setSelectedIds(new Set());
     setCustomerFilter('');
@@ -811,12 +837,30 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     }
   }
 
+  function openExport(format: 'word' | 'pdf') {
+    setExportPriorities([...EXPORT_PRIORITIES]);
+    setExportFormat(format);
+  }
+
+  async function confirmExport() {
+    if (exportBusy || !exportFormat || !exportQuestions.length) return;
+    setExportBusy(true);
+    try {
+      const saved = exportFormat === 'word' ? await exportWord() : await printPublicQuestions();
+      if (saved) setExportFormat(null);
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   async function exportWord() {
-    if (!selectedRecord) return;
-    const blob = await downloadClarificationWord(selectedRecord.id, { customer: outputCustomer, project: outputProject });
+    if (!selectedRecord) return false;
+    const health = await getHealth();
+    if (!health || (health.apiRevision ?? 0) < 27) { onToast('请重启本地服务到 API27 后按所选范围导出 Word'); return false; }
+    const blob = await downloadClarificationWord(selectedRecord.id, { customer: outputCustomer, project: outputProject, priorities: exportPriorities });
     if (!blob) {
       onToast('Word 导出失败，请重试');
-      return;
+      return false;
     }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -826,22 +870,33 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     link.click();
     window.setTimeout(() => { URL.revokeObjectURL(url); link.remove(); }, 0);
     onToast('Word 文件已生成');
+    return true;
   }
 
   async function printPublicQuestions() {
-    const text = publicQuestionText();
-    if (!text) {
+    if (!exportQuestions.length) {
       onToast('当前筛选范围没有可导出的问题');
-      return;
+      return false;
     }
-    if (window.clientHub?.saveClarificationPdf) {
+    const groups = new Map<string, ClarificationDocument['groups'][number]>();
+    const priorityOrder = ['must_confirm', 'important', 'later'];
+    [...exportQuestions].sort((a, b) => priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority)).forEach((question) => {
+      const label = `${question.customerId || '未归属客户'} · ${question.projectId || '未归属项目'}`;
+      if (!groups.has(label)) groups.set(label, { label, questions: [] });
+      const excerpts = [...new Set(question.evidence.map((evidence) => evidence.excerpt.trim()).filter(Boolean))];
+      groups.get(label)!.questions.push({ text: question.text, priority: priorityLabel(question.priority), category: question.category || '其他', source: excerpts.map((excerpt) => `“${excerpt}”`).join('\n') || (question.generatedFrom === 'manual' ? '手动补充（无原文依据）' : '未记录原文依据（待补充）') });
+    });
+    const exportDocument: ClarificationDocument = { title: selectedRecord?.name || '需求澄清问题', date: new Date().toLocaleDateString('sv-SE'), groups: [...groups.values()] };
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge?.saveClarificationPdf) {
       try {
-        const result = await window.clientHub.saveClarificationPdf({ title: selectedRecord?.name || '需求澄清问题', text });
+        const result = await desktopBridge.saveClarificationPdf(exportDocument);
         if (!result.canceled) onToast('PDF 文件已保存');
+        return !result.canceled;
       } catch {
         onToast('PDF 导出失败，请重试');
+        return false;
       }
-      return;
     }
     const frame = document.createElement('iframe');
     frame.title = '需求澄清问题打印';
@@ -851,12 +906,16 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
     if (!printWindow) {
       frame.remove();
       onToast('无法打开打印页面，请重试');
-      return;
+      return false;
     }
     printWindow.document.open();
     printWindow.addEventListener('afterprint', () => frame.remove(), { once: true });
-    printWindow.document.write(`<html><head><title>${escapeHtml(selectedRecord?.name || '需求澄清问题')}</title><style>body{font-family:"Microsoft YaHei",sans-serif;padding:36px;color:#1f3331;line-height:1.7}h1{font-size:22px;margin:0 0 6px}p{white-space:pre-wrap;font-size:14px}</style></head><body><h1>${escapeHtml(selectedRecord?.name || '需求澄清问题')}</h1><p>${escapeHtml(text)}</p><script>window.onload=function(){window.print();}</script></body></html>`);
+    printWindow.document.write(renderClarificationDocument(exportDocument));
     printWindow.document.close();
+    await printWindow.document.fonts.ready;
+    printWindow.focus();
+    printWindow.print();
+    return true;
   }
 
   function beginQuestionEdit(question: ClarificationQuestion) {
@@ -972,6 +1031,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
 
   const editorTitle = selectedRecord ? '编辑需求澄清单' : '新建需求澄清单';
   const canEditMaterials = appendMode || !selectedRecord || ['draft', 'awaiting_confirmation'].includes(selectedRecord.status);
+  const canAppendMaterials = Boolean(selectedRecord && !['draft', 'awaiting_confirmation', 'analyzing', 'archived'].includes(selectedRecord.status));
   const hasAnalyzedSources = selectedRecord?.sources?.some((source) => source.analyzed) ?? false;
   const hasPendingSources = selectedRecord?.sources?.some((source) => source.readable && !source.analyzed) ?? false;
   const savedModel = selectedRecord?.modelSnapshot;
@@ -992,7 +1052,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
           {editorOpen && selectedRecord && <button className="btn" onClick={() => void duplicateSelectedRecord()}>复制为草稿</button>}
           {editorOpen && selectedRecord && selectedRecord.status !== 'archived' && <button className="btn" onClick={() => void changeRecordArchive('archived')}>归档</button>}
           {editorOpen && selectedRecord?.status === 'archived' && <button className="btn" onClick={() => void changeRecordArchive('active')}>恢复</button>}
-          {editorOpen && selectedRecord && !appendMode && !['draft', 'awaiting_confirmation', 'analyzing', 'archived'].includes(selectedRecord.status) && <button className="btn" onClick={beginAppendSources}>追加资料</button>}
+          {editorOpen && selectedRecord && !appendMode && canAppendMaterials && <button className="btn" onClick={() => void beginAppendSources()}>追加已导入资料</button>}
           {editorOpen && appendMode && <button className="btn" onClick={() => { setAppendMode(false); setSelectedIds(new Set((selectedRecord?.sources ?? []).map((source) => source.sourceId).filter(Boolean))); }}>取消追加</button>}
           {editorOpen && selectedRecord && <button className="btn danger-btn" onClick={() => void removeSelectedRecord()}>删除</button>}
           <button className="btn primary" onClick={resetEditor}>新建分析</button>
@@ -1010,30 +1070,37 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
               <p>先明确哪些资料会发送给模型；跨客户、跨项目的选择会保留在同一份澄清单中。</p>
             </div>
             <div className="clarification-editor-summary">
-              <strong>{selectedMaterials.length}</strong><span>已选资料</span>
+              <strong>{selectedMaterials.length}</strong><span>{appendMode ? '待追加资料' : '已选资料'}</span>
               <strong className={readableSelected.length ? 'is-ready' : 'is-blocked'}>{readableSelected.length}</strong><span>可分析</span>
             </div>
           </section>
 
           <section className="card clarification-selection-card">
             <div className="card-head">
-              <div><div className="card-title">1. 选择资料</div><div className="card-sub">可按客户、项目或未归档资料筛选，也可以跨范围组合</div></div>
-              <label className="clarification-select-all"><input type="checkbox" checked={allFilteredSelected} onChange={toggleFiltered} disabled={!filteredMaterials.length || !canEditMaterials} />全选当前结果</label>
+              <div><div className="card-title">1. 选择资料</div><div className="card-sub">可按客户、项目或未关联资料筛选，也可以跨范围组合</div></div>
+              <label className="clarification-select-all"><input type="checkbox" checked={allFilteredSelected} onChange={toggleFiltered} disabled={!selectableMaterials.length || (!canEditMaterials && !canAppendMaterials)} />全选当前结果</label>
             </div>
+            {canAppendMaterials && <div className="clarification-append-bar">
+              <span>本单已有 {selectedRecord?.sources?.length ?? 0} 份资料。勾选其他已导入资料后，可在本单继续分析；旧问题、回答和证据会保留。</span>
+              {appendMode
+                ? <button className="btn primary" disabled={saving || analysisBusy || !readableSelected.length} onClick={() => void openConfirmation()}>确认追加并继续分析（{selectedMaterials.length}）</button>
+                : <button className="btn" onClick={() => void beginAppendSources()}>追加已导入资料</button>}
+            </div>}
             <div className="clarification-filters">
               <label>客户<select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)}><option value="">全部客户</option>{customers.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
               <label>项目<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="">全部项目</option>{projectOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-              <label>资料范围<select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as ScopeFilter)}><option value="all">全部资料</option><option value="unarchived">仅未归档</option></select></label>
+              <label>资料范围<select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as ScopeFilter)}><option value="all">全部资料</option><option value="unlinked">仅未关联</option></select></label>
             </div>
             <div className="clarification-material-list">
               {filteredMaterials.length ? filteredMaterials.map((item) => {
                 const state = materialState(item);
-                const checked = selectedIds.has(item.id);
+                const locked = lockedSourceIds.has(item.id);
+                const checked = locked || selectedIds.has(item.id);
                 return (
-                  <label className={`clarification-material ${checked ? 'selected' : ''}`} key={item.id}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleMaterial(item.id)} disabled={!canEditMaterials} />
-                    <span className="clarification-material-main"><strong>{item.fileName}</strong><small>{item.type} · {item.customer || '未归属'} · {item.project || '未归属'} · {item.importedAt}</small></span>
-                    <span className={`clarification-readable ${state.readable ? 'ready' : 'blocked'}`}>{state.label}{!state.readable && <em>{state.reason}</em>}</span>
+                  <label className={`clarification-material ${checked ? 'selected' : ''} ${locked ? 'locked' : ''}`} key={item.id}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleMaterial(item.id)} disabled={locked || (!canEditMaterials && !canAppendMaterials)} />
+                    <span className="clarification-material-main"><strong>{item.fileName}</strong><small>{item.type} · {customerLabel(item.customer)} · {item.project && item.project !== '—' ? item.project : '未关联项目'} · {item.importedAt}</small></span>
+                    <span className={`clarification-readable ${state.readable ? 'ready' : 'blocked'}`}>{locked ? '已纳入本单' : state.label}{!locked && !state.readable && <em>{state.reason}</em>}</span>
                   </label>
                 );
               }) : <div className="clarification-empty">没有符合当前筛选条件的资料</div>}
@@ -1056,8 +1123,8 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
           {selectedRecord && (
             <section className="card clarification-question-card">
               <div className="card-head">
-                <div><div className="card-title">3. 问题工作台</div><div className="card-sub">按客户/项目分区，优先级在外层，固定行业维度在内层；证据只在应用内展示</div></div>
-                <div className="clarification-output-actions"><select value={outputCustomer} onChange={(event) => { setOutputCustomer(event.target.value); setOutputProject(''); }}><option value="">全部客户</option>{outputCustomerOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={outputProject} onChange={(event) => setOutputProject(event.target.value)}><option value="">全部项目</option>{outputProjectOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><button className="btn" onClick={() => void copyPublicQuestions()}>复制问题</button><button className="btn" onClick={() => void exportWord()}>导出 Word</button><button className="btn" onClick={printPublicQuestions}>保存 PDF</button><button className="btn" onClick={() => setCustomOpen((open) => !open)} disabled={questionBusy}>{customOpen ? '收起新增' : '新增问题'}</button></div>
+                <div><div className="card-title">3. 问题工作台</div><div className="card-sub">按客户/项目与优先级整理；Word/PDF 可选择导出范围，并附每题的原文依据</div></div>
+                <div className="clarification-output-actions"><select value={outputCustomer} onChange={(event) => { setOutputCustomer(event.target.value); setOutputProject(''); }}><option value="">全部客户</option>{outputCustomerOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={outputProject} onChange={(event) => setOutputProject(event.target.value)}><option value="">全部项目</option>{outputProjectOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><button className="btn" onClick={() => void copyPublicQuestions()}>复制问题</button><button className="btn" onClick={() => openExport('word')} disabled={!publicQuestions.length}>导出 Word</button><button className="btn" onClick={() => openExport('pdf')} disabled={!publicQuestions.length}>保存 PDF</button><button className="btn" onClick={() => setCustomOpen((open) => !open)} disabled={questionBusy}>{customOpen ? '收起新增' : '新增问题'}</button></div>
               </div>
               {customOpen && (
                 <div className="clarification-custom-form">
@@ -1165,7 +1232,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
               <div className="clarification-model-note"><span>默认文本模型</span><strong>{llm?.summaryModel || '未配置'}</strong><small>{llm?.hasKey ? '已配置 API Key' : '未配置 API Key，确认后仍可保存草稿'}</small></div>
             </div>
             <div className="clarification-editor-actions">
-              <button className="btn" onClick={() => void saveDraft()} disabled={saving || analysisBusy || selectedRecord?.status === 'analyzing'}>{saving ? '保存中…' : appendMode ? '确认新增资料并分析' : canEditMaterials ? '保存草稿' : '保存名称'}</button>
+              <button className="btn" onClick={() => void saveDraft()} disabled={saving || analysisBusy || selectedRecord?.status === 'analyzing'}>{saving ? '保存中…' : appendMode ? '确认追加并继续分析' : canEditMaterials ? '保存草稿' : '保存名称'}</button>
               {selectedRecord?.status === 'awaiting_confirmation' && <button className="btn primary" onClick={() => void startAnalysis()} disabled={saving || analysisBusy}>{analysisBusy ? '启动中…' : '开始分析'}</button>}
               {(!selectedRecord || selectedRecord.status === 'draft') && <button className="btn primary" onClick={() => void openConfirmation()} disabled={saving || analysisBusy}>确认资料并开始分析</button>}
             </div>
@@ -1174,7 +1241,7 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
       ) : (
         <div className="clarification-history">
           <section className="clarification-history-intro">
-            <div><span className="section-kicker">老板工作台</span><h1>把已有资料整理成一套可直接提问的问题</h1><p>先从客户、项目或未归档资料中选材。每次发送前都会逐条列出资料名称、类型、可读性和使用模型。</p></div>
+            <div><span className="section-kicker">老板工作台</span><h1>把已有资料整理成一套可直接提问的问题</h1><p>先从客户、项目或未关联资料中选材。每次发送前都会逐条列出资料名称、类型、可读性和使用模型。</p></div>
             <div className="clarification-history-stat"><strong>{visibleRecords.length}</strong><span>符合筛选的澄清单</span></div>
           </section>
           {metrics && <section className="clarification-metrics">
@@ -1198,6 +1265,20 @@ export default function ClarificationWorkspace({ online, initialCustomer = '', i
           </section>
         </div>
       )}
+
+      <Modal open={Boolean(exportFormat)} title={`导出 ${exportFormat === 'word' ? 'Word' : 'PDF'}`} subtitle="选择需要发送的问题，文档将附每题的原文依据。" onClose={() => { if (!exportBusy) setExportFormat(null); }} className="clarification-export-modal">
+        <div className="modal-body">
+          <p className="clarification-export-scope">{outputCustomer || '全部客户'} / {outputProject || '全部项目'}<span>可多选</span></p>
+          <div className="clarification-export-options">
+            {EXPORT_PRIORITIES.map((priority) => <label key={priority} className={exportPriorities.includes(priority) ? 'selected' : ''}>
+              <input type="checkbox" checked={exportPriorities.includes(priority)} disabled={exportBusy} onChange={(event) => setExportPriorities((current) => event.target.checked ? [...current, priority] : current.filter((item) => item !== priority))} />
+              <span>{priorityLabel(priority)}</span><small>{publicQuestions.filter((question) => question.priority === priority).length} 个问题</small>
+            </label>)}
+          </div>
+          <p className="clarification-export-summary" aria-live="polite">{exportQuestions.length ? <>将导出 <strong>{exportQuestions.length}</strong> 个问题及对应原句</> : '请选择至少一个有问题的分类'}</p>
+        </div>
+        <div className="modal-actions"><button className="btn" onClick={() => setExportFormat(null)} disabled={exportBusy}>取消</button><button className="btn primary" onClick={() => void confirmExport()} disabled={exportBusy || !exportQuestions.length}>{exportBusy ? '正在导出…' : `确认导出 ${exportFormat === 'word' ? 'Word' : 'PDF'}`}</button></div>
+      </Modal>
 
       {assignmentPreview && (
         <div className="clarification-modal-backdrop">

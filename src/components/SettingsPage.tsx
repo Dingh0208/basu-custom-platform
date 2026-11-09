@@ -22,6 +22,7 @@ import {
 import type { Health } from '../api/client';
 import { IconRefresh } from './Icons';
 import appPackage from '../../package.json';
+import { getDesktopBridge } from '../desktopBridge';
 
 type SettingsPageProps = {
   onToast: (message: string) => void;
@@ -110,7 +111,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
   const backupInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: { status: string; version?: string; percent?: number }) => void) => (() => void) | void; getUpdateState?: () => Promise<{ status: string; version?: string; percent?: number } | null> } }).clientHub;
+    const bridge = getDesktopBridge();
     if (!bridge?.onUpdateStatus) return;
     let receivedEvent = false;
     const applyUpdateState = (payload: { status: string; version?: string; percent?: number }) => {
@@ -192,7 +193,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
   async function checkUpdates() {
     setUpdatePhase('checking');
     setUpdateStatus('正在检查更新…');
-    const bridge = (window as unknown as { clientHub?: { checkForUpdates?: () => Promise<{ status: string }> } }).clientHub;
+    const bridge = getDesktopBridge();
     if (!bridge?.checkForUpdates) {
       setUpdateStatus('开发模式下暂不提供更新检查');
       return;
@@ -203,7 +204,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
   }
 
   async function downloadUpdate() {
-    const bridge = (window as unknown as { clientHub?: { downloadUpdate?: () => Promise<{ status: string }> } }).clientHub;
+    const bridge = getDesktopBridge();
     setUpdatePhase('progress');
     setUpdateProgress(0);
     setUpdateStatus('正在进行更新…');
@@ -215,7 +216,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
   }
 
   async function installUpdate() {
-    const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
+    const bridge = getDesktopBridge();
     setUpdatePhase('installing');
     setUpdateStatus('正在安装更新…');
     const started = await bridge?.installUpdate?.();
@@ -233,7 +234,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
     if (!health || health.status !== 'ok') {
       setDiagnosticMessage('检测失败：127.0.0.1:8765 无响应。安装版可点击“启动 / 重启服务”；开发模式请在终端运行 pnpm electron:dev。');
     } else if ((health.apiRevision ?? 0) < 5) {
-      setDiagnosticMessage(`Sidecar 可连接，但版本 ${health.version || '未知'} / API ${health.apiRevision ?? '未知'} 较旧，缺少当前诊断接口。请退出旧版 ClientHub 后启动新版；若是开发环境，请停止旧进程并重新运行 pnpm electron:dev。`);
+      setDiagnosticMessage(`Sidecar 可连接，但版本 ${health.version || '未知'} / API ${health.apiRevision ?? '未知'} 较旧，缺少当前诊断接口。请退出旧版 ClientAtlas 后启动新版；若是开发环境，请停止旧进程并重新运行 pnpm electron:dev。`);
     } else if (!diag) {
       setDiagnosticMessage(`Sidecar ${health.version} 已连接，但详细诊断接口暂不可用。可重试检测，或启动 / 重启本地服务。`);
     } else {
@@ -246,7 +247,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
     setDiagnosticBusy(true);
     setDiagnosticMessage('正在启动 Sidecar 并等待健康检查…');
     try {
-      const bridge = (window as unknown as { clientHub?: { restartSidecar?: () => Promise<{ status: string; version?: string; apiRevision?: number }> } }).clientHub;
+      const bridge = getDesktopBridge();
       const result = await bridge?.restartSidecar?.();
       if (!result || result.status === 'dev') {
         setDiagnosticBusy(false);
@@ -255,12 +256,12 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
       }
       if (result.status === 'missing') {
         setDiagnosticBusy(false);
-        setDiagnosticMessage('未找到内置 Sidecar 程序。请重新安装 ClientHub，或检查安装目录中的 resources/ai-sidecar/clienthub-ai.exe。');
+        setDiagnosticMessage('未找到内置 Sidecar 程序。请重新安装 ClientAtlas，或检查安装目录中的 resources/ai-sidecar/clientatlas-ai.exe。');
         return;
       }
       if (result.status === 'legacy') {
         await refreshDiagnostics();
-        setDiagnosticMessage(`服务仍由旧版 ${result.version || '未知'} / API ${result.apiRevision ?? '未知'} 响应。请完全退出所有 ClientHub 窗口后重新打开；不要结束不明来源的本地进程。`);
+        setDiagnosticMessage(`服务仍由旧版 ${result.version || '未知'} / API ${result.apiRevision ?? '未知'} 响应。请完全退出所有 ClientAtlas 窗口后重新打开；不要结束不明来源的本地进程。`);
         return;
       }
       if (result.status !== 'ready') {
@@ -271,7 +272,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
       await refreshDiagnostics();
     } catch {
       setDiagnosticBusy(false);
-      setDiagnosticMessage('启动 Sidecar 时发生错误。请重新检测；若持续失败，请重启 ClientHub 并检查安装目录。');
+      setDiagnosticMessage('启动 Sidecar 时发生错误。请重新检测；若持续失败，请重启 ClientAtlas 并检查安装目录。');
     }
   }
 
@@ -341,7 +342,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
       return;
     }
     setAppSettings(result);
-    const bridge = (window as unknown as { clientHub?: { configureUpdates?: (settings: { enabled: boolean; intervalHours: number }) => Promise<boolean> } }).clientHub;
+    const bridge = getDesktopBridge();
     await bridge?.configureUpdates?.({ enabled: result.autoUpdate, intervalHours: result.updateIntervalHours });
     setAppBusy(false);
     setAppMessage('应用设置已保存');
@@ -397,7 +398,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `clienthub-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
+    link.download = `clientatlas-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
     link.click();
     URL.revokeObjectURL(url);
     setBackupBusy(null);
@@ -515,7 +516,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
 
           <section className="card settings-section" id="settings-import" hidden={activeSection !== 'import'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">02</span><div><div className="card-title">导入默认值</div><div className="card-sub">新资料会沿用这些偏好</div></div></div></div>
-            <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示不指定" /></label><div className="settings-toggle-row"><div><strong>新资料自动 AI 分析</strong><span>开启后自动识别客户并执行完整 AI 导入流程；关闭后仅本地解析，音视频在需求澄清时转写</span></div><button className={`switch ${appSettings.aiImportEnabled ? 'on' : ''}`} role="switch" aria-checked={appSettings.aiImportEnabled} disabled={appBusy} onClick={() => void toggleAiImport()} aria-label="新资料自动 AI 分析" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入默认值'}</button>{appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}</div>
+            <div className="settings-form-stack"><label>默认负责人<input value={appSettings.defaultOwner} onChange={(e) => setAppSettings((current) => ({ ...current, defaultOwner: e.target.value }))} placeholder="例如：王总" /></label><label>默认项目<input value={appSettings.defaultProject} onChange={(e) => setAppSettings((current) => ({ ...current, defaultProject: e.target.value }))} placeholder="留空表示不指定" /></label><div className="settings-toggle-row"><div><strong>新资料自动 AI 分析</strong><span>开启后自动转写/解析并生成摘要与需求；客户和项目仍由你在导入时选择，未选择时保持未关联</span></div><button className={`switch ${appSettings.aiImportEnabled ? 'on' : ''}`} role="switch" aria-checked={appSettings.aiImportEnabled} disabled={appBusy} onClick={() => void toggleAiImport()} aria-label="新资料自动 AI 分析" /></div><button className="btn primary settings-save-btn" onClick={() => void saveApplicationSettings()} disabled={appBusy}>{appBusy ? '保存中…' : '保存导入默认值'}</button>{appMessage && <div className="llm-result settings-feedback" aria-live="polite">{appMessage}</div>}</div>
           </section>
 
           <section className="card settings-section" id="settings-updates" hidden={activeSection !== 'updates'}>
@@ -535,7 +536,7 @@ export default function SettingsPage({ onToast, onDataChanged, onOpenMailImport 
             </div>
           </section>
           <section className="card settings-section" id="settings-about" hidden={activeSection !== 'about'}>
-            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">08</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientHub {appPackage.version} · API revision {sidecarHealth?.apiRevision ?? '—'}</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
+            <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">08</span><div><div className="card-title">隐私与关于</div><div className="card-sub">本地优先，便于排查和恢复</div></div></div></div><div className="privacy-note"><strong>密钥存储</strong><span>{diagnostics?.apiKeyStorage || 'Windows DPAPI'}</span></div><div className="privacy-note"><strong>原始文件</strong><span>默认只保存在本机，不会自动上传</span></div><div className="privacy-note"><strong>当前版本</strong><span>ClientAtlas {appPackage.version} · API revision {sidecarHealth?.apiRevision ?? '—'}</span></div><div className="small-note">删除客户、恢复备份和删除 API Key 都会影响本机数据，请在操作前确认。</div>
           </section>
           <section className="card settings-section" id="settings-mail" hidden={activeSection !== 'mail'}>
             <div className="card-head settings-card-head"><div className="settings-section-heading"><span className="settings-section-index">09</span><div><div className="card-title">QQ 邮箱</div><div className="card-sub">IMAP 收件箱 · 手动拉取</div></div></div></div>

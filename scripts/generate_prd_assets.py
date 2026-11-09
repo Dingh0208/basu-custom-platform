@@ -56,7 +56,7 @@ def architecture():
     W, H = 1600, 1000
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
-    d.text((60, 35), "ClientHub 系统架构", font=font(46, True), fill="#1F4E79")
+    d.text((60, 35), "ClientAtlas 系统架构", font=font(46, True), fill="#1F4E79")
     d.text((60, 95), "Windows 单机桌面应用 · 本地数据 · 云端 AI（脱敏调用）", font=font(26), fill="#6B7280")
 
     d.rounded_rectangle((60, 150, 1540, 430), radius=24, fill="#F8FAFC", outline="#94A3B8", width=4)
@@ -83,7 +83,7 @@ def data_model():
     W, H = 1600, 1000
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
-    d.text((60, 35), "ClientHub 核心数据模型", font=font(46, True), fill="#1F4E79")
+    d.text((60, 35), "ClientAtlas 核心数据模型", font=font(46, True), fill="#1F4E79")
     d.text((60, 95), "客户 → 项目 → 沟通 → 消息；项目 → 需求 → 需求版本", font=font(26), fill="#6B7280")
 
     boxes = {

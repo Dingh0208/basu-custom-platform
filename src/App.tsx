@@ -11,7 +11,6 @@ import Toast from './components/Toast';
 import GlobalSearch from './components/GlobalSearch';
 import TodoWorkspace from './components/TodoWorkspace';
 import ClarificationWorkspace from './components/ClarificationWorkspace';
-import InboxArchive, { needsArchive } from './components/InboxArchive';
 import MaterialsPage from './components/MaterialsPage';
 import PersonalProfileModal, { defaultProfile } from './components/PersonalProfileModal';
 import NotificationCenter from './components/NotificationCenter';
@@ -22,6 +21,8 @@ import {
   createChatImport,
   createChatScreenshot,
   createImport,
+  createCustomer,
+  createCustomerProject,
   deleteImport,
   fetchChat,
   fetchAppSettings,
@@ -80,9 +81,10 @@ function fileToBase64(file: File): Promise<string> {
 export default function App() {
   const [view, setView] = useState<View>(() => {
     const value = new URLSearchParams(window.location.search).get('view');
-    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'inbox' || value === 'materials' || value === 'clarifications' ? value : 'home';
+    if (value === 'inbox') return 'materials';
+    return value === 'home' || value === 'transcript' || value === 'customers' || value === 'chat' || value === 'settings' || value === 'projects' || value === 'import' || value === 'todos' || value === 'materials' || value === 'clarifications' ? value : 'home';
   });
-  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'inbox' | 'materials' | 'clarifications'>(() =>
+  const [transcriptOrigin, setTranscriptOrigin] = useState<'import' | 'customers' | 'materials' | 'clarifications'>(() =>
     new URLSearchParams(window.location.search).get('from') === 'clarifications' ? 'clarifications' : 'import',
   );
   const [imports, setImports] = useState<ImportRecord[]>(initialImports);
@@ -104,7 +106,6 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState(defaultProfile);
   const [todoFocus, setTodoFocus] = useState('');
-  const [inboxFocus, setInboxFocus] = useState(() => new URLSearchParams(window.location.search).get('id') || '');
   const [customerFocus, setCustomerFocus] = useState(() => ({ customer: new URLSearchParams(window.location.search).get('customer') || '', requirement: new URLSearchParams(window.location.search).get('requirement') || '' }));
   const [projectFocus, setProjectFocus] = useState(() => new URLSearchParams(window.location.search).get('project') || '');
   const [clarificationScope, setClarificationScope] = useState(() => ({ customer: new URLSearchParams(window.location.search).get('customer') || '', project: new URLSearchParams(window.location.search).get('project') || '' }));
@@ -199,7 +200,7 @@ export default function App() {
           if (record.status !== 'processing') return record;
           const next = Math.min(100, record.progress + 20);
           if (next >= 100) {
-            return { ...record, progress: 100, status: 'done', customer: record.customer === '待归档' ? '待确认' : record.customer };
+            return { ...record, progress: 100, status: 'done', customer: record.customer === '待归档' ? '' : record.customer };
           }
           return { ...record, progress: next };
         }),
@@ -258,8 +259,6 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  const inboxCount = useMemo(() => imports.filter(needsArchive).length, [imports]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -349,11 +348,6 @@ export default function App() {
       navigateTo('projects');
       return;
     }
-    if (label === '待归档') {
-      setInboxFocus('');
-      navigateTo('inbox');
-      return;
-    }
     if (label === '资料') {
       navigateTo('materials');
       return;
@@ -371,12 +365,11 @@ export default function App() {
       for (const file of files) {
         try {
           const type = inferType(file.name);
-          const known = /张三|某某科技|会员小程序/.test(file.name);
           const chosenProject = projects.find((project) => project.name === selectedProject);
           const manualCustomer = chosenProject?.customer || selectedCustomer;
           if (type === '聊天记录' && file.size <= 8 * 1024 * 1024) {
             const text = await file.text();
-            const chat = await createChatImport(text, { fileName: file.name, manualCustomer, candidateCustomer: known ? '张三' : undefined, project: selectedProject });
+            const chat = await createChatImport(text, { fileName: file.name, manualCustomer, project: selectedProject });
             if (chat?.chatId) continue;
           }
           if (type === '图片' && chatScreenshot) {
@@ -390,7 +383,6 @@ export default function App() {
             const imageBase64 = await fileToBase64(file);
             const chat = await createChatScreenshot(imageBase64, file.type || 'image/png', file.name, {
               manualCustomer,
-              candidateCustomer: known ? '张三' : undefined,
               project: selectedProject || undefined,
             });
             if (chat?.id) {
@@ -414,7 +406,6 @@ export default function App() {
             type,
             size: formatSize(file.size),
             manualCustomer,
-            candidateCustomer: known ? '张三' : undefined,
             project: selectedProject || '—',
             kind: type,
             contentBase64,
@@ -443,7 +434,7 @@ export default function App() {
         fileName: file.name,
         type,
         size: formatSize(file.size),
-        customer: known ? '张三' : '待归档',
+        customer: known ? '张三' : '',
         project: selectedProject || '—',
         status: 'processing',
         progress: 0,
@@ -457,8 +448,9 @@ export default function App() {
   }
 
   async function refreshImports() {
-    const [data, projectData] = await Promise.all([fetchImports(), fetchProjects()]);
+    const [data, projectData, customerData] = await Promise.all([fetchImports(), fetchProjects(), fetchCustomers()]);
     if (data) setImports(data);
+    if (customerData) setCustomers(customerData);
     if (projectData) {
       // 过滤掉已归档的项目
       const activeProjects = filterActiveProjects(projectData);
@@ -521,7 +513,7 @@ export default function App() {
       fileName: `粘贴文本_${new Date().toLocaleDateString('zh-CN')}.txt`,
       type: '聊天记录',
       size: `${text.length} 字`,
-      customer: known ? '张三' : '待归档',
+      customer: known ? '张三' : '',
       project: selectedProject || '—',
       status: 'processing',
       progress: 0,
@@ -540,12 +532,7 @@ export default function App() {
     window.open(importFileUrl(record.id), '_blank', 'noopener,noreferrer');
   }
 
-  async function handleOpenRecord(record: ImportRecord, origin: 'import' | 'customers' | 'inbox' | 'materials' = 'import', preview = false) {
-    if (needsArchive(record) && !preview) {
-      setInboxFocus(record.id);
-      navigateTo('inbox', { id: record.id });
-      return;
-    }
+  async function handleOpenRecord(record: ImportRecord, origin: 'import' | 'customers' | 'materials' = 'import', preview = false) {
     if (record.status === 'processing') {
       if (preview && !record.transcriptId) { previewOriginal(record); return; }
       showToast('文件仍在处理中，请稍候');
@@ -592,7 +579,6 @@ export default function App() {
         profile={profile}
         onProfile={() => setProfileOpen(true)}
         active={view === 'transcript' || view === 'chat' ? transcriptOrigin : view}
-        inboxCount={inboxCount}
         onNavigate={handleNavigate}
       />
       <main className={`main${(view === 'transcript' || view === 'chat') && transcriptOrigin === 'clarifications' ? ' clarification-source-view' : ''}`}>
@@ -605,13 +591,11 @@ export default function App() {
             onOpenRecord={(record) => handleOpenRecord(record, 'import')}
             onToast={showToast}
           />
-        ) : view === 'inbox' ? (
-          <InboxArchive imports={imports} online={sidecarOnline} initialId={inboxFocus} onArchived={refreshImports} onNavigate={handleNavigate} onPreview={(record) => void handleOpenRecord(record, 'inbox', true)} onDelete={(record) => void handleDeleteRecord(record)} />
         ) : view === 'materials' ? (
-          <MaterialsPage imports={imports} onPreview={(record) => void handleOpenRecord(record, 'materials', true)} onNavigate={handleNavigate} />
+          <MaterialsPage imports={imports} online={sidecarOnline} onPreview={(record) => void handleOpenRecord(record, 'materials', true)} onNavigate={handleNavigate} onRefresh={refreshImports} onToast={showToast} />
         ) : view === 'import' ? (
           <ImportCenter
-            onInbox={() => handleNavigate('待归档')}
+            onMaterials={() => handleNavigate('资料')}
             imports={imports}
             sidecarOnline={sidecarOnline}
             onAddFiles={handleAddFiles}
@@ -622,6 +606,20 @@ export default function App() {
             onDeleteRecord={handleDeleteRecord}
             projects={projects}
             customers={customers.map((customer) => customer.name)}
+            onCustomerCreated={async (data) => {
+              const created = await createCustomer(data);
+              if (!created) return null;
+              setCustomers((current) => [...current.filter((item) => item.name !== created.name), created]);
+              return created;
+            }}
+            onProjectCreated={async (customer, data) => {
+              const created = await createCustomerProject(customer, data);
+              if (created) {
+                const projectData = await fetchProjects();
+                if (projectData) setProjects(filterActiveProjects(projectData));
+              }
+              return created;
+            }}
             selectedCustomer={selectedCustomer}
             onCustomerChange={(name) => {
               setSelectedCustomer(name);

@@ -1,4 +1,4 @@
-export type View = 'home' | 'import' | 'inbox' | 'materials' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos' | 'clarifications';
+export type View = 'home' | 'import' | 'materials' | 'transcript' | 'customers' | 'chat' | 'settings' | 'projects' | 'todos' | 'clarifications';
 
 export interface PersonalProfile {
   name: string;
@@ -405,7 +405,6 @@ export interface ProductMetrics {
   importsSuccessRate: ProductMetric;
   parseCompletionRate: ProductMetric;
   parseP95Seconds: ProductMetric;
-  customerMatchAccuracy: ProductMetric;
   requirementEffectiveness: ProductMetric;
   nextActionLatencyMinutes: ProductMetric;
   weeklyActiveCustomers: ProductMetric;
@@ -444,6 +443,17 @@ export interface MailMessage {
   sentAt: string;
   size: number;
   error: string;
+}
+
+export interface WeChatImportSelection {
+  account: string;
+  username: string;
+  startDate: string;
+  endDate: string;
+  types: string[];
+  customer: string;
+  project: string;
+  messageCount: number;
 }
 
 export interface MailConnectionTest {
@@ -485,6 +495,7 @@ export interface Diagnostics {
   backups: number;
   apiKeyStorage: string;
   ffmpeg: { available: boolean; path: string };
+  wechatEngine?: { available: boolean; path: string };
 }
 
 export interface LlmConfig {
@@ -517,6 +528,55 @@ export interface CustomerProfile {
   recordCount: number;
   lastAt: string;
   project: string;
+}
+
+export interface WeChatAccountInfo {
+  account: string;
+  name?: string;
+  selfDisplayName?: string;
+}
+
+export interface WeChatJob {
+  jobId?: string;
+  status: 'idle' | 'running' | 'done' | 'failed' | string;
+  phase?: string;
+  progress: number;
+  message: string;
+  error?: string;
+  current?: number;
+  total?: number;
+  currentFile?: string;
+  account?: string;
+  chatId?: string;
+  importId?: string;
+  sessionName?: string;
+  messageCount?: number;
+  addedMessageCount?: number;
+  duplicate?: boolean;
+}
+
+export interface WeChatStatus {
+  available: boolean;
+  port?: number;
+  error?: string;
+  repairSteps?: string[];
+  logPath?: string;
+  tempDir?: string;
+  retryAfterSeconds?: number;
+  accounts: string[];
+  defaultAccount?: string | null;
+  accountInfos: WeChatAccountInfo[];
+  prepared?: boolean;
+  prepareJob?: WeChatJob;
+}
+
+export interface WeChatSession {
+  id: string;
+  username: string;
+  name: string;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
 }
 
 export interface CustomerTimelineEntry {

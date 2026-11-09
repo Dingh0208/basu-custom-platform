@@ -114,6 +114,42 @@ class SalesTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 main.ThreadingHTTPServer(('127.0.0.1', server.server_port), main.Handler)
 
+    def test_delete_task_record_preserves_material_and_rejects_active_worker(self):
+        self.import_record("kept-material", status="done")
+        task_id = main.create_task("import_document", import_id="kept-material")
+        self.assertEqual(self.request(f"/api/tasks/{task_id}/record", "DELETE")[0], 409)
+        main.set_task_running(task_id)
+        self.assertEqual(self.request(f"/api/tasks/{task_id}/record", "DELETE")[0], 409)
+        self.assertEqual(self.request(f"/api/tasks/{task_id}", "DELETE")[1]["status"], "cancelled")
+        release_worker = threading.Event()
+        worker = threading.Thread(target=release_worker.wait, name=task_id)
+        worker.start()
+        try:
+            self.assertEqual(self.request(f"/api/tasks/{task_id}/record", "DELETE")[0], 409)
+        finally:
+            release_worker.set()
+            worker.join(timeout=2)
+        status, result = self.request(f"/api/tasks/{task_id}/record", "DELETE")
+        self.assertEqual((status, result), (200, {"deleted": task_id}))
+        self.assertNotIn(task_id, [item["id"] for item in self.request("/api/tasks")[1]])
+        self.assertEqual(self.request(f"/api/tasks/{task_id}")[0], 404)
+        self.assertEqual(self.request(f"/api/tasks/{task_id}/retry", "POST", {})[0], 404)
+        self.assertEqual(self.request(f"/api/tasks/{task_id}/record", "DELETE")[0], 404)
+        self.assertEqual(self.request("/api/imports")[1][0]["id"], "kept-material")
+
+    def test_delete_task_record_waits_for_mail_parent_and_keeps_other_tasks(self):
+        completed = main.create_task("import_document")
+        other = main.create_task("chat_analysis")
+        main.finish_task(completed, "succeeded")
+        main.finish_task(other, "failed", error="可重试")
+        parent = main.create_task("mail_import")
+        self.assertEqual(self.request(f"/api/tasks/{completed}/record", "DELETE")[0], 409)
+        main.finish_task(parent, "succeeded")
+        self.assertEqual(self.request(f"/api/tasks/{completed}/record", "DELETE")[0], 200)
+        self.assertEqual(main.get_task(parent)["status"], "succeeded")
+        self.assertEqual(main.get_task(other)["status"], "failed")
+        self.assertEqual(self.request(f"/api/tasks/{other}/record", "DELETE")[0], 200)
+
     def test_ai_import_setting_defaults_off_and_migrates_legacy_preferences(self):
         with main.db() as conn:
             conn.execute("DELETE FROM settings WHERE key IN ('app.aiImportEnabled','app.autoMatch','app.autoProcess')")
@@ -555,6 +591,18 @@ class SalesTests(unittest.TestCase):
         payload['project'] = '不存在'
         self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 400)
 
+    def test_unlinked_material_can_attach_customer_then_project(self):
+        self.import_record('unlinked', 'done')
+        self.assertEqual(self.request('/api/imports/archive', 'POST', {'ids': ['unlinked'], 'customer': '测试客户'})[0], 200)
+        first = self.request('/api/imports')[1][0]
+        self.assertEqual((first['customer'], first['project'], first['status']), ('测试客户', '—', 'done'))
+        self.assertEqual(self.request('/api/imports/archive', 'POST', {'ids': ['unlinked'], 'customer': '测试客户'})[0], 200)
+        self.assertEqual(self.request('/api/imports/archive', 'POST', {'ids': ['unlinked'], 'customer': '不存在', 'project': '测试项目'})[0], 400)
+        self.assertEqual(self.request('/api/imports/archive', 'POST', {'ids': ['unlinked'], 'customer': '测试客户', 'project': '测试项目'})[0], 200)
+        second = self.request('/api/imports')[1][0]
+        self.assertEqual((second['customer'], second['project']), ('测试客户', '测试项目'))
+        self.assertEqual(self.request('/api/imports/archive', 'POST', {'ids': ['unlinked'], 'customer': '测试客户'})[0], 200)
+
     def test_archive_shared_source_requires_all_affected_imports(self):
         for record_id in ('pending-a', 'pending-b'):
             self.import_record(record_id)
@@ -564,6 +612,143 @@ class SalesTests(unittest.TestCase):
         self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 400)
         payload['ids'].append('pending-b')
         self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 200)
+
+    def test_batch_association_keeps_unselected_material_and_rolls_back_conflicts(self):
+        self.import_record('batch-new', 'done')
+        self.import_record('batch-partial', 'done', '测试客户')
+        self.import_record('unselected', 'done')
+        self.import_record('other-customer', 'done', '其他客户')
+        self.import_record('shared-source-other', 'done', '其他客户')
+        with main.db() as conn:
+            conn.execute("UPDATE imports SET transcript_id='tr-shared-move' WHERE id IN ('other-customer','shared-source-other')")
+        payload = {'ids': ['batch-new', 'other-customer'], 'customer': '测试客户', 'project': '测试项目'}
+        self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 400)
+        with main.db() as conn:
+            self.assertEqual(conn.execute("SELECT customer FROM imports WHERE id='batch-new'").fetchone()[0], '待归档')
+        payload['ids'] = ['batch-new', 'batch-partial']
+        status, result = self.request('/api/imports/archive', 'POST', payload)
+        self.assertEqual((status, result['updated']), (200, payload['ids']))
+        records = {item['id']: item for item in self.request('/api/imports')[1]}
+        for record_id in payload['ids']:
+            self.assertEqual((records[record_id]['customer'], records[record_id]['project']), ('测试客户', '测试项目'))
+        self.assertEqual(records['unselected']['customer'], '待归档')
+        self.assertEqual(records['other-customer']['customer'], '其他客户')
+
+    def test_batch_association_enforces_200_material_limit(self):
+        with main.db() as conn:
+            conn.executemany("INSERT INTO imports(id,file_name,type,size,customer,project,status,progress,imported_at) VALUES (?,?,'PDF','1 KB','待归档','—','done',100,'2026-11-09')", [(f'batch-{index}', f'{index}.pdf') for index in range(201)])
+        ids = [f'batch-{index}' for index in range(201)]
+        payload = {'ids': ids, 'customer': '测试客户'}
+        self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 400)
+        payload['ids'] = ids[:200]
+        self.assertEqual(self.request('/api/imports/archive', 'POST', payload)[0], 200)
+        with main.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM imports WHERE customer='测试客户'").fetchone()[0], 200)
+            self.assertEqual(conn.execute("SELECT customer FROM imports WHERE id='batch-200'").fetchone()[0], '待归档')
+
+    def test_associated_material_can_move_to_another_customer_and_project(self):
+        self.import_record('move-material', 'done', '测试客户')
+        main.update_customer('目标客户', {'company': '目标公司'})
+        main.create_project('目标客户', {'name': '目标项目', 'owner': '负责人乙'})
+        with main.db() as conn:
+            conn.execute("UPDATE imports SET transcript_id='tr-move-material' WHERE id='move-material'")
+            conn.execute("INSERT INTO transcripts(id,title,file_name,file_size,duration,imported_at,customer,company,project,source,segments_json,summary_json) VALUES ('tr-move-material','移动测试','move.pdf','1 KB',0,'2026-11-09','测试客户','测试公司','旧项目','文件','[]','{}')")
+            conn.execute("INSERT INTO requirements(id,customer,project,title,description,priority,status,source_type,source_id,created_at,updated_at) VALUES ('req-move','测试客户','旧项目','旧需求','旧描述','P1','pending','file','move-material','2026-11-09','2026-11-09')")
+        status, result = self.request('/api/imports/archive', 'POST', {'ids': ['move-material'], 'customer': '目标客户', 'project': '目标项目'})
+        self.assertEqual((status, result['updated']), (200, ['move-material']))
+        with main.db() as conn:
+            imported = conn.execute("SELECT customer,project FROM imports WHERE id='move-material'").fetchone()
+            transcript = conn.execute("SELECT customer,project FROM transcripts WHERE id='tr-move-material'").fetchone()
+            requirement = conn.execute("SELECT customer,project FROM requirements WHERE id='req-move'").fetchone()
+        self.assertEqual(tuple(imported), ('目标客户', '目标项目'))
+        self.assertEqual(tuple(transcript), ('目标客户', '目标项目'))
+        self.assertEqual(tuple(requirement), ('目标客户', '目标项目'))
+
+    def test_material_delete_endpoint_removes_terminal_record_and_rejects_processing(self):
+        self.import_record('delete-ready', 'done')
+        self.import_record('delete-running', 'processing')
+        self.assertEqual(self.request('/api/imports/delete-ready', 'DELETE')[0], 200)
+        self.assertEqual(self.request('/api/imports/delete-running', 'DELETE')[0], 400)
+        ids = {item['id'] for item in self.request('/api/imports')[1]}
+        self.assertNotIn('delete-ready', ids)
+        self.assertIn('delete-running', ids)
+
+    def test_import_ai_setting_routes_documents_and_chats_on_or_off(self):
+        for enabled in (True, False):
+            _, settings = self.request('/api/settings/app', 'POST', {'aiImportEnabled': enabled})
+            self.assertEqual(settings['aiImportEnabled'], enabled)
+            with patch('main.start_task') as start_task:
+                status, document = self.request('/api/imports', 'POST', {
+                    'fileName': f'ai-{enabled}.pdf', 'type': 'PDF', 'size': '1 KB',
+                    'contentBase64': base64.b64encode(f'%PDF-1.4 {enabled}'.encode()).decode(),
+                    'candidateCustomer': '不应自动关联',
+                })
+            self.assertEqual(status, 201)
+            self.assertEqual(document['status'], 'processing')
+            with main.db() as conn:
+                task = conn.execute('SELECT kind,payload_json FROM tasks WHERE id=?', (start_task.call_args.args[0],)).fetchone()
+            self.assertEqual(task['kind'], 'import_document')
+            self.assertEqual(json.loads(task['payload_json'])['aiEnabled'], enabled)
+            with patch('main.start_task') as start_chat:
+                status, chat = self.request('/api/imports/chat', 'POST', {
+                    'fileName': f'ai-chat-{enabled}.txt',
+                    'text': f'客户{enabled}：希望六月上线\n我：我们确认预算后排期',
+                    'candidateCustomer': '不应自动关联',
+                })
+            self.assertEqual(status, 201)
+            self.assertEqual(chat['status'], 'processing' if enabled else 'done')
+            self.assertEqual(start_chat.called, enabled)
+            stored_chat = self.request(f"/api/chats/{chat['chatId']}")[1]
+            self.assertEqual((stored_chat['customer'], stored_chat['project']), ('待归档', '—'))
+
+    def test_chat_ai_analysis_does_not_apply_detected_customer_or_project(self):
+        main.save_app_settings({'aiImportEnabled': True})
+        with patch('main.start_task') as start_task:
+            status, imported = self.request('/api/imports/chat', 'POST', {
+                'fileName': '未关联聊天.txt',
+                'text': '我：你好\n客户甲：我们要做会员系统',
+            })
+        self.assertEqual(status, 201)
+        task_id = start_task.call_args.args[0]
+        main.set_task_running(task_id)
+        analysis = {
+            'summary': '', 'topic': '', 'project': '自动识别的错误项目', 'participants': [],
+            'keyQa': [], 'requirements': [], 'commitments': [], 'nextActions': [], 'risks': [], 'tags': [],
+        }
+        with patch('main.analyze_chat_messages', return_value=analysis):
+            main.process_chat_analysis(imported['id'], imported['chatId'], task_id)
+        stored_chat = self.request(f"/api/chats/{imported['chatId']}")[1]
+        stored_import = next(item for item in self.request('/api/imports')[1] if item['id'] == imported['id'])
+        self.assertEqual((stored_chat['customer'], stored_chat['project']), ('待归档', '—'))
+        self.assertEqual((stored_import['customer'], stored_import['project']), ('待归档', '—'))
+        with main.db() as conn:
+            self.assertIsNone(conn.execute("SELECT name FROM customers WHERE name='客户甲'").fetchone())
+
+    def test_document_import_runs_summary_and_requirement_pipeline_only_when_ai_enabled(self):
+        summary = {
+            'oneLine': '客户需要预约系统', 'needs': '支持在线预约', 'budget': '未提及', 'timeline': '六月上线',
+            'decisionMakers': '未提及', 'objections': '未提及', 'nextActions': '确认范围', 'paymentMethod': '未提及',
+            'confidence': 0.9, 'evidenceCount': 1, 'evidence': {'needs': '原文证据'},
+        }
+        for enabled in (True, False):
+            import_id = f'document-ai-{enabled}'
+            self.import_record(import_id, 'processing', '测试客户')
+            path = main.UPLOAD_DIR / f'{import_id}.pdf'
+            path.write_bytes(b'%PDF synthetic')
+            try:
+                with patch('main.document_ingest.extract', return_value=('客户想在六月上线在线预约系统。', [])), \
+                     patch('main.get_llm_config', return_value={'apiKey': 'synthetic-key'}), \
+                     patch('main.summarize_transcript', return_value=summary) as summarize:
+                    main.process_document(import_id, path, enabled)
+                summarize.assert_called_once() if enabled else summarize.assert_not_called()
+                with main.db() as conn:
+                    transcript = conn.execute('SELECT summary_json FROM transcripts WHERE id=?', (f'tr-{import_id}',)).fetchone()
+                    requirements = conn.execute('SELECT COUNT(*) FROM requirements WHERE source_id=?', (import_id,)).fetchone()[0]
+                saved_summary = json.loads(transcript['summary_json'])
+                self.assertEqual(saved_summary['oneLine'], '客户需要预约系统' if enabled else '已提取原文，配置模型后可生成摘要')
+                self.assertEqual(requirements, 1 if enabled else 0)
+            finally:
+                path.unlink(missing_ok=True)
 
     def test_rename_customer_and_project_preserves_todo(self):
         req = self.requirement()
@@ -720,11 +905,15 @@ class SalesTests(unittest.TestCase):
         self.assertIn('metrics', dashboard)
         self.assertGreaterEqual(self.request('/api/health')[1]['apiRevision'], 14)
 
-    def test_wechat_library_endpoints_are_removed(self):
-        status, _ = self.request('/api/wechat/status')
-        self.assertEqual(status, 404)
-        status, _ = self.request('/api/wechat/import', 'POST', {})
-        self.assertEqual(status, 404)
+    def test_wechat_library_endpoints_require_optional_component(self):
+        with patch.object(main.wechat_engine, '_find_backend', return_value=None), patch.object(main.wechat_engine, '_health', return_value=None):
+            status, result = self.request('/api/wechat/status')
+            self.assertEqual(status, 200)
+            self.assertFalse(result['available'])
+            self.assertIn('组件未安装', result['error'])
+            status, result = self.request('/api/wechat/start', 'POST', {})
+            self.assertEqual(status, 503)
+            self.assertIn('组件未安装', result['error'])
 
     def test_deleting_one_shared_import_keeps_other_source_todos(self):
         for record_id in ('audio-a', 'audio-b'):
@@ -829,8 +1018,6 @@ class SalesTests(unittest.TestCase):
                     ('metric-task-fail', 'import_document', 'failed', '2026-10-30 10:00:00', '2026-10-30 10:10:00', '2026-10-30 10:10:00'),
                 ],
             )
-            conn.execute("INSERT INTO customer_match_audits(id,import_id,suggested_customer,confirmed_customer,method,is_correct,created_at,confirmed_at) VALUES ('match-ok','metric-done','测试客户','测试客户','auto',1,'2026-10-30','2026-10-30')")
-            conn.execute("INSERT INTO customer_match_audits(id,import_id,suggested_customer,confirmed_customer,method,is_correct,created_at,confirmed_at) VALUES ('match-bad','metric-failed','错误客户','测试客户','auto',0,'2026-10-30','2026-10-30')")
         self.requirement(title='已确认需求', status='已确认')
         todo = self.todo()
         with main.db() as conn:
@@ -839,17 +1026,10 @@ class SalesTests(unittest.TestCase):
         self.assertEqual(report['importsSuccessRate']['value'], 0.5)
         self.assertEqual(report['parseCompletionRate']['value'], 0.5)
         self.assertEqual(report['parseP95Seconds']['value'], 600.0)
-        self.assertEqual(report['customerMatchAccuracy']['value'], 0.5)
         self.assertEqual(report['requirementEffectiveness']['value'], 1.0)
         self.assertEqual(report['nextActionLatencyMinutes']['value'], 1440.0)
         self.assertEqual(report['weeklyActiveCustomers']['value'], 1)
         self.assertEqual(report['weeklyActiveProjects']['value'], 1)
-
-    def test_metrics_leave_unmeasured_accuracy_as_null(self):
-        with main.db() as conn:
-            report = sales.metrics(conn, days=7, now=datetime(2026, 10, 31, 12, 0, 0))
-        self.assertIsNone(report['customerMatchAccuracy']['value'])
-        self.assertFalse(report['customerMatchAccuracy']['available'])
 
     def test_backup_round_trip_includes_sales_todos(self):
         todo = self.todo()
@@ -1730,6 +1910,45 @@ class SalesTests(unittest.TestCase):
         document = Document(io.BytesIO(body))
         self.assertIn('请确认一期成功指标。', '\n'.join(paragraph.text for paragraph in document.paragraphs))
 
+    def test_clarification_word_export_priority_selection(self):
+        _, record = self.request('/api/clarifications', 'POST', {'name': '优先级导出'})
+        with main.db() as conn:
+            for priority in ('must_confirm', 'important', 'later'):
+                clarifications.create_question(conn, record['id'], {
+                    'priority': priority, 'text': '问题-' + priority, 'category': '一期范围',
+                })
+        for priorities in ('must_confirm', 'important,later', 'must_confirm,important,later'):
+            status, _, body = self.raw_request('/api/clarifications/' + record['id'] + '/export?format=docx&priorities=' + priorities)
+            self.assertEqual(status, 200)
+            text = '\n'.join(p.text for p in Document(io.BytesIO(body)).paragraphs)
+            for priority in ('must_confirm', 'important', 'later'):
+                self.assertEqual('问题-' + priority in text, priority in priorities.split(','))
+        self.assertEqual(self.request('/api/clarifications/' + record['id'] + '/export?priorities=invalid')[0], 400)
+        self.assertEqual(self.request('/api/clarifications/' + record['id'] + '/export?priorities=')[0], 400)
+
+    def test_clarification_word_has_original_excerpts_and_preserves_scope(self):
+        record = {
+            'name': '交付澄清单',
+            'sources': [{'id': 's1', 'displayName': '需求说明.pdf', 'occurredAt': '2026-11-09'}, {'id': 's2', 'displayName': '另一客户的秘密文件.pdf'}],
+            'questions': [
+                {'id': 'q1', 'customerId': '客户甲', 'projectId': '项目甲', 'text': '请确认预算。', 'priority': 'must_confirm', 'category': '工期/预算/合同', 'rationale': '内部分析原因不应导出', 'answerText': '尚未确认的内部答案', 'evidence': [{'sourceSnapshotId': 's1', 'sourceLabel': '旧标题', 'sourceReference': '第 3 页', 'excerpt': '原始敏感摘录'}]},
+                {'id': 'q2', 'customerId': '客户甲', 'projectId': '项目甲', 'text': '请确认负责人。', 'generatedFrom': 'manual', 'priority': 'important', 'evidence': []},
+                {'id': 'q3', 'customerId': '客户乙', 'projectId': '项目乙', 'text': '其他客户问题', 'evidence': [{'sourceSnapshotId': 's2'}]},
+                {'id': 'q4', 'customerId': '客户甲', 'projectId': '项目甲', 'text': '不适用问题', 'status': 'not_applicable'},
+            ],
+        }
+        document = Document(io.BytesIO(main.build_clarification_docx(record, '客户甲', '项目甲')))
+        text = '\n'.join(paragraph.text for paragraph in document.paragraphs)
+        for expected in ('共 2 个问题', '必须先确认', '工期/预算/合同', '原文依据：“原始敏感摘录”', '原文依据：手动补充（无原文依据）'):
+            self.assertIn(expected, text)
+        for excluded in ('其他客户问题', '另一客户的秘密文件', '需求说明.pdf', '第 3 页', '内部分析原因', '尚未确认的内部答案', '不适用问题'):
+            self.assertNotIn(excluded, text)
+        self.assertIn('PAGE', document.sections[0].footer._element.xml)
+        self.assertIn('Microsoft YaHei', document.styles['Normal']._element.xml)
+        self.assertEqual(main.clarification_question_source({'evidence': [{'excerpt': '甲方原话'}, {'excerpt': '甲方原话'}, {'excerpt': '第二句 <原文>'}]}), '“甲方原话”\n“第二句 <原文>”')
+        self.assertEqual(main.clarification_question_source({}), '未记录原文依据（待补充）')
+        self.assertEqual(main.clarification_question_source({'evidence': [{'sourceSnapshotId': 'deleted', 'sourceLabel': '历史邮件'}]}), '未记录原文依据（待补充）')
+
     def test_mail_configuration_and_manual_button_never_connect_implicitly(self):
         with patch("main._write_secure_mail_password") as write_secret, patch("main._read_secure_mail_password", return_value="synthetic-test-secret"), patch("main.mail_sync.open_connection") as connect:
             status, config = self.request("/api/mail/config", "POST", {"email": "sales@qq.com", "password": "synthetic-test-secret"})
@@ -1752,7 +1971,7 @@ class SalesTests(unittest.TestCase):
             self.assertEqual(self.request("/api/mail/config", "POST", {"email": "other@qq.com", "password": "another-synthetic-secret"})[0], 400)
             write_secret.assert_called_once()
             connect.assert_not_called()
-            self.assertEqual(self.request("/api/health")[1]["apiRevision"], 23)
+            self.assertEqual(self.request("/api/health")[1]["apiRevision"], 29)
 
     @unittest.skipUnless(os.name == "nt", "Windows DPAPI credential storage")
     def test_mail_secret_is_encrypted_account_bound_and_excluded_from_backup(self):

@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PersonalProfile } from '../types';
 import appPackage from '../../package.json';
+import { getDesktopBridge } from '../desktopBridge';
 import {
   IconHome,
   IconUsers,
   IconFolder,
   IconUpload,
-  IconInbox,
   IconFile,
   IconCheckSquare,
   IconSparkles,
+  IconClarification,
   IconSettings,
   IconSearch,
 } from './Icons';
@@ -18,8 +19,7 @@ type SidebarProps = {
   notificationEntry: React.ReactNode;
   profile: PersonalProfile;
   onProfile: () => void;
-  active: 'home' | 'import' | 'inbox' | 'materials' | 'customers' | 'projects' | 'settings' | 'todos' | 'clarifications' | 'other';
-  inboxCount: number;
+  active: 'home' | 'import' | 'materials' | 'customers' | 'projects' | 'settings' | 'todos' | 'clarifications' | 'other';
   onNavigate: (label: string) => void;
 };
 
@@ -37,25 +37,24 @@ const mainItems = [
   { key: 'projects', label: '项目', icon: IconFolder },
   { key: 'import', label: '导入中心', icon: IconUpload },
   { key: 'materials', label: '资料', icon: IconFile },
-  { key: 'inbox', label: '待归档', icon: IconInbox, badge: true },
 ];
 
 const workItems = [
   { key: 'tasks', label: '待办', icon: IconCheckSquare },
-  { key: 'clarifications', label: '需求澄清', icon: IconSparkles },
+  { key: 'clarifications', label: '需求澄清', icon: IconClarification },
   { key: 'qa', label: 'AI 问答', icon: IconSparkles },
 ];
 
 const CURRENT_VERSION = appPackage.version;
-const RELEASES_URL = 'https://github.com/Dingh0208/basu-custom-platform/releases';
+const RELEASES_URL = 'https://github.com/Dingh0208/clientatlas/releases';
 
-export default function Sidebar({ notificationEntry, profile, onProfile, active, inboxCount, onNavigate }: SidebarProps) {
+export default function Sidebar({ notificationEntry, profile, onProfile, active, onNavigate }: SidebarProps) {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' });
   const [versionOpen, setVersionOpen] = useState(false);
   const versionMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const bridge = (window as unknown as { clientHub?: { onUpdateStatus?: (cb: (payload: UpdateState) => void) => (() => void) | void; getUpdateState?: () => Promise<UpdateState | null> } }).clientHub;
+    const bridge = getDesktopBridge();
     if (!bridge?.onUpdateStatus) return;
     let receivedEvent = false;
     const cleanup = bridge.onUpdateStatus((payload) => {
@@ -77,14 +76,14 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
   }, []);
 
   async function installUpdate() {
-    const bridge = (window as unknown as { clientHub?: { installUpdate?: () => Promise<boolean> } }).clientHub;
+    const bridge = getDesktopBridge();
     setUpdate((current) => ({ ...current, status: 'installing' }));
     const started = await bridge?.installUpdate?.();
     if (started === false) setUpdate((current) => ({ ...current, status: 'error' }));
   }
 
   async function downloadUpdate() {
-    const bridge = (window as unknown as { clientHub?: { downloadUpdate?: () => Promise<{ status: string }> } }).clientHub;
+    const bridge = getDesktopBridge();
     setUpdate((current) => ({ ...current, status: 'progress', percent: 0 }));
     const result = await bridge?.downloadUpdate?.();
     if (!result || result.status === 'error') setUpdate((current) => ({ ...current, status: 'error' }));
@@ -92,7 +91,7 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
 
   async function checkUpdates() {
     if (['progress', 'downloaded', 'installing'].includes(update.status)) return;
-    const bridge = (window as unknown as { clientHub?: { checkForUpdates?: () => Promise<{ status: string }> } }).clientHub;
+    const bridge = getDesktopBridge();
     setUpdate({ status: 'checking' });
     if (!bridge?.checkForUpdates) {
       setUpdate({ status: 'error' });
@@ -111,9 +110,9 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">C</div>
+          <img className="brand-mark" src="/clientatlas-icon.png" alt="" />
         <div>
-          <div className="brand-name">ClientHub</div>
+          <div className="brand-name">ClientAtlas</div>
           <div className="brand-sub">客户情报工作台</div>
           <div className="brand-version-wrap" ref={versionMenuRef}>
             <button className={`brand-version ${hasUpdate ? 'has-update' : ''}`} onClick={() => setVersionOpen((open) => !open)} aria-expanded={versionOpen} aria-haspopup="dialog">v{CURRENT_VERSION}{hasUpdate && <span className="brand-version-dot" />}</button>
@@ -146,11 +145,6 @@ export default function Sidebar({ notificationEntry, profile, onProfile, active,
             >
               <Icon className="icon" />
               {item.label}
-              {item.badge && inboxCount > 0 && (
-                <span style={{ marginLeft: 'auto', background: '#fef3f2', color: '#b42318', borderRadius: 999, fontSize: 10, padding: '1px 6px' }}>
-                  {inboxCount}
-                </span>
-              )}
             </button>
           );
         })}

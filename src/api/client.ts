@@ -1,4 +1,4 @@
-import type { AppSettings, BackupSummary, ChatRecord, ClarificationRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, MailConfig, MailConnectionTest, MailMessage, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord } from '../types';
+import type { AppSettings, BackupSummary, ChatRecord, ClarificationRecord, CustomerProfile, CustomerProject, CustomerTimelineEntry, DashboardSummary, Diagnostics, ImportRecord, LlmConfig, LlmModelsResult, MailConfig, MailConnectionTest, MailMessage, ProjectListItem, RequirementItemRecord, TaskRecord, TranscriptRecord, WeChatJob, WeChatSession, WeChatStatus } from '../types';
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8765';
 
@@ -127,10 +127,11 @@ export async function duplicateClarification(id: string) {
   }, 5000);
 }
 
-export async function downloadClarificationWord(id: string, filters: { customer?: string; project?: string } = {}) {
+export async function downloadClarificationWord(id: string, filters: { customer?: string; project?: string; priorities?: string[] } = {}) {
   const query = new URLSearchParams({ format: 'docx' });
   if (filters.customer) query.set('customer', filters.customer);
   if (filters.project) query.set('project', filters.project);
+  if (filters.priorities) query.set('priorities', filters.priorities.join(','));
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 30000);
   try {
@@ -158,7 +159,7 @@ export async function searchAll(query: string) {
   return fetchJson<import('../types').SearchResponse>(`/api/search?q=${encodeURIComponent(query)}`, undefined, 5000);
 }
 
-export async function archiveImports(ids: string[], customer: string, project: string, owner: string) {
+export async function archiveImports(ids: string[], customer: string, project = '', owner = '') {
   return fetchJson<{ updated: string[] }>('/api/imports/archive', {
     method: 'POST', body: JSON.stringify({ ids, customer, project, owner }),
   }, 10000);
@@ -204,7 +205,7 @@ export async function savePersonalProfile(data: import('../types').PersonalProfi
 export async function salesLoadError() {
   const health = await getHealth();
   return health && (health.apiRevision ?? 0) < 3
-    ? '本地服务版本较旧，请重启 ClientHub 后重试'
+    ? '本地服务版本较旧，请重启 ClientAtlas 后重试'
     : '跟进数据加载失败，请检查本地服务连接后重试';
 }
 
@@ -236,6 +237,10 @@ export async function cancelTask(id: string): Promise<TaskRecord | null> {
   return fetchJson<TaskRecord>(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }, 10000);
 }
 
+export async function deleteTaskRecord(id: string): Promise<{ deleted: string } | null> {
+  return fetchJson<{ deleted: string }>(`/api/tasks/${encodeURIComponent(id)}/record`, { method: 'DELETE' }, 10000);
+}
+
 export async function downloadBackup(): Promise<Blob | null> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 120000);
@@ -263,7 +268,6 @@ export async function createImport(payload: {
   size: string;
   customer?: string;
   manualCustomer?: string;
-  candidateCustomer?: string;
   project: string;
   kind?: string;
   audioBase64?: string;
@@ -515,7 +519,90 @@ export async function mergeCustomerRequirements(targetId: string, sourceIds: str
   });
 }
 
-export async function createChatImport(text: string, meta?: { fileName?: string; customer?: string; manualCustomer?: string; candidateCustomer?: string; project?: string }): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
+export async function getWechatStatus(): Promise<WeChatStatus | null> {
+  return fetchJson<WeChatStatus>('/api/wechat/status', undefined, 120000);
+}
+
+export type WechatEngineStartResult = {
+  status: 'ok' | 'failed';
+  available?: boolean;
+  started?: boolean;
+  port?: number;
+  error?: string;
+  repairSteps?: string[];
+  logPath?: string;
+  tempDir?: string;
+  retryAfterSeconds?: number;
+};
+
+export async function startWechatEngine(): Promise<WechatEngineStartResult> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 120000);
+  try {
+    const response = await fetch(`${API_BASE}/api/wechat/start`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const result = await response.json() as Partial<WechatEngineStartResult>;
+    if (result.status === 'ok' || result.status === 'failed') return result as WechatEngineStartResult;
+    return {
+      status: 'failed',
+      error: response.status === 404
+        ? '当前 Sidecar 版本不支持手动启动微信引擎，请先重启或更新本地服务。'
+        : result.error || '本地服务返回了无法识别的启动结果。',
+      repairSteps: ['在“本地服务与诊断”中重启本地服务。', '确认 Sidecar API 已更新后，再启动微信引擎。'],
+    };
+  } catch {
+    return {
+      status: 'failed',
+      error: 'Sidecar 未能完成启动请求，请先重启本地服务后重试。',
+      repairSteps: ['重启 Sidecar 后重新检测。', '若问题持续，请查看本地服务日志并重新安装 ClientAtlas。'],
+    };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function getWechatSessions(account: string, limit = 400): Promise<{ sessions: WeChatSession[]; total?: number } | null> {
+  return fetchJson(`/api/wechat/sessions?account=${encodeURIComponent(account)}&limit=${limit}`, undefined, 60000);
+}
+
+export async function previewWechatMessages(
+  account: string,
+  username: string,
+  startDate = '',
+  endDate = '',
+  types: string[] = [],
+): Promise<{ total: number | null; limit?: number; overLimit?: boolean; message?: string; messages: Array<{ id: string; sender: string; sentAt: string; content: string }> } | null> {
+  const params = new URLSearchParams({ account, username, startDate, endDate, types: types.join(',') });
+  return fetchJson(`/api/wechat/messages?${params.toString()}`, undefined, 120000);
+}
+
+export async function importWechatChat(payload: {
+  account: string;
+  username: string;
+  startDate?: string;
+  endDate?: string;
+  types?: string[];
+  customer?: string;
+  project?: string;
+}): Promise<WeChatJob | null> {
+  return fetchJson<WeChatJob>('/api/wechat/import', { method: 'POST', body: JSON.stringify(payload) }, 30000);
+}
+
+export async function getWechatImportStatus(): Promise<WeChatJob | null> {
+  return fetchJson<WeChatJob>('/api/wechat/import/status', undefined, 5000);
+}
+
+export async function startWechatPrepare(): Promise<WeChatJob | null> {
+  return fetchJson<WeChatJob>('/api/wechat/prepare', { method: 'POST', body: JSON.stringify({}) }, 30000);
+}
+
+export async function getWechatPrepareStatus(): Promise<WeChatJob | null> {
+  return fetchJson<WeChatJob>('/api/wechat/prepare/status', undefined, 5000);
+}
+
+export async function createChatImport(text: string, meta?: { fileName?: string; customer?: string; manualCustomer?: string; project?: string }): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
   return fetchJson('/api/imports/chat', {
     method: 'POST',
     body: JSON.stringify({ text, ...meta }),
@@ -526,7 +613,7 @@ export async function createChatScreenshot(
   imageBase64: string,
   mimeType: string,
   fileName: string,
-  meta?: { customer?: string; manualCustomer?: string; candidateCustomer?: string; project?: string },
+  meta?: { customer?: string; manualCustomer?: string; project?: string },
 ): Promise<{ id: string; status: string; chatId?: string; messageCount?: number } | null> {
   return fetchJson(
     '/api/imports/chat-screenshot',

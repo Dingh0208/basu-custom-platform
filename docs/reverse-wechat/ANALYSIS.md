@@ -103,7 +103,7 @@ WAL 处理由 `sqlite_wal.merge_wal_snapshot()` 完成；解密后的数据库�
 - 请求字段支持 `format`（json/txt/html/excel）、`scope`（selected/all/...）、`usernames`、`start_time`、`end_time`、`message_types`、`media_kinds`。
 - 消息类型：`text,image,emoji,video,voice,chatHistory,file,link,transfer,redPacket,location,system,quote,voip`。
 
-## 5. ClientHub 集成方式
+## 5. ClientAtlas 集成方式
 
 新增 `services/ai/wechat_engine.py`：
 
@@ -113,9 +113,9 @@ WAL 处理由 `sqlite_wal.merge_wal_snapshot()` 完成；解密后的数据库�
    - `GET /api/chat/accounts`
    - `GET /api/chat/sessions`
    - `GET /api/chat/messages`
-4. 将选定会话的消息按日期、`renderType` 过滤后转换为 ClientHub 的 `ChatMessage`。
+4. 将选定会话的消息按日期、`renderType` 过滤后转换为 ClientAtlas 的 `ChatMessage`。
 5. 写入 `services/ai/data/wechat-exports/<chatId>.json`，并调用 `store_chat_record()` 创建正常聊天记录。
-6. 后续复用聊天分析、客户匹配、客户 360 时间线。
+6. 后续复用聊天分析；客户和项目归属由用户在导入设置中手动选择，未选择时保留未关联。
 
 新增 Sidecar 接口：
 
@@ -129,7 +129,7 @@ POST /api/wechat/import           # 提取会话，异步任务
 GET  /api/wechat/import/status    # 读取/筛选/建记录/AI 解析进度
 ```
 
-解密进度桥接原后端 `/api/decrypt_stream` 的 SSE 事件；提取进度在 ClientHub
+解密进度桥接原后端 `/api/decrypt_stream` 的 SSE 事件；提取进度在 ClientAtlas
 内部按“读取会话→读取消息→筛选→创建记录→AI 解析”分阶段更新。
 
 ## 6. 验证记录
@@ -142,7 +142,7 @@ GET  /api/wechat/import/status    # 读取/筛选/建记录/AI 解析进度
 
 ## 7. 限制
 
-- 原版 `wechat-backend.exe` 和 `native/` 已复制到 ClientHub 的 `services/wechat-engine/`，不再要求用户安装 WeChatDataAnalysis；生产打包时把该目录作为 extraResources 带入安装包。
+- 原版 `wechat-backend.exe` 和 `native/` 位于 ClientAtlas 的 `services/wechat-engine/`。发布时生成独立组件 ZIP；用户首次使用时下载到用户数据目录，主安装包不包含它。旧版内置组件在 NSIS 覆盖升级前迁移。
 - 微信图片/语音/视频/文件目前以附件索引 + 原始媒体 URL 形式记录；离线复制全部媒体仍可继续扩展。
 - 群聊的发送者显示名依赖原后端解析；群成员昵称映射可后续增强。
-- 密钥只由原后端读取，ClientHub 不打印、不记录、不返回数据库密钥。
+- 密钥只由原后端读取，ClientAtlas 不打印、不记录、不返回数据库密钥。

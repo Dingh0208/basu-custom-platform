@@ -1,6 +1,6 @@
-# ClientHub · 客户信息聚合工作台
+# ClientAtlas · 客户信息聚合工作台
 
-ClientHub 是本地客户信息聚合工作台：导入沟通资料，归属客户与项目，并从原文建立可追踪的需求和待办。
+ClientAtlas 是本地客户信息聚合工作台：导入沟通资料，归属客户与项目，并从原文建立可追踪的需求和待办。
 
 当前版本包含 **Python Sidecar + SQLite 持久化 + 可选 MaaS 摘要/转写**。文件解析使用本地 Python 包；Sidecar 不可用时前端会显示内置 Mock 数据。
 
@@ -39,7 +39,7 @@ pnpm electron:start
 
 ### 1. 导入中心
 
-- 本地文件、微信数据库筛选的聊天记录、勾选的邮箱邮件可加入待导入清单，一次提交；只有明确勾选并提交的邮件才会进入资料；
+- 本地文件、微信数据库筛选的聊天记录、勾选的邮箱邮件可加入待导入清单，一次提交；只有明确勾选并提交的邮件才会进入资料；微信库组件首次使用时单独下载并显示进度，旧版已安装组件可直接复用；
 - 邮件列表须手动刷新，只读取头信息，不自动下载正文或同步；支持搜索、分页和跨页选择；
 - 拖拽 / 批量选择文件（音频、视频、PDF、Word、Excel、PPT、图片、压缩包、聊天记录）；
 - 最近导入支持删除：删除文件、转写/聊天内容、关联需求和附件，并重新计算客户项目统计；
@@ -47,13 +47,15 @@ pnpm electron:start
 - 普通图片从“选择文件”或拖放入口执行本地 OCR；“聊天截图”使用视觉模型还原聊天消息；
 - 本地 Sidecar 接收导入记录并写入 SQLite；
 - 音视频、文档和图片按实际上传字节计算 SHA-256，跳过重复文件；
-- 自动识别客户 / 待归档提示；
+- 导入时仅使用用户明确选择的客户/项目；未选择时保留为“未关联”，之后可在资料页手动关联或新建；
 - 导入进度轮询、处理流程提示；
 - AI 处理模式切换：阿里云百炼 / Mock。
 - PDF 自动提取文本层，无文本页使用本地中英文 OCR；支持普通图片、多页 TIFF、Word 97–2003 DOC、DOCX、XLS/XLSX、PPT/PPTX、EML。PPT 读取当前保存版本，排除历史幻灯片和母版占位文字；PPTX 包含表格及备注。加密文档须先解锁，Word 97 以前的格式须转为 DOCX。
 - 文档、原始图片与邮件附件会本机保存、预览或下载，并纳入检索及备份。每个导入文件最大 100 MB；PDF/PPT/多页图片最多 200 页，提取最多 100,000 字。
 - 最近导入保留至少 360px 高度，左侧内容可滚动查看，AI 任务列表位于导入记录之后。
-- 「待归档」为独立页面，点击未归档资料直接定位；可查看详情、预览已解析内容，批量确认客户、项目与负责人。
+- 「资料」页支持全部 / 未关联 / 已关联筛选；已关联资料也可多选并改派客户/项目；支持批量永久删除，删除前说明影响范围。导入中心可在客户/默认项目选择器旁直接新建。
+- 资料支持勾选或全选当前筛选结果批量关联，每次最多 200 条；历史澄清单可追加其他已导入文件，确认后在原单继续分析，保留旧问题、回答和证据。
+- 澄清单 Word/PDF 导出前可多选“必须先确认 / 重要 / 后续确认”，显示各级数量；每题附保存的原文摘录作为依据，多条原句去重分行，不调用模型补写。
 
 项目页默认显示全部项目，可按客户姓名或公司搜索并筛选该客户项目。
 
@@ -113,8 +115,8 @@ pnpm electron:start
 - 可为 ASR（音频转写）、总结（文本/聊天）、视觉（视频/图像 OCR）分别指定模型；
 - 提供跳转 [阿里云百炼](https://bailian.console.aliyun.com/) 的入口；
 - **数据与备份**：查看数据库占用和备份数量，导出或恢复本地备份；备份不包含 API Key；
-- **本地服务诊断**：查看 Sidecar API、FFmpeg、微信引擎和微信账号状态，可重启已打包的 Sidecar；
-- **导入默认值**：设置默认负责人、默认项目、客户自动识别和自动处理偏好；
+- **本地服务诊断**：查看 Sidecar API 和 FFmpeg 状态，可重启已打包的 Sidecar；
+- **导入默认值**：设置默认负责人、默认项目和新资料自动 AI 分析；客户/项目归属由用户选择；
 - **更新设置**：控制自动检查更新和检查频率；
 - **通知**：系统通知开关与免打扰时段；09:00 到期提醒、应用内未读数、点击定位待办。应用运行时发送，退出后重新启动补提醒，完成/延期自动清理旧提醒；
 - **隐私与关于**：查看 Windows DPAPI 密钥存储方式、删除已保存 Key 和当前版本；客户记录、导入文件、大模型 Key 只保存在本机。
@@ -123,6 +125,7 @@ pnpm electron:start
 ### 6. 从本地微信聊天库提取
 
 - 导入中心 → “从微信库提取”；
+- 如组件尚未安装，先确认下载并查看进度；旧版已内置组件的安装会在升级时迁移，无需重复下载；
 - 自动连接 WeChatDataAnalysis 本地后端（微信 4.x SQLCipher/WCDB 解密、WCDB 会话/消息读取）；
 - 顶部“更新微信库”：检测微信目录 → 读取密钥 → 批量解密 → 构建会话缓存，并显示实时进度；
 - 未完成解密时“开始提取”按钮禁用；
@@ -130,21 +133,21 @@ pnpm electron:start
 - 日期支持快捷选择：今天 / 3 天内 / 7 天内 / 全部；
 - 记录类型支持：文本、图片、语音、视频、文件、链接、聊天记录、引用、系统消息、表情、转账、红包、位置、通话；
 - 提取过程显示动态进度：读取消息 → 日期/类型筛选 → 创建聊天记录 → AI 对话解析；
-- 提取结果写入 `services/ai/data/wechat-exports/` JSON，并自动创建聊天记录、触发 AI 对话解析；
-- 项目字段不再固定为“微信提取”，由 AI 根据聊天内容总结当前跟进项目；无明确项目显示“—”；
-- 后续与普通聊天导入完全一致：客户匹配、客户 360 时间线、需求抽取。
+- 提取结果写入本机 `wechat-exports/` JSON，并创建聊天记录；是否自动 AI 分析由导入设置控制；
+- 客户和项目只采用导入设置中用户明确选择的归属；未选择时保留为未关联，可在资料页调整；
+- 已关联记录进入对应客户/项目时间线，AI 开启时可抽取需求。
 - 实现依据：微信 4.x SQLCipher 4 页面解密（PBKDF2-SHA512 256000 轮、AES-256-CBC、HMAC-SHA512、4096 字节页），以及 WCDB `session.db / contact.db / message_*.db` 的会话与消息读取逻辑；参考开源项目 [LifeArchiveProject/WeChatDataAnalysis](https://github.com/LifeArchiveProject/WeChatDataAnalysis)。
 - 逆向与集成细节：[docs/reverse-wechat/ANALYSIS.md](<docs/reverse-wechat/ANALYSIS.md>)。
 
 ### 7. 销售工作闭环（P1）
 
 - 「待办」统一管理销售动作，保存客户、项目、关联需求、来源原文、负责人、截止日期与完成状态；可从需求或摘要创建，并返回来源查看。
-- 「待归档」支持批量确认客户、项目和负责人，关联需求与待办同步更新；每批最多 200 条，校验失败整批回滚。
+- 未关联资料可在「资料」页确认客户和项目，关联需求与待办同步更新；客户可先关联，项目稍后补充。
 - 客户 360 展示下一步动作、风险来源、最近沟通、今日到期与逾期提醒；首页增加今日跟进提醒。提醒显示在应用内。
-- 本地服务就绪后自动重新加载跟进数据，加载失败可重试；若提示服务版本较旧，请完整重启 ClientHub。开发模式还需确认 8765 端口未被旧 Sidecar 占用。
+- 本地服务就绪后自动重新加载跟进数据，加载失败可重试；若提示服务版本较旧，请完整重启 ClientAtlas。开发模式还需确认 8765 端口未被旧 Sidecar 占用。
 - 点击侧栏「全局搜索」或按 `Ctrl/Cmd+K`，统一检索客户、项目、聊天、转写与需求；支持类型筛选和结果跳转，每类最多显示 20 条。
 - 旧数据库自动补充字段；销售待办与 AI 处理任务分开保存，并随本地备份导出/恢复。负责人为姓名，AI 给出的相对日期需要手动确认。
-- 首页的“核心产品指标”从同一次 `/api/dashboard` 请求返回，默认统计近 7 天；`/api/metrics?days=1..90` 可单独读取窗口数据。每项都返回样本数，暂无可验证样本时显示“—”。客户自动匹配准确率只统计带自动建议、人工确认结果的审计记录，人工归档不会被计入。
+- 首页的“核心产品指标”从同一次 `/api/dashboard` 请求返回，默认统计近 7 天；`/api/metrics?days=1..90` 可单独读取窗口数据。每项都返回样本数，暂无可验证样本时显示“—”。
 
 验证：先安装 `python -m pip install -r services/ai/requirements-dev.txt`，执行 `python -m unittest discover -s services/ai -p "test_*.py" -v`。47 项测试使用临时数据库及公开 Office 样本，不访问用户数据或计费模型接口；详细记录见 [HANDOFF.md](HANDOFF.md)。
 
@@ -156,7 +159,7 @@ pnpm electron:start
 │  ├─ main.py
 │  ├─ wechat_engine.py    # WeChatDataAnalysis 本地引擎桥接（启动/会话/消息/导入）
 │  └─ data/               # 本地 SQLite 数据（首次启动自动生成）
-├─ services/wechat-engine/ # 内置微信后端 + native core（打包时作为 extraResources）
+├─ services/wechat-engine/ # 微信后端 + native core（发布时独立打包供按需下载）
 │  ├─ wechat-backend.exe
 │  └─ native/
 ├─ src/
@@ -234,15 +237,15 @@ MAAS_ASR_MODEL=qwen3-asr-flash
 MAAS_SUMMARY_MODEL=qwen3.8-flash
 MAAS_VISION_MODEL=qwen3.8-omni-flash
 
-# 可选：覆盖内置微信库提取引擎路径
-# 默认使用项目内 services/wechat-engine/wechat-backend.exe
+# 可选：开发时覆盖微信库提取引擎路径
+# 开发模式默认使用项目内 services/wechat-engine/wechat-backend.exe
 # WECHAT_DATA_ANALYSIS_BACKEND=D:\path\to\wechat-backend.exe
 WECHAT_DATA_ANALYSIS_PORT=10393
 ```
 
-数据保存在 `services/ai/data/clienthub.db`，删除该文件即可重置演示数据。微信库提取的引擎日志在 `%APPDATA%\wechat-data-analysis-desktop\clienthub-wechat-engine.log`。
+开发模式数据保存在 `services/ai/data/clienthub.db`；安装版保存在应用用户数据目录。微信库提取日志位于 `%APPDATA%\ClientHub\wechat-data\clienthub-wechat-engine.log`，目录和文件名保留用于兼容旧安装。
 
-微信引擎已经内置在 `services/wechat-engine/`，包含 `wechat-backend.exe` 和 `native/`，不需要用户额外安装 WeChatDataAnalysis。
+微信引擎源码构建资源位于 `services/wechat-engine/`，正式安装包不内置该组件；用户首次使用时从本项目 Release 下载，保存在应用用户数据目录，不需要单独安装 WeChatDataAnalysis。
 
 ## 发布与自动更新（GitHub Releases）
 
@@ -256,10 +259,10 @@ WECHAT_DATA_ANALYSIS_PORT=10393
 **当前 Release 页面：**
 
 ```text
-https://github.com/Dingh0208/basu-custom-platform/releases
+https://github.com/Dingh0208/clientatlas/releases
 ```
 
-当前版本为 [v0.3.4](https://github.com/Dingh0208/basu-custom-platform/releases/tag/v0.3.4)，[下载安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.4/ClientHub-Setup-0.3.4.exe)，[完整更新说明](docs/RELEASE-NOTES-v0.3.4.md)。另提供[小型在线安装器](https://github.com/Dingh0208/basu-custom-platform/releases/download/v0.3.4/ClientHub-Web-Setup-0.3.4.exe)（安装时需下载完整组件）。本版加入 QQ 邮箱勾选导入、多来源统一导入清单，并修复项目页客户筛选，Sidecar API revision 为 23。
+当前公开 Latest 仍为历史版本 [v0.3.4](https://github.com/Dingh0208/clientatlas/releases/tag/v0.3.4)，安装包文件仍使用该版原名 `ClientHub-Setup-0.3.4.exe` 与 `ClientHub-Web-Setup-0.3.4.exe`。本地源码版本为 0.3.5，尚未发布；本版品牌图标及产品名称已更换为 ClientAtlas。
 
 离线 OCR 模型、ONNX Runtime 与 PDFium 原生依赖随包分发。已经做了这些轻量化：
 
@@ -280,7 +283,7 @@ https://github.com/Dingh0208/basu-custom-platform/releases
 
 **v0.2.6 更新内容：**
 
-- Sidecar 使用 PID 文件和进程名校验管理，启动和退出时只清理当前 ClientHub 实例；
+- Sidecar 使用 PID 文件和进程名校验管理，启动和退出时只清理当前 ClientAtlas 实例；
 - 自动更新定时器在退出时清理，检查失败不会产生未处理错误；
 - 发布构建不再携带本机 `services/ai/.env`，避免 API Key 进入安装包；
 - Windows 微信引擎过滤开发文件、macOS 原生目录和测试夹具；
@@ -307,7 +310,7 @@ https://github.com/Dingh0208/basu-custom-platform/releases
 
 **首次接入 GitHub 需要做的 2 件事：**
 
-1. 在 GitHub 确认仓库 `Dingh0208/basu-custom-platform` 存在（或新建）；
+1. 在 GitHub 确认仓库 `Dingh0208/clientatlas` 存在（或新建）；
 2. 在仓库的 `Settings → Secrets and variables → Actions` 中确认 `GITHUB_TOKEN` 可用（默认可用，无需手动添加）。
 
 之后推送标签即可自动发版：
@@ -321,7 +324,7 @@ git push origin v0.2.0
 
 ## 复盘与优化
 
-- [ClientHub 当前实现复盘与优化记录（2026-10-30）](<docs/REVIEW-2026-10-30.md>)
+- [ClientAtlas 当前实现复盘与优化记录（2026-10-30）](<docs/REVIEW-2026-10-30.md>)
 
 ## MaaS 实测记录（2026-10-29）
 
@@ -373,11 +376,11 @@ git push origin v0.2.0
 - 本轮按用户要求不接入自动说话人分离；保留人工角色标注；
 - 长音频按约 55 秒切片，最多并发 3 个 ASR 请求，成功片段缓存支持重试恢复；已验证真实 FFmpeg 和模拟 ASR 并发，数小时真实录音及外部服务额度仍需实测；
 - 上传音视频、文档和图片按真实字节计算 SHA-256；无文件内容的历史记录仍按元数据计算；
-- 客户识别目前是文件名/文本关键词规则，真实手机号/微信号匹配待接入；
-- 微信库提取引擎已内置到 `services/wechat-engine/`，不再依赖用户安装 WeChatDataAnalysis；首次使用需要微信已登录并保持运行以完成密钥获取/解密；
+- 客户/项目归属只按用户手动选择写入；不根据材料猜测或创建客户；
+- 微信库提取引擎按需下载；首次提取需要微信已登录并保持运行以完成密钥获取/解密；
 - 微信图片/语音/视频/文件消息会进入附件索引，附件支持本地预览、下载和语音转写任务；普通图片导入可离线 OCR，聊天截图继续使用视觉模型；
 - 保持单机单用户，不增加多人协作。系统通知取决于 Windows 原生通知支持；不可用时保留应用内提醒，应用退出后不发送；
-- 安装包已接入 GitHub Releases 自动更新，仓库为 `Dingh0208/basu-custom-platform`；
+- 安装包已接入 GitHub Releases 自动更新，仓库为 `Dingh0208/clientatlas`；
 
 ## 后续验收
 

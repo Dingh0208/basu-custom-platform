@@ -106,7 +106,7 @@ def build_reference():
     section.different_first_page_header_footer = True
     hp = section.header.paragraphs[0]
     hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    hr = hp.add_run("客户信息聚合工作台（ClientHub）产品需求文档 · V1.0")
+    hr = hp.add_run("客户信息聚合工作台（ClientAtlas）产品需求文档 · V1.0")
     hr.font.size = Pt(8.5)
     hr.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
     hr.font.name = "微软雅黑"
@@ -280,7 +280,7 @@ def add_cover(doc):
     for _ in range(4):
         add_before("", 10)
     add_before("客户信息聚合工作台", 34, True, "1F4E79", space_before=0, space_after=8)
-    add_before("ClientHub", 20, False, "2E75B6", space_after=24)
+    add_before("ClientAtlas", 20, False, "2E75B6", space_after=24)
     add_before("产品需求文档（PRD）", 22, True, "333333", space_after=40)
     add_before("版本：V1.0", 12, False, "595959", space_after=6)
     add_before("日期：2026 年 10 月 28 日", 12, False, "595959", space_after=6)
@@ -354,7 +354,7 @@ def main():
     update_fields(doc)
 
     props = doc.core_properties
-    props.title = "客户信息聚合工作台（ClientHub）产品需求文档"
+    props.title = "客户信息聚合工作台（ClientAtlas）产品需求文档"
     props.subject = "多来源客户信息聚合、通话转录、聊天解析、客户 360"
     props.author = "产品团队"
     props.comments = "V1.0 需求基线"

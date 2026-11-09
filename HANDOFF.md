@@ -1,12 +1,31 @@
-# ClientHub 交接文档（HANDOFF）
+# ClientAtlas 交接文档（HANDOFF）
 
-> 写给完全没有上下文的新会话。当前项目位于 `D:\code\Basu-Custom-Platform`，目标是交付一个 Windows 桌面客户情报工作台 ClientHub。
+> 写给完全没有上下文的新会话。当前项目位于 `D:\code\Basu-Custom-Platform`，目标是交付 Windows 桌面客户情报工作台 ClientAtlas。历史章节中的 ClientHub、旧数据库名和环境变量是兼容旧安装/历史记录的标识。
 
 ## 0. 当前交接总览（新会话先读这里）
 
 > 本节是当前状态的唯一准确信源。文档后面的“2026-11-02 第 1–6 次开发”等章节是历史记录，里面的 API revision、测试数量和“待实现”描述可能早于当前代码，不要用它们覆盖本节。
 
 ### 0.1 当前任务
+
+2026-11-10 当前源码为 ClientAtlas 0.3.6 / API29，准备发布：恢复微信本地库提取的账号/会话/日期/类型筛选和混合来源清单。微信组件改为独立 Release ZIP，首次使用时弹窗下载、显示进度并校验 SHA-256，安装在旧用户数据目录下的 `components/wechat-engine`；NSIS 覆盖升级前从旧安装目录迁移组件。新安装包不内置微信引擎，但 Electron 根目录的必需 DLL/PAK 不移动。构建脚本生成组件 ZIP 与校验清单，CI 同时上传组件和主安装包，并拒绝携带 Sidecar `.env`。
+
+2026-11-09 当前源码为 ClientAtlas 0.3.5 / API28，尚未发布：客户和项目不再根据材料自动识别、关联或创建；只有用户在导入设置中明确选择的归属会写入资料，未选择时保持未关联。聊天 AI 分析不再回写模型推断的项目，仍可分析聊天内容；资料页继续提供手动关联/新建。品牌图标使用 `public/clientatlas-icon.png`，CI 与本地安装器均从该图生成 Web favicon 和 Windows/Electron/NSIS ICO。GitHub 仓库目标名为 `Dingh0208/clientatlas`；旧 App ID、数据目录、DB/备份格式和环境变量保留作升级兼容。
+
+2026-11-09 最新调整（源码 API27，尚未发布）：Word/PDF 导出前增加优先级多选弹窗，默认选中“必须先确认 / 重要 / 后续确认”，显示分类数量和已选总数，空选不可导出；客户/项目筛选继续生效。每题“来源”按用户澄清改为保存的原文摘录，多条原句去重分行，不改写或截断，不再以文件名替代原句；缺失摘录明确提示，复制文本保持原逻辑。资料关联弹窗局部重排：44px 下拉、资料预览区、字段旁新建入口、必选/选填和锁定说明、分隔底栏，窄屏改为单列。
+
+- 验证：134 项 Python 回归通过，前端构建、Electron 共用模板语法检查通过；虚构 DOCX 通过 OOXML 校验。完全拦截网络的 Edge 测试覆盖 PDF 桥与浏览器打印的分类过滤/原句、Word 请求优先级、空选禁用、单条/批量关联与失败重试、新建客户/项目、历史追加和 1280/900/600 窗口布局，无真实业务写入或模型调用。截图/脚本为忽略的 `build/association-form-desktop.png`、`build/association-form-narrow.png`、`build/export-scope-dialog.png`、`build/verify-export-scope-ui.cjs`；测试日志 `build/export-priority-final-tests.log`。
+- 当前已启用 0.3.4/API27。普通权限运行 API27 启动脚本时，Windows 拒绝读取旧服务进程路径，身份检查在停止任何进程前退出；用户随后在管理员 PowerShell 执行 `build/start-latest-web.ps1` 成功。2026-11-09 独立核验后端健康为 0.3.4/API27、Web HTTP 200、数据目录仍为 `D:\code\Basu-Custom-Platform\services\ai\data`，API27 前后端错误日志均为空。前端对旧 API 阻止导出，避免所选分类被忽略。桌面安装器未打包发布；原生 Word 视觉和 Electron PDF 运行验证限制沿用下节，不宣称安装验收完成。
+
+2026-11-09 最新开发（源码 API26，尚未发布）：资料页新增多选、全选当前筛选和批量关联（最多 200 条），复用事务接口；关联失败保留选择，成功后清除本批选择，已有不同客户的资料需分批补项目。历史澄清单打开/追加时刷新资料库，选材区新增“确认追加并继续分析”，只发送新选资料，在原单保留旧问题、回答和证据。Word/PDF 改为带标题、客户/项目分区、优先级/维度和简要来源（资料名及已有页码/时间）；复制文本仍只含问题。需求澄清采用独立清单问号图标。
+
+- 验证：133 项 Python 回归、Word 三项定向回归、TypeScript/Vite 构建、Electron 脚本语法检查通过；虚构 DOCX 通过 OOXML 校验（修复 python-docx 默认 zoom 缺 percent）。隔离 Edge 验证单条/批量关联、失败重试、追加前确认/原单增量请求、原证据保留、图标区分和浏览器/桌面桥 PDF 内容；所有请求被拦截，无真实业务写入和模型调用。17 题虚构 PDF 实际渲染为两页，检查换行、来源和固定打印页尾；当前机器没有 Word/LibreOffice，未做原生 Word 视觉渲染。
+- 桌面 PDF 使用与浏览器共用的 `electron/clarification-document.mjs` 模板及结构化 IPC，生产 Electron 脚本语法检查通过；本机隔离 Electron 运行时启动失败（退出码 2147483651），未完成真实原生 PDF 运行验证，不能将桥 mock 验证当作安装验收。仅为验证建立独立 `build/pdf-export-temp` 临时目录并设 Low 完整性，未修改系统 Temp 或全局环境。
+- 现场已启用 0.3.4/API26。普通权限会话因 Windows 拒绝读取旧服务进程路径而无法重启，用户随后在管理员 PowerShell 执行 `build/start-latest-web.ps1` 成功；2026-11-09 独立核验后端健康为 0.3.4/API26、Web HTTP 200、数据目录仍为 `D:\code\Basu-Custom-Platform\services\ai\data`，API26 前后端错误日志均为空。前端遇到旧 API 会提示重启，不静默导出旧格式。本轮未打包或发布桌面安装器。
+
+2026-11-09 当前开发：用户决定移除独立“待归档”功能和入口。未指定客户或项目的资料继续保留在「资料」页，标为“未关联”，可关联已有客户/项目或现场新建；历史 `inbox` 状态与“待归档”占位值只作数据兼容。需求澄清单已生成后可直接勾选新材料进入追加模式，旧证据保持快照。源码 API revision 升为 25；130 项 Python 回归、TypeScript/Vite 构建、`git diff --check` 和隔离 Edge 点击验证通过，浏览器只用虚构资料且所有网络请求均被拦截。本轮尚未发布。普通权限运行 `build/start-latest-web.ps1` 被 Windows 拒绝读取旧服务进程路径，脚本在停止进程前退出；用户随后在管理员 PowerShell 执行成功。本机独立核验后端 0.3.4/API25、Web HTTP 200、原数据目录不变，两份新服务错误日志为空。
+
+2026-11-09 当前开发：导入中心“处理任务”新增删除历史记录。仅已完成、失败、已取消且工作线程已退出的任务可删除；原 DELETE 取消接口不变，资料与分析结果保留。旧 API23 服务下删除失败会提示重启。源码 API revision 升为 24；129 项 Python 回归、两项删除记录定向回归、TypeScript/Vite 构建、隔离 Edge 点击验证与 `git diff --check` 通过。启动脚本已校验 API24 并等待旧进程退出；普通权限会话读不到旧服务进程路径，用户随后在管理员 PowerShell 执行成功。现场核验后端 0.3.4/API24、Web HTTP 200、原数据目录不变、前后端错误日志为空。此轮尚未发布，v0.3.4 / API23 仍是已核验的 Latest。下述 v0.3.4 记录是历史发布状态。
 
 当前任务 **v0.3.4 / API23 发布已完成**：包含邮箱勾选、多来源统一导入和项目客户筛选，中文说明见 `docs/RELEASE-NOTES-v0.3.4.md`。发布提交 `fc44b27236713f3a77b6f08f1c89924a02977aea`，新标签 v0.3.4 已推送；Windows 工作流 `42446693081` 全部成功。2026-11-08 12:30（北京时间）Release 正式公开且已核验为 Latest，五项资产齐全，更新说明与仓库一致，自动更新清单与下载入口验证通过。本轮没有连接真实邮箱或调用模型，没有重启本机业务服务或运行安装验收。
 

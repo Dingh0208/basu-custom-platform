@@ -8,7 +8,7 @@ module.exports = async function afterPack(context) {
   if (context.electronPlatformName === 'win32') {
     // Apply to both local and CI NSIS builds. Low integrity one-file executables
     // cannot create their extraction directory in a normal Windows Temp folder.
-    for (const relative of ['ClientHub.exe', 'resources/ai-sidecar/clienthub-ai.exe', 'resources/ffmpeg/ffmpeg.exe']) {
+    for (const relative of ['ClientAtlas.exe', 'resources/ai-sidecar/clientatlas-ai.exe', 'resources/ffmpeg/ffmpeg.exe']) {
       execFileSync('icacls', [path.join(context.appOutDir, relative), '/setintegritylevel', 'Medium'], { stdio: 'pipe', windowsHide: true });
     }
   }

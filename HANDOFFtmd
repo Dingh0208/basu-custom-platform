@@ -1,10 +1,10 @@
-# ClientHub 交接文档（HANDOFF）
+# ClientAtlas 交接文档（HANDOFF）
 
-> 写给完全没有上下文的新会话。当前项目位于 `D:\code\Basu-Custom-Platform`，目标是交付一个 Windows 桌面客户情报工作台 ClientHub。
+> 写给完全没有上下文的新会话。当前项目位于 `D:\code\Basu-Custom-Platform`，目标是交付 Windows 桌面客户情报工作台 ClientAtlas。
 
 ## 1. 我们在做什么
 
-ClientHub 是一个「客户信息聚合工作台」，把通话、微信聊天、文件、截图、需求统一归到客户 360：
+ClientAtlas 是一个「客户信息聚合工作台」，把通话、微信聊天、文件、截图、需求统一归到客户 360：
 
 - Electron 33 + React 18 + TypeScript + Vite；
 - Python Sidecar（标准库 HTTP Server + SQLite）；

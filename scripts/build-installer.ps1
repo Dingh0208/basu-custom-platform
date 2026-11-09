@@ -8,15 +8,23 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-Write-Host "1/3 Building frontend..."
+Write-Host "1/5 Generating application icons..."
+& $Python scripts/generate-icon.py
+if ($LASTEXITCODE -ne 0) { throw "icon generation failed" }
+
+Write-Host "2/5 Building optional WeChat component..."
+& $Python scripts/build-wechat-component.py
+if ($LASTEXITCODE -ne 0) { throw "WeChat component build failed" }
+
+Write-Host "3/5 Building frontend..."
 & npm run build
 if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
 
-Write-Host "2/3 Building Python sidecar..."
+Write-Host "4/5 Building Python sidecar..."
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build-sidecar.ps1") -Python $Python
 if ($LASTEXITCODE -ne 0) { throw "sidecar build failed" }
 
-Write-Host "3/3 Building $Target installer..."
+Write-Host "5/5 Building $Target installer..."
 if ($Target -eq "all") {
   & npx electron-builder --win nsis-web --x64 --publish never
   if ($LASTEXITCODE -ne 0) { throw "Web installer packaging failed" }

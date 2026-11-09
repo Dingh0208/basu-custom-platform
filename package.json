@@ -1,8 +1,8 @@
 {
-  "name": "clienthub",
-  "version": "0.3.4",
+  "name": "clientatlas",
+  "version": "0.3.6",
   "private": true,
-  "description": "ClientHub - 客户信息聚合工作台 Sprint 1",
+  "description": "ClientAtlas - 客户信息聚合工作台",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.clienthub.desktop",
-    "productName": "ClientHub",
+    "productName": "ClientAtlas",
     "compression": "maximum",
     "afterPack": "scripts/afterPack.cjs",
     "directories": {
@@ -52,20 +52,27 @@
         "to": "ffmpeg"
       },
       {
-        "from": "release/ai-sidecar/clienthub-ai",
+        "from": "release/ai-sidecar/clientatlas-ai",
         "to": "ai-sidecar"
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": "nsis"
     },
     "nsis": {
-      "artifactName": "ClientHub-Setup-${version}.${ext}",
+      "artifactName": "ClientAtlas-Setup-${version}.${ext}",
+      "include": "scripts/retain-wechat-component.nsh",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
     "nsisWeb": {
-      "artifactName": "ClientHub-Web-Setup-${version}.${ext}",
+      "artifactName": "ClientAtlas-Web-Setup-${version}.${ext}",
+      "include": "scripts/retain-wechat-component.nsh",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
@@ -73,12 +80,12 @@
       {
         "provider": "github",
         "owner": "Dingh0208",
-        "repo": "basu-custom-platform"
+        "repo": "clientatlas"
       }
     ]
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Dingh0208/basu-custom-platform.git"
+    "url": "https://github.com/Dingh0208/clientatlas.git"
   }
 }

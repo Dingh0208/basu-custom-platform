@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { DashboardSummary, ImportRecord, ProductMetric, TodoRecord } from '../types';
 import { fetchDashboard, fetchTodos, salesLoadError } from '../api/client';
-import { needsArchive } from './InboxArchive';
+import { customerLabel, needsAssociation } from '../materials';
 import { localDate } from './TodoWorkspace';
-import { IconCheckSquare, IconChat, IconFile, IconInbox, IconMic, IconUsers, IconUpload } from './Icons';
+import { IconCheckSquare, IconChat, IconFile, IconMic, IconUsers, IconUpload } from './Icons';
 
 type HomePageProps = {
   online: boolean;
@@ -94,10 +94,6 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
               <span className="home-quick-icon need"><IconChat size={18} /></span><span className="home-quick-label">需求清单</span>
               <strong>{loading ? '—' : stats?.requirements ?? 0}</strong><small>条需求</small>
             </button>
-            <button className="home-quick-tile" onClick={() => onNavigate('待归档')}>
-              <span className="home-quick-icon inbox"><IconInbox size={18} /></span><span className="home-quick-label">待归档</span>
-              <strong>{loading ? '—' : stats?.inbox ?? 0}</strong><small>项待处理</small>
-            </button>
             <button className="home-quick-tile" onClick={() => onNavigate('待办')}>
               <span className="home-quick-icon todo"><IconCheckSquare size={18} /></span><span className="home-quick-label">销售待办</span>
               <strong>{todos === null ? '—' : openTodoCount}</strong><small>项未完成</small>
@@ -112,7 +108,6 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
               ['导入成功率', metrics.importsSuccessRate],
               ['解析完成率', metrics.parseCompletionRate],
               ['解析 P95', metrics.parseP95Seconds],
-              ['客户自动匹配准确率', metrics.customerMatchAccuracy],
               ['摘要转需求有效率', metrics.requirementEffectiveness],
               ['沟通到待办平均耗时', metrics.nextActionLatencyMinutes],
               ['周活跃客户', metrics.weeklyActiveCustomers],
@@ -138,8 +133,8 @@ export default function HomePage({ online, onNavigate, onOpenRecord, onToast }: 
               {summary?.recentImports.slice(0, 5).map((record) => (
                 <button key={record.id} className="home-import-row" onClick={() => onOpenRecord(record)}>
                   <span className="home-import-icon">{recordIcon(record.type)}</span>
-                  <span className="home-import-main"><strong>{record.fileName}</strong><small>{record.customer} · {record.project} · {record.importedAt}</small></span>
-                  <span className={`badge ${record.status === 'done' && !needsArchive(record) ? 'done' : 'warn'}`}>{record.status === 'processing' ? '处理中' : record.status === 'failed' ? '失败' : record.status === 'cancelled' ? '已取消' : needsArchive(record) ? '待归档' : '已完成'}</span>
+                  <span className="home-import-main"><strong>{record.fileName}</strong><small>{customerLabel(record.customer)} · {record.project === '—' ? '未关联项目' : record.project} · {record.importedAt}</small></span>
+                  <span className={`badge ${record.status === 'done' && !needsAssociation(record) ? 'done' : 'warn'}`}>{record.status === 'processing' ? '处理中' : record.status === 'failed' ? '失败' : record.status === 'cancelled' ? '已取消' : needsAssociation(record) ? '未关联' : '已完成'}</span>
                 </button>
               ))}
             </div>

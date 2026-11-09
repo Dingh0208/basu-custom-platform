@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorkspaceNotification } from '../types';
 import { fetchNotifications, markNotifications } from '../api/client';
 import Modal from './Modal';
+import { getDesktopBridge } from '../desktopBridge';
 
 export default function NotificationCenter({ online, onTodo }: { online: boolean; onTodo: (id: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -23,8 +24,9 @@ export default function NotificationCenter({ online, onTodo }: { online: boolean
       setItems(result.items);
       setUnread(result.unreadCount);
       const pending = result.items.filter((item) => item.deliver && !shown.current.has(item.id));
-      if (pending.length && window.clientHub?.showReminder) {
-        const delivered = await window.clientHub.showReminder({
+      const desktopBridge = getDesktopBridge();
+      if (pending.length && desktopBridge?.showReminder) {
+        const delivered = await desktopBridge.showReminder({
           title: pending.length === 1 ? '待办到期提醒' : `${pending.length} 项待办需要跟进`,
           body: pending.slice(0, 3).map((item) => `${item.customer} · ${item.title}（${item.dueDate}）`).join('\n'),
           todoId: pending.length === 1 ? pending[0].todoId : '',
@@ -45,7 +47,7 @@ export default function NotificationCenter({ online, onTodo }: { online: boolean
     const timer = window.setInterval(() => void refresh(), 30000);
     const focus = () => void refresh();
     window.addEventListener('focus', focus);
-    const cleanup = window.clientHub?.onOpenReminder(async (id) => {
+    const cleanup = getDesktopBridge()?.onOpenReminder?.(async (id) => {
       if (!id) { setOpen(true); void refresh(); return; }
       try {
         const result = await fetchNotifications();

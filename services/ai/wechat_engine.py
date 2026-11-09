@@ -3,7 +3,7 @@
 The original app ships a FastAPI backend that already implements WeChat 4.x
 SQLCipher decryption, key storage, session listing and message decoding.  This
 module launches that backend on a dedicated loopback port and gives the
-ClientHub sidecar a small, typed API over it.
+ClientAtlas sidecar a small, typed API over it.
 """
 
 from __future__ import annotations
@@ -39,20 +39,15 @@ def _find_backend() -> Path | None:
     # __file__ points into PyInstaller's temp extraction dir in one-file
     # builds, so use sys.executable instead of __file__ for this path.
     exe_root = Path(sys.executable).resolve().parent.parent
-    candidates.append(exe_root / "wechat-engine" / "wechat-backend.exe")
     configured = os.getenv("WECHAT_DATA_ANALYSIS_BACKEND", "").strip()
     if configured:
         candidates.append(Path(configured))
-    # Dev tree layout: services/ai/wechat_engine.py -> services/wechat-engine.
-    candidates.append(Path(__file__).resolve().parents[1] / "wechat-engine" / "wechat-backend.exe")
+    candidates.append(exe_root / "wechat-engine" / "wechat-backend.exe")
+    if not getattr(sys, "frozen", False):
+        candidates.append(Path(__file__).resolve().parents[1] / "wechat-engine" / "wechat-backend.exe")
     appdata = os.getenv("APPDATA", "")
-    candidates.extend(
-        [
-            Path(appdata) / "wechat-data-analysis-desktop" / "backend" / "wechat-backend.exe" if appdata else None,
-            # Development fallback for this machine, kept last.
-            Path(r"D:\wechatExpore\WeChatDataAnalysis\resources\backend\wechat-backend.exe"),
-        ]
-    )
+    if appdata:
+        candidates.append(Path(appdata) / "wechat-data-analysis-desktop" / "backend" / "wechat-backend.exe")
     for candidate in candidates:
         if candidate and candidate.exists():
             return candidate
@@ -120,9 +115,7 @@ def _spawn(alternate_temp: bool = False) -> None:
         return
     backend = _find_backend()
     if backend is None:
-        raise RuntimeError(
-            "未找到内置微信引擎 services/wechat-engine/wechat-backend.exe。请确认安装包包含 wechat-engine 目录。"
-        )
+        raise RuntimeError("微信库提取组件未安装，请在导入中心下载组件。")
     data_dir = _data_dir()
     output_dir = _output_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +168,8 @@ def _start_failure(reason: str) -> str:
 def ensure_engine(timeout_seconds: float = 35.0, *, force_retry: bool = False) -> dict:
     global _last_start_error, _retry_after
     with _start_lock:
+        if _find_backend() is None:
+            raise RuntimeError("微信库提取组件未安装，请在导入中心下载组件。")
         if _health():
             _last_start_error, _retry_after = "", 0.0
             return {"available": True, "port": _BACKEND_PORT, "started": False, "backend": str(_find_backend() or "")}
@@ -212,10 +207,9 @@ def repair_steps(error: str) -> list[str]:
             "若仍出现 Could not create temporary directory，请使用修复版安装包覆盖安装，修正引擎组件的 Windows 完整性级别。",
             "完成修复后点击“重新启动并重试”；不需要删除聊天数据或清空系统 Temp。",
         ]
-    if "未找到内置微信引擎" in error:
+    if "组件未安装" in error:
         return [
-            "安装目录缺少微信解析组件。重新运行最新版 ClientHub 安装包覆盖安装。",
-            "开发环境请确认 services/wechat-engine/wechat-backend.exe 存在。",
+            "在导入中心点击“从微信库提取”，下载并安装微信库提取组件。",
         ]
     if "退出码" in error:
         return [
@@ -227,11 +221,11 @@ def repair_steps(error: str) -> list[str]:
         return [
             "确认没有其他 WeChatDataAnalysis 实例占用本地端口 10393，然后重试。",
             "查看日志文件；若日志没有更新，检查安全软件是否拦截了 wechat-backend.exe。",
-            "若组件缺失或损坏，重新运行最新版 ClientHub 安装包覆盖安装。",
+            "若组件缺失或损坏，重新运行最新版 ClientAtlas 安装包覆盖安装。",
         ]
     return [
         "重新检测并启动一次微信引擎。",
-        "查看错误详情中的日志文件；若组件被隔离或缺失，恢复后重新安装 ClientHub。",
+        "查看错误详情中的日志文件；若组件被隔离或缺失，恢复后重新安装 ClientAtlas。",
     ]
 
 
@@ -596,7 +590,7 @@ def import_conversation(
     project: str = "",
     progress_cb=None,
 ) -> dict:
-    """Fetch one conversation and feed it into ClientHub's normal chat pipeline."""
+    """Fetch one conversation and feed it into ClientAtlas' normal chat pipeline."""
     import sys
 
     main_module = sys.modules.get("__main__")

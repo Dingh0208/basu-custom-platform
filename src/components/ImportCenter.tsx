@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ImportRecord, MailMessage, ProjectListItem, TaskRecord } from '../types';
-import { cancelTask, fetchAppSettings, fetchTask, fetchTasks, importMailMessages, retryTask, saveAppSettings } from '../api/client';
+import type { CustomerProfile, CustomerProject, ImportRecord, MailMessage, ProjectListItem, TaskRecord, WeChatImportSelection } from '../types';
+import { cancelTask, deleteTaskRecord, fetchAppSettings, fetchTask, fetchTasks, getHealth, getWechatImportStatus, importMailMessages, importWechatChat, retryTask, saveAppSettings } from '../api/client';
 import { IconChat, IconFile, IconMic, IconRefresh, IconUpload } from './Icons';
+import { getDesktopBridge } from '../desktopBridge';
 import Modal from './Modal';
 import MailImportModal from './MailImportModal';
-import { needsArchive } from './InboxArchive';
+import CustomerProfileModal from './CustomerProfileModal';
+import ProjectModal from './ProjectModal';
+import WeChatImportModal from './WeChatImportModal';
+import { customerLabel, needsAssociation } from '../materials';
 
 type ImportCenterProps = {
-  onInbox: () => void;
+  onMaterials: () => void;
   imports: ImportRecord[];
   sidecarOnline: boolean;
   onAddFiles: (files: File[], chatScreenshot?: boolean) => Promise<File[]>;
@@ -20,13 +24,15 @@ type ImportCenterProps = {
   customers: string[];
   selectedCustomer: string;
   onCustomerChange: (name: string) => void;
+  onCustomerCreated: (data: Partial<CustomerProfile> & { name: string; tags: string[] }) => Promise<CustomerProfile | null>;
+  onProjectCreated: (customer: string, data: Partial<CustomerProject>) => Promise<CustomerProject | null>;
   selectedProject: string;
   onProjectChange: (name: string) => void;
 };
 
 type PendingImport = {
   id: string;
-  kind: 'file' | 'mail';
+  kind: 'file' | 'mail' | 'wechat';
   name: string;
   detail: string;
   selected: boolean;
@@ -36,6 +42,7 @@ type PendingImport = {
   chatScreenshot?: boolean;
   mail?: MailMessage;
   email?: string;
+  wechat?: WeChatImportSelection;
 };
 
 function fileIcon(type: string) {
@@ -44,13 +51,18 @@ function fileIcon(type: string) {
   return <IconFile size={14} />;
 }
 
-export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onImportSubmitted, onDeleteRecord, projects, customers, selectedCustomer, onCustomerChange, selectedProject, onProjectChange }: ImportCenterProps) {
+export default function ImportCenter({ imports, onMaterials, sidecarOnline, onAddFiles, onPasteText, onOpenRecord, onToast, onImportSubmitted, onDeleteRecord, projects, customers, selectedCustomer, onCustomerChange, onCustomerCreated, onProjectCreated, selectedProject, onProjectChange }: ImportCenterProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [mailOpen, setMailOpen] = useState(() => new URLSearchParams(window.location.search).get('mail') === '1');
+  const [wechatOpen, setWechatOpen] = useState(false);
+  const [componentOpen, setComponentOpen] = useState(false);
+  const [componentProgress, setComponentProgress] = useState(0);
+  const [componentBusy, setComponentBusy] = useState(false);
+  const [componentError, setComponentError] = useState('');
   const [pending, setPending] = useState<PendingImport[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const batchRunning = useRef(false);
@@ -60,10 +72,35 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
   const [aiSettingLoaded, setAiSettingLoaded] = useState(false);
   const [aiSettingBusy, setAiSettingBusy] = useState(false);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [deletingTaskId, setDeletingTaskId] = useState('');
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
 
-  const done = imports.filter((x) => x.status === 'done').length;
+  const done = imports.filter((x) => x.status === 'done' || x.status === 'inbox').length;
   const processing = imports.filter((x) => x.status === 'processing').length;
-  const inbox = imports.filter(needsArchive).length;
+
+  useEffect(() => getDesktopBridge()?.onWeChatComponentProgress?.((percent) => setComponentProgress(percent)), []);
+
+  async function openWechat() {
+    if (!sidecarOnline) { onToast('本地服务未连接，请先启动服务'); return; }
+    const bridge = getDesktopBridge();
+    if (!bridge?.getWeChatComponent) { setWechatOpen(true); return; }
+    const state = await bridge.getWeChatComponent();
+    if (state.installed) setWechatOpen(true);
+    else { setComponentError(''); setComponentOpen(true); }
+  }
+
+  async function downloadWechat() {
+    const bridge = getDesktopBridge();
+    if (!bridge?.downloadWeChatComponent || componentBusy) return;
+    setComponentBusy(true);
+    setComponentError('');
+    setComponentProgress(0);
+    const result = await bridge.downloadWeChatComponent();
+    setComponentBusy(false);
+    if (result.installed) { setComponentOpen(false); setWechatOpen(true); }
+    else setComponentError(result.error || '下载或安装失败，请检查网络连接后重试');
+  }
 
   useEffect(() => {
     if (!sidecarOnline) return;
@@ -88,6 +125,25 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
     }
     setAiImportEnabled(settings.aiImportEnabled);
     onToast(settings.aiImportEnabled ? '新导入资料将自动 AI 分析' : '新导入资料仅本地解析');
+  }
+
+  async function saveImportCustomer(data: Partial<CustomerProfile> & { name: string; tags: string[] }) {
+    const created = await onCustomerCreated(data);
+    if (!created) { onToast('客户创建失败，请检查名称是否重复'); return false; }
+    onCustomerChange(created.name);
+    setCustomerModalOpen(false);
+    onToast('客户已创建并设为本次导入客户');
+    return true;
+  }
+
+  async function saveImportProject(data: Partial<CustomerProject>) {
+    if (!selectedCustomer) return false;
+    const created = await onProjectCreated(selectedCustomer, data);
+    if (!created) { onToast('项目创建失败，请检查名称是否重复'); return false; }
+    onProjectChange(created.name);
+    setProjectModalOpen(false);
+    onToast('项目已创建并设为默认项目');
+    return true;
   }
 
   useEffect(() => {
@@ -128,6 +184,22 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
     onToast(action === 'retry' ? '任务已重新排队' : '任务已取消');
   }
 
+  async function removeTask(task: TaskRecord) {
+    if (!window.confirm('确定删除这条处理任务记录？已导入的资料和分析结果会保留。')) return;
+    setDeletingTaskId(task.id);
+    const result = await deleteTaskRecord(task.id);
+    setDeletingTaskId('');
+    if (!result) {
+      const health = await getHealth();
+      onToast(health && (health.apiRevision ?? 0) < 24
+        ? '本地服务版本较旧，请重启服务后再删除任务记录'
+        : '删除失败；若任务刚取消，请等待任务收尾后重试');
+      return;
+    }
+    setTasks((current) => current.filter((item) => item.id !== task.id));
+    onToast('任务记录已删除，资料仍保留');
+  }
+
   function taskStatus(task: TaskRecord) {
     if (task.status === 'running') return '处理中';
     if (task.status === 'queued') return '排队中';
@@ -155,6 +227,15 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
     });
   }
 
+  function addWechat(selection: WeChatImportSelection) {
+    const id = `wechat:${JSON.stringify(selection)}`;
+    setPending((current) => current.some((item) => item.id === id) ? current : [...current, {
+      id, kind: 'wechat', name: `${selection.customer || selection.username} · 微信聊天`,
+      detail: `${selection.startDate || '不限开始'} 至 ${selection.endDate || '不限结束'} · 预计 ${selection.messageCount} 条`,
+      selected: true, status: 'ready', wechat: selection,
+    }]);
+  }
+
   function updatePending(ids: string[], values: Partial<PendingImport>) {
     setPending((current) => current.map((item) => ids.includes(item.id) ? { ...item, ...values } : item));
   }
@@ -180,6 +261,21 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           if (item.kind === 'file' && item.file) {
             const errors = await onAddFiles([item.file], item.chatScreenshot);
             if (errors.length) throw new Error('文件导入失败，请检查文件格式、大小或本地服务后重试');
+          } else if (item.kind === 'wechat' && item.wechat) {
+            let job = await importWechatChat({ ...item.wechat, customer: selectedCustomer, project: selectedProject });
+            if (!job) throw new Error('微信提取未能启动，请检查微信组件或等待已有任务完成');
+            const jobId = job.jobId;
+            let missed = 0;
+            while (job.status === 'running') {
+              updatePending(ids, { message: `${job.message} ${job.progress ?? 0}%` });
+              await pause();
+              const next = await getWechatImportStatus();
+              if (!next) { if (++missed >= 5) throw new Error('无法读取微信提取进度，请检查服务后重试'); continue; }
+              missed = 0;
+              if (next.jobId !== jobId) throw new Error('微信提取任务已变化，请检查资料后重试');
+              job = next;
+            }
+            if (job.status !== 'done') throw new Error(job.message || '微信聊天提取失败');
           } else if (item.kind === 'mail' && item.mail && item.email) {
             const started = await importMailMessages(item.email, item.mail.uidValidity, unit.map((entry) => ({ uid: entry.mail!.uid })));
             if (!started?.taskId) throw new Error('邮件导入未能启动，请检查账号、候选列表或等待已有邮箱任务完成');
@@ -235,6 +331,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           <span className={`badge ${sidecarOnline ? 'done' : 'warn'}`} style={{ marginLeft: 2 }}>{sidecarOnline ? 'Sidecar 已连接' : '内置 Mock'}</span>
         </div>
         <div className="top-actions">
+          <button className="btn" disabled={batchBusy} onClick={() => void openWechat()}><IconChat size={15} />从微信库提取</button>
           <button className="btn" disabled={batchBusy} onClick={() => setMailOpen(true)}>
             <IconFile size={15} />选择邮箱邮件
           </button>
@@ -253,10 +350,6 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           <svg className="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           <div><div className="kpi-num">{processing}</div><div className="kpi-label">处理中</div></div>
         </div>
-        <button className="kpi kpi-inbox" onClick={onInbox} aria-label={`处理 ${inbox} 条待归档资料`}>
-          <svg className="icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-          <div><div className="kpi-num">{inbox}</div><div className="kpi-label">待归档</div></div>
-        </button>
       </div>
 
       <div className="import-workspace">
@@ -269,11 +362,12 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           >
             <div className="drop-icon"><IconUpload size={28} /></div>
             <div className="drop-title">多种来源，加入清单后统一导入</div>
-            <div className="drop-sub">本地文件和勾选的邮箱邮件，可以一次提交</div>
+            <div className="drop-sub">本地文件、微信聊天和勾选的邮箱邮件，可以一次提交</div>
             <div className="drop-actions">
               <button className="btn primary" disabled={batchBusy} onClick={() => fileInput.current?.click()}>选择文件</button>
               <button className="btn" disabled={batchBusy} onClick={() => setPasteOpen(true)}>粘贴文本</button>
               <button className="btn" disabled={batchBusy} onClick={() => imageInput.current?.click()}>聊天截图</button>
+              <button className="btn" disabled={batchBusy} onClick={() => void openWechat()}>从微信库提取</button>
               <button className="btn" disabled={batchBusy} onClick={() => setMailOpen(true)}>选择邮箱邮件</button>
             </div>
             <div className="drop-hint">单文件最大 100 MB · 普通图片自动 OCR · 聊天截图请使用专用入口</div>
@@ -304,7 +398,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           {sidecarOnline && tasks.length > 0 && (
             <section className="card task-queue-card">
               <div className="card-head">
-                <div><div className="card-title">处理任务</div><div className="card-sub">任务会持久化保存；失败后可重试，运行中可取消</div></div>
+                <div><div className="card-title">处理任务</div><div className="card-sub">任务会持久化保存；失败后可重试，运行中可取消，结束后可删除记录</div></div>
                 <IconRefresh size={15} className="muted-icon" />
               </div>
               <div className="task-queue-list">
@@ -320,6 +414,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
                       <div className="task-queue-actions">
                         {(task.status === 'failed' || task.status === 'cancelled') && <button className="btn ghost" onClick={() => void changeTask(task, 'retry')}>重试</button>}
                         {(task.status === 'queued' || task.status === 'running') && <button className="btn ghost danger-text" onClick={() => void changeTask(task, 'cancel')}>取消</button>}
+                        {(task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled') && <button className="btn ghost danger-text" disabled={deletingTaskId === task.id} onClick={() => void removeTask(task)}>{deletingTaskId === task.id ? '删除中…' : '删除记录'}</button>}
                       </div>
                     </div>
                   );
@@ -330,7 +425,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
 
           <section className="card recent-card">
             <div className="card-head">
-              <div><div className="card-title">最近导入</div><div className="card-sub">处理完成后自动进入客户时间线</div></div>
+              <div><div className="card-title">最近导入</div><div className="card-sub">处理完成后可在资料中查看和关联</div></div>
               <span className="badge done">{imports.length} 条记录</span>
             </div>
             <div style={{ overflow: 'auto' }}>
@@ -345,7 +440,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
                           <div>
                             <div className="file-cell-name">{record.fileName}</div>
                             <div className="file-cell-sub">
-                              {record.type} · {record.project}
+                              {record.type} · {record.project === '—' ? '未关联项目' : record.project}
                               <button
                                 className="file-delete-link"
                                 onClick={(e) => { e.stopPropagation(); onDeleteRecord(record); }}
@@ -356,26 +451,24 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
                       </td>
                       <td>{record.type}</td>
                       <td>{record.size}</td>
-                      <td>{record.customer}</td>
+                      <td>{customerLabel(record.customer)}</td>
                       <td>
                         {record.status === 'processing' ? (
                           <>
                             <span className="progress-line"><span style={{ width: `${record.progress}%` }} /></span>
                             <span className="badge processing">解析中</span>
                           </>
-                        ) : record.status === 'done' ? (
+                        ) : record.status === 'done' || record.status === 'inbox' ? (
                           <span className="badge done">已完成</span>
                         ) : record.status === 'failed' ? (
                           <span className="badge" style={{ background: '#fef3f2', color: '#b42318' }}>处理失败</span>
                         ) : record.status === 'cancelled' ? (
                           <span className="badge warn">已取消</span>
-                        ) : (
-                          <span className="badge warn">待归档</span>
-                        )}
+                        ) : null}
                       </td>
                       <td>{record.importedAt}</td>
                       <td>
-                        {needsArchive(record) && <button className="btn import-archive-btn" onClick={(e) => { e.stopPropagation(); onOpenRecord(record); }}>确认归属</button>}
+                        {needsAssociation(record) && <button className="btn import-archive-btn" onClick={(e) => { e.stopPropagation(); onMaterials(); }}>关联</button>}
                         <button
                           className="btn danger-btn import-delete-btn"
                           onClick={(e) => { e.stopPropagation(); onDeleteRecord(record); }}
@@ -389,9 +482,9 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderTop: '1px solid #f2f4f7', color: '#667085', fontSize: 10.5, background: '#fafbfc' }}>
               <span style={{ fontWeight: 600, color: '#344054' }}>处理流程</span>
               {aiImportEnabled
-                ? <><span className="pill">识别客户</span><span>→</span><span className="pill">转写 / 解析</span><span>→</span><span className="pill">生成摘要与需求</span></>
+                ? <><span className="pill">转写 / 解析</span><span>→</span><span className="pill">生成摘要与需求</span></>
                 : <><span className="pill">本地解析</span><span>→</span><span className="pill">保存资料</span><span>→</span><span>需要时在需求澄清中分析</span></>}
-              <span style={{ marginLeft: 'auto', color: '#98a2b3' }}>未确认客户的资料可在「待归档」中确认归属</span>
+              <span style={{ marginLeft: 'auto', color: '#98a2b3' }}>未关联资料可在「资料」中确认归属</span>
             </div>
           </section>
         </div>
@@ -400,14 +493,14 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
           <div className="card-head"><div><div className="card-title">导入设置</div><div className="card-sub">AI 设置与设置页共享，仅影响之后新导入资料</div></div></div>
           <div className="settings-body">
             <div className="setting">
-              <div className="setting-label">关联客户</div>
+              <div className="import-setting-label"><div className="setting-label">关联客户</div><button className="import-setting-create" disabled={batchBusy} onClick={() => setCustomerModalOpen(true)}>＋ 新建客户</button></div>
               <select className="select" disabled={batchBusy} value={selectedCustomer} onChange={(e) => onCustomerChange(e.target.value)}>
-                <option value="">不指定客户，待归档</option>
+                <option value="">暂不关联客户</option>
                 {customers.map((customer) => <option key={customer} value={customer}>{customer}</option>)}
               </select>
             </div>
             <div className="setting">
-              <div className="setting-label">默认项目</div>
+              <div className="import-setting-label"><div className="setting-label">默认项目</div><button className="import-setting-create" disabled={batchBusy || !selectedCustomer} onClick={() => setProjectModalOpen(true)}>＋ 新建项目</button></div>
               <select className="select" disabled={batchBusy} value={selectedProject} onChange={(e) => onProjectChange(e.target.value)}>
                 <option value="">不指定项目</option>
                 {projects.filter((project) => !selectedCustomer || project.customer === selectedCustomer).map((project) => <option key={project.id} value={project.name}>{project.name}（{project.customer}）</option>)}
@@ -419,7 +512,7 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
                 <button className={`switch ${aiImportEnabled ? 'on' : ''}`} role="switch" aria-checked={aiImportEnabled} disabled={!aiSettingLoaded || aiSettingBusy || batchBusy} onClick={() => void toggleAiImport()} aria-label="新资料自动 AI 分析" />
               </div>
             </div>
-            <div className="small-note"><strong style={{ color: '#344054' }}>小提示：</strong>识别不到客户的记录会进入“待归档”，不会丢失；您可以随时手动归档或新建客户。</div>
+            <div className="small-note">未指定客户的资料会保留在「资料」中，可随时关联或新建客户和项目。</div>
           </div>
         </aside>
       </div>
@@ -443,6 +536,17 @@ export default function ImportCenter({ imports, onInbox, sidecarOnline, onAddFil
       </Modal>
 
       <MailImportModal open={mailOpen} onClose={() => setMailOpen(false)} onSelected={addMail} />
+      <WeChatImportModal open={wechatOpen} onClose={() => setWechatOpen(false)} onSelected={addWechat} onToast={onToast} />
+      <Modal open={componentOpen} title="微信库提取组件" subtitle="此组件尚未安装，需要下载后才能提取本地微信聊天记录" onClose={() => { if (!componentBusy) setComponentOpen(false); }}>
+        <div className="modal-body">
+          <p>组件只在首次使用时下载，安装在本机用户目录；已有组件的旧版用户会直接进入提取界面。</p>
+          {componentBusy && <div role="status">下载中 {componentProgress}%<div className="wechat-progress-track"><span style={{ width: `${componentProgress}%` }} /></div></div>}
+          {componentError && <p role="alert" className="danger-text">{componentError}</p>}
+        </div>
+        <div className="modal-actions"><button className="btn" disabled={componentBusy} onClick={() => setComponentOpen(false)}>取消</button><button className="btn primary" disabled={componentBusy} onClick={() => void downloadWechat()}>{componentBusy ? '下载中…' : '下载组件'}</button></div>
+      </Modal>
+      <CustomerProfileModal open={customerModalOpen} onClose={() => setCustomerModalOpen(false)} onSave={saveImportCustomer} />
+      <ProjectModal open={projectModalOpen} customerName={selectedCustomer} onClose={() => setProjectModalOpen(false)} onSave={saveImportProject} />
     </>
   );
 }

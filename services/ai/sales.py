@@ -139,19 +139,6 @@ def metrics(conn: sqlite3.Connection, days: int = 7, now: datetime | None = None
         if started and finished and finished >= started:
             durations.append((finished - started).total_seconds())
 
-    has_match_audits = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_match_audits'"
-    ).fetchone()
-    match_rows = conn.execute(
-        "SELECT is_correct,confirmed_at FROM customer_match_audits WHERE method='auto' AND confirmed_at >= ? AND is_correct IS NOT NULL",
-        (window_key,),
-    ).fetchall() if has_match_audits else []
-    match_rows = [
-        row for row in match_rows
-        if (parsed := _metric_datetime(row["confirmed_at"])) is not None and parsed >= window_start
-    ]
-    match_correct = sum(int(row["is_correct"]) == 1 for row in match_rows)
-
     requirement_rows = conn.execute(
         "SELECT source_type,status,created_at FROM requirements WHERE source_type<>'manual' AND created_at >= ?",
         (window_key,),
@@ -207,7 +194,6 @@ def metrics(conn: sqlite3.Connection, days: int = 7, now: datetime | None = None
         "importsSuccessRate": _ratio_metric(import_success, len(terminal_imports), note="仅统计已完成、失败或取消的导入"),
         "parseCompletionRate": _ratio_metric(parse_success, len(terminal_tasks), note="仅统计导入与聊天解析任务"),
         "parseP95Seconds": _metric(_p95(durations), len(durations), len(durations), unit="seconds", note="基于任务创建到完成的墙钟时间"),
-        "customerMatchAccuracy": _ratio_metric(match_correct, len(match_rows), note="需要自动建议被人工确认的样本；当前人工归档不计入"),
         "requirementEffectiveness": _ratio_metric(actionable_requirements, len(generated_requirements), note="需求状态进入已确认、已报价或已实现"),
         "nextActionLatencyMinutes": _metric(round(sum(latency_values) / len(latency_values), 1) if latency_values else None, len(latency_values), len(latency_values), unit="minutes", note="可解析沟通日期且已有来源待办的平均耗时"),
         "weeklyActiveCustomers": _metric(len(active_customers), len(active_customers), len(active_customers), unit="count", note="窗口内发生导入、转写或聊天的客户数"),
@@ -307,44 +293,50 @@ def save_todo(conn, data, todo_id="") -> dict | None:
 def archive_imports(conn, data) -> dict:
     ids = data.get("ids")
     if not isinstance(ids, list) or not ids or len(ids) > 200 or any(not isinstance(item, str) for item in ids):
-        raise ValueError("请选择 1–200 条待归档记录")
+        raise ValueError("请选择 1–200 条资料")
     ids = list(dict.fromkeys(ids))
     customer, project, owner = (str(data.get(key) or "").strip() for key in ("customer", "project", "owner"))
-    if not customer or not project or not owner:
-        raise ValueError("请选择客户、项目并填写负责人")
-    if not conn.execute("SELECT 1 FROM customers WHERE name=?", (customer,)).fetchone():
+    if not customer:
+        raise ValueError("请选择客户")
+    customer_row = conn.execute("SELECT owner FROM customers WHERE name=?", (customer,)).fetchone()
+    if not customer_row:
         raise ValueError("客户不存在，请先新建客户")
-    if not conn.execute("SELECT 1 FROM projects WHERE customer=? AND name=?", (customer, project)).fetchone():
-        raise ValueError("项目不属于所选客户")
+    if project:
+        project_row = conn.execute("SELECT owner FROM projects WHERE customer=? AND name=?", (customer, project)).fetchone()
+        if not project_row:
+            raise ValueError("项目不属于所选客户")
+        owner = owner or str(project_row["owner"] or "")
+    owner = owner or str(customer_row["owner"] or "")
     conn.execute("BEGIN IMMEDIATE")
     records = []
     for record_id in ids:
         row = conn.execute("SELECT * FROM imports WHERE id=?", (record_id,)).fetchone()
-        if row is None or (row["customer"] not in ("", "待归档", "待确认") and row["status"] != "inbox"):
-            raise ValueError("所选记录已归档或不存在，请刷新后重试")
+        if row is None:
+            raise ValueError("资料已有归属或不存在，请刷新后重试")
         if row["status"] not in ("inbox", "done") or conn.execute(
             "SELECT 1 FROM tasks WHERE import_id=? AND status IN ('queued','running')", (record_id,)
         ).fetchone():
-            raise ValueError("请等待解析完成后归档；失败或取消的任务请先重试")
+            raise ValueError("请等待解析完成后关联；失败或取消的任务请先重试")
         records.append(row)
     for row in records:
-        conn.execute("UPDATE imports SET customer=?,project=?,owner=?,status='done' WHERE id=?", (customer, project, owner, row["id"]))
+        conn.execute("UPDATE imports SET customer=?,project=?,owner=?,status='done' WHERE id=?", (customer, project or "—", owner or str(row["owner"] or ""), row["id"]))
         # Keep manual confirmation separate from automatic match accuracy. A
         # manual archive is useful audit history, but it is not a correctness
         # sample for the auto matcher.
-        conn.execute(
-            "INSERT INTO customer_match_audits (id,import_id,suggested_customer,confirmed_customer,method,is_correct,created_at,confirmed_at) VALUES (?,?,?,?,?,?,?,?)",
-            (f"match-{uuid.uuid4().hex[:12]}", row["id"], str(row["customer"] or ""), customer, "manual", None, datetime.now().isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")),
-        )
+        if row["customer"] != customer:
+            conn.execute(
+                "INSERT INTO customer_match_audits (id,import_id,suggested_customer,confirmed_customer,method,is_correct,created_at,confirmed_at) VALUES (?,?,?,?,?,?,?,?)",
+                (f"match-{uuid.uuid4().hex[:12]}", row["id"], str(row["customer"] or ""), customer, "manual", None, datetime.now().isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")),
+            )
     for row in records:
         source_id = str(row["transcript_id"] or "")
         # Shared demo transcripts must not move records belonging to another customer.
         if source_id and conn.execute("SELECT 1 FROM imports WHERE transcript_id=? AND id<>? AND customer<>?", (source_id, row["id"], customer)).fetchone():
             raise ValueError("该记录共用其他客户的转写，请先核对来源")
         for table in ("chats", "transcripts"):
-            conn.execute(f"UPDATE {table} SET customer=?,project=? WHERE id=?", (customer, project, source_id))
-        conn.execute("UPDATE requirements SET customer=?,project=?,owner=? WHERE source_id=? OR (source_id<>'' AND source_id=?)", (customer, project, owner, row["id"], source_id))
-        conn.execute("UPDATE todos SET customer=?,project=?,owner=? WHERE source_id=? OR (source_id<>'' AND source_id=?)", (customer, project, owner, row["id"], source_id))
+            conn.execute(f"UPDATE {table} SET customer=?,project=? WHERE id=?", (customer, project or "—", source_id))
+        conn.execute("UPDATE requirements SET customer=?,project=?,owner=? WHERE source_id=? OR (source_id<>'' AND source_id=?)", (customer, project or "—", owner or str(row["owner"] or ""), row["id"], source_id))
+        conn.execute("UPDATE todos SET customer=?,project=?,owner=? WHERE source_id=? OR (source_id<>'' AND source_id=?)", (customer, project or "—", owner or str(row["owner"] or ""), row["id"], source_id))
     return {"updated": ids}
 
 
