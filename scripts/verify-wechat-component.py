@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory(prefix="clientatlas-wechat-check-", ignore_clea
     executable = directory / "engine" / "wechat-backend.exe"
     assert executable.stat().st_size > 100_000_000
     assert (directory / "engine" / "native" / "wechatdb_broker.exe").stat().st_size > 1_000_000
+    assert (directory / "engine" / "native" / "weflow_wasm" / "wasm_video_decode.wasm").stat().st_size > 1_000_000
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]

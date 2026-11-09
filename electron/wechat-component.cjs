@@ -12,7 +12,8 @@ let activeDownload = null;
 function validComponent(directory) {
   try {
     return fs.statSync(path.join(directory, 'wechat-backend.exe')).size > 100_000_000
-      && fs.statSync(path.join(directory, 'native', 'wechatdb_broker.exe')).size > 1_000_000;
+      && fs.statSync(path.join(directory, 'native', 'wechatdb_broker.exe')).size > 1_000_000
+      && fs.statSync(path.join(directory, 'native', 'weflow_wasm', 'wasm_video_decode.wasm')).size > 1_000_000;
   } catch {
     return false;
   }

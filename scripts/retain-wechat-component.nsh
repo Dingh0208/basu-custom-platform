@@ -1,9 +1,14 @@
 !macro retainWechatFrom LOCATION
   ${If} ${FileExists} "${LOCATION}\resources\wechat-engine\wechat-backend.exe"
-  ${AndIfNot} ${FileExists} "$APPDATA\ClientHub\components\wechat-engine\wechat-backend.exe"
-    CreateDirectory "$APPDATA\ClientHub\components\wechat-engine\native"
-    CopyFiles /SILENT "${LOCATION}\resources\wechat-engine\wechat-backend.exe" "$APPDATA\ClientHub\components\wechat-engine"
-    CopyFiles /SILENT "${LOCATION}\resources\wechat-engine\native\*.*" "$APPDATA\ClientHub\components\wechat-engine\native"
+    ${IfNot} ${FileExists} "$APPDATA\ClientHub\components\wechat-engine\wechat-backend.exe"
+    ${OrIfNot} ${FileExists} "$APPDATA\ClientHub\components\wechat-engine\native\wechatdb_broker.exe"
+    ${OrIfNot} ${FileExists} "$APPDATA\ClientHub\components\wechat-engine\native\weflow_wasm\wasm_video_decode.wasm"
+      CreateDirectory "$APPDATA\ClientHub\components\wechat-engine\native"
+      CreateDirectory "$APPDATA\ClientHub\components\wechat-engine\native\weflow_wasm"
+      CopyFiles /SILENT "${LOCATION}\resources\wechat-engine\wechat-backend.exe" "$APPDATA\ClientHub\components\wechat-engine"
+      CopyFiles /SILENT "${LOCATION}\resources\wechat-engine\native\*.*" "$APPDATA\ClientHub\components\wechat-engine\native"
+      CopyFiles /SILENT "${LOCATION}\resources\wechat-engine\native\weflow_wasm\*.*" "$APPDATA\ClientHub\components\wechat-engine\native\weflow_wasm"
+    ${EndIf}
   ${EndIf}
 !macroend
 

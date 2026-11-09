@@ -302,7 +302,7 @@ export default function WeChatImportModal({ open, onClose, onSelected, onToast }
           ) : (
             <div className="wechat-unavailable" role="alert">
               <div className="empty-panel">{loading ? '正在重试启动微信解析引擎…' : '微信解析引擎未连接'}</div>
-              <div className="small-note">{status?.error || '内置微信引擎未就绪，请检查安装包是否包含 wechat-engine 目录。'}</div>
+              <div className="small-note">{status?.error || '微信提取组件未就绪，请重新启动组件并重试。'}</div>
               <div className="wechat-repair-help">
                 <strong>可执行的修复步骤</strong>
                 <ol>{(status?.repairSteps || ['确认微信已登录，点击下方按钮重新启动引擎。']).map((step) => <li key={step}>{step}</li>)}</ol>

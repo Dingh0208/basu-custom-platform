@@ -2810,7 +2810,7 @@ def get_diagnostics() -> dict:
         "service": "clientatlas-ai-sidecar",
         "host": "127.0.0.1",
         "port": 8765,
-        "version": os.getenv("CLIENTATLAS_APP_VERSION") or os.getenv("CLIENTHUB_APP_VERSION", "0.3.7"),
+        "version": os.getenv("CLIENTATLAS_APP_VERSION") or os.getenv("CLIENTHUB_APP_VERSION", "0.3.8"),
         "apiRevision": 29,
         "mode": "maas" if config["apiKey"] else "mock",
         "dataDir": str(DATA_DIR),
@@ -2829,7 +2829,7 @@ def _llm_request(method: str, url: str, *, api_key: str = "", payload: dict | No
     response object from inside the block makes the caller read an empty body.
     Read the raw text here instead and return it together with the HTTP status.
     """
-    headers = {"Accept": "application/json", "User-Agent": "ClientAtlas/0.3.7"}
+    headers = {"Accept": "application/json", "User-Agent": "ClientAtlas/0.3.8"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     data = None
@@ -4227,7 +4227,7 @@ class Handler(BaseHTTPRequestHandler):
                 "asrModel": config["asrModel"],
                 "summaryModel": config["summaryModel"],
                 "visionModel": config["visionModel"],
-                "version": os.getenv("CLIENTATLAS_APP_VERSION") or os.getenv("CLIENTHUB_APP_VERSION", "0.3.7"),
+                "version": os.getenv("CLIENTATLAS_APP_VERSION") or os.getenv("CLIENTHUB_APP_VERSION", "0.3.8"),
                 "apiRevision": 29,
             })
             return
