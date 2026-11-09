@@ -8,7 +8,7 @@
 
 ### 0.1 当前任务
 
-2026-11-10 当前源码为 ClientAtlas 0.3.8 / API29，准备发布：恢复微信本地库提取的账号/会话/日期/类型筛选和混合来源清单。微信组件改为独立 Release ZIP，首次使用时弹窗下载、显示进度并校验 SHA-256，安装在旧用户数据目录下的 `components/wechat-engine`；NSIS 覆盖升级前从旧安装目录迁移组件。新安装包不内置微信引擎，但 Electron 根目录的必需 DLL/PAK 不移动。构建脚本生成组件 ZIP 与校验清单，CI 同时上传组件和主安装包，并拒绝携带 Sidecar `.env`。v0.3.6 CI 因 Windows 日志句柄锁定失败，v0.3.7 CI 为修正旧组件迁移而取消，两者未公开 Release；当前正式 Latest 仍为 v0.3.4。
+2026-11-10 ClientAtlas 0.3.8 / API29 已发布并设为 Latest：恢复微信本地库提取的账号/会话/日期/类型筛选和混合来源清单。微信组件改为独立 Release ZIP，首次使用时弹窗下载、显示进度并校验 SHA-256，安装在旧用户数据目录下的 `components/wechat-engine`；NSIS 覆盖升级前从旧安装目录迁移组件。新安装包不内置微信引擎，但 Electron 根目录的必需 DLL/PAK 不移动。构建脚本生成组件 ZIP 与校验清单，CI 同时上传组件和主安装包，并拒绝携带 Sidecar `.env`。v0.3.6 CI 因 Windows 日志句柄锁定失败，v0.3.7 CI 为修正旧组件迁移而取消，两者未公开 Release。v0.3.8 发布提交为 `6fc6448`，Windows CI `42662553755` 全部通过，Release `https://github.com/Dingh0208/clientatlas/releases/tag/v0.3.8` 已核验非草稿、非预发布且为 Latest；六项资产含双安装器、独立微信 ZIP、blockmap、在线载荷和 `latest.yml`。组件 ZIP 的公开 SHA-256 与源码清单一致。本机未安装运行新安装包或用真实微信库提取。
 
 2026-11-09 当前源码为 ClientAtlas 0.3.5 / API28，尚未发布：客户和项目不再根据材料自动识别、关联或创建；只有用户在导入设置中明确选择的归属会写入资料，未选择时保持未关联。聊天 AI 分析不再回写模型推断的项目，仍可分析聊天内容；资料页继续提供手动关联/新建。品牌图标使用 `public/clientatlas-icon.png`，CI 与本地安装器均从该图生成 Web favicon 和 Windows/Electron/NSIS ICO。GitHub 仓库目标名为 `Dingh0208/clientatlas`；旧 App ID、数据目录、DB/备份格式和环境变量保留作升级兼容。
 
