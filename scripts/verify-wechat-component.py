@@ -14,7 +14,7 @@ root = Path(__file__).resolve().parents[1]
 version = json.loads((root / "package.json").read_text(encoding="utf-8"))["version"]
 archive = root / "release" / "components" / f"ClientAtlas-WeChat-Engine-{version}.zip"
 
-with tempfile.TemporaryDirectory(prefix="clientatlas-wechat-check-") as temporary:
+with tempfile.TemporaryDirectory(prefix="clientatlas-wechat-check-", ignore_cleanup_errors=True) as temporary:
     directory = Path(temporary)
     with ZipFile(archive) as component:
         component.extractall(directory / "engine")
@@ -49,9 +49,11 @@ with tempfile.TemporaryDirectory(prefix="clientatlas-wechat-check-") as temporar
                     time.sleep(0.5)
         finally:
             if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   capture_output=True, timeout=15, check=False)
+                else:
+                    process.terminate()
+                process.wait(timeout=5)
+            if os.name == "nt":
+                time.sleep(0.5)

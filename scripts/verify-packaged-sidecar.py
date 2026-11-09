@@ -110,7 +110,7 @@ def verify(app_dir):
                     transcript = api("/api/transcripts/" + item["transcriptId"])
                     assert expected in "\n".join(segment["text"] for segment in transcript["segments"]), sample.name
                     print("PASS frozen parser:", sample.name, flush=True)
-                print(f"PASS packaged v{version}/API28, FFmpeg, nine parsers, isolated data", flush=True)
+                print(f"PASS packaged v{version}/API29, FFmpeg, nine parsers, isolated data", flush=True)
             except Exception:
                 log.seek(0)
                 print(log.read().decode("utf-8", errors="replace"))

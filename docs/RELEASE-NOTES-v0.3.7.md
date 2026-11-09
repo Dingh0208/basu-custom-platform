@@ -1,4 +1,4 @@
-# ClientAtlas v0.3.6
+# ClientAtlas v0.3.7
 
 ## 更新内容
 
@@ -11,5 +11,5 @@
 
 - 微信组件需要首次使用时联网下载；已安装组件以及已导入聊天数据保留在本机。
 - Release 仅包含程序、组件与更新元数据，不包含本机数据库、聊天记录、邮箱授权码或 `.env`。
-- 安装包：`ClientAtlas-Setup-0.3.6.exe`（离线主程序）、`ClientAtlas-Web-Setup-0.3.6.exe`（在线安装器）。
+- 安装包：`ClientAtlas-Setup-0.3.7.exe`（离线主程序）、`ClientAtlas-Web-Setup-0.3.7.exe`（在线安装器）。
 - Sidecar API revision：29。
