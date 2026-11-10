@@ -8,7 +8,36 @@
 
 ### 0.1 当前任务
 
-2026-11-10 ClientAtlas 0.3.8 / API29 已发布并设为 Latest：恢复微信本地库提取的账号/会话/日期/类型筛选和混合来源清单。微信组件改为独立 Release ZIP，首次使用时弹窗下载、显示进度并校验 SHA-256，安装在旧用户数据目录下的 `components/wechat-engine`；NSIS 覆盖升级前从旧安装目录迁移组件。新安装包不内置微信引擎，但 Electron 根目录的必需 DLL/PAK 不移动。构建脚本生成组件 ZIP 与校验清单，CI 同时上传组件和主安装包，并拒绝携带 Sidecar `.env`。v0.3.6 CI 因 Windows 日志句柄锁定失败，v0.3.7 CI 为修正旧组件迁移而取消，两者未公开 Release。v0.3.8 发布提交为 `6fc6448`，Windows CI `42662553755` 全部通过，Release `https://github.com/Dingh0208/clientatlas/releases/tag/v0.3.8` 已核验非草稿、非预发布且为 Latest；六项资产含双安装器、独立微信 ZIP、blockmap、在线载荷和 `latest.yml`。组件 ZIP 的公开 SHA-256 与源码清单一致。本机未安装运行新安装包或用真实微信库提取。
+2026-11-10 最新交接状态：
+
+- 当前任务已将 GitHub 仓库 `Dingh0208/clientatlas` 设为私密，并将本地项目 Git 关联到 GitHub。用户提到的 `clientAster` 在该 GitHub 账号下不存在；依据当前仓库 `origin` 和权限，实际操作对象是 `clientatlas`。GitHub 官方插件可读取仓库但没有更改可见性的工具，因此通过已认证的 GitHub CLI 执行设置，随后用 GitHub 插件复核 `visibility=private`。
+- 当前正式版本仍是 ClientAtlas **0.3.8 / API29**，Release `https://github.com/Dingh0208/clientatlas/releases/tag/v0.3.8` 为 Latest。发布提交 `6fc6448`，发布后交接记录提交 `4587dbe`；GitHub `main` 与本地当前 HEAD 均为 `4587dbe083e6fb743433586f6292e1f3d81ff222`。Windows CI `42662553755` 全部通过，六项资产齐全，组件 ZIP SHA-256 与清单一致。没有在本机安装新版或用真实微信库提取。
+- 本地 `origin` 是 `https://github.com/Dingh0208/clientatlas.git`。已 fetch GitHub `main`，当前工作分支 `codex/remove-direct-wechat-import` 现在跟踪 `origin/main`。不要把仓库切到 Gogs；Gogs 镜像是单独的目标仓库 `http://220.154.130.47:3000/dinghao/Basu-Custom-Platform.git`。
+- Gogs 不支持/未启用 LFS：按用户“覆盖 main”的授权，在隔离 worktree 中把 24 个已跟踪微信组件文件从 LFS 指针还原为普通 Git 对象，移除该镜像快照的 `.gitattributes` LFS 规则，并覆盖推送。Gogs `main` 已核验为镜像专用提交 `9531a8f3af6da16afb9e3cda617d4fceabd1ada5`；`services/wechat-engine/wechat-backend.exe` 对象大小 165,682,120 bytes。该提交与 GitHub 提交 SHA 不同，但内容基于 GitHub `4587dbe`，只在快照中展开 LFS 文件。临时 worktree 已清理；本机业务工作区未跟踪文件没有上传。
+- **当前待处理影响**：GitHub 仓库改为私密后，桌面应用源码仍从 GitHub Release 匿名请求自动更新文件和微信组件 ZIP（见 `electron/main.cjs` / `electron/wechat-component.cjs`）。未登录 GitHub 的应用用户不能匿名下载私密 Release 资产，因此 0.3.8 现有自动更新和首次微信组件下载对用户可能不可用。下一步优先选定不泄露长期 GitHub Token 的资产分发方式（例如公开独立下载仓库/对象存储/CDN，或受控下载服务），实现后更新 `electron/wechat-component.json` 与 updater 配置，构建并发布新版本，再用未认证客户端验证两个下载流程。不要把 GitHub Token 写进应用、安装包、仓库或普通配置文件。
+- 私密仓库切换已完成；当前没有被工具阻塞的 Git 操作。可继续的任务是处理上述发布资产匿名访问问题，之后验证私密仓库协作、安装包升级迁移和微信组件首次下载。
+- 工作树中的未跟踪文件是既有本地内容：`SUMMARY.md`、`docs/RELEASE-NOTES-v0.3.5.md`、`docs/TELEAGENT-50轮迭代提示词.md`、`jest.config.js`、`src/components/LazyLoadingWrapper.tsx`、`src/service-worker.ts`、`src/setup-tests.ts` 和 `src/utils/`。不要清理、暂存或发布它们，除非逐个确认属于新任务。已提交的业务源码/文档工作区干净。
+
+#### 绝对不要重踩的坑
+
+1. 不要再把 `git push` 的 LFS 报错误认为仓库设置页少了一个开关。Gogs 实例须由服务器管理员启用 LFS；若不能启用且用户要求镜像，使用隔离 worktree 的普通 Git 快照方式，不改主工作区 `.gitattributes`。发送前确认所有对象是实际二进制而不是 100 多字节的 LFS 指针。
+2. 不要仅因 Release 上传成功就认为私密仓库的桌面更新/组件下载可用。客户端当前没有 GitHub 认证，私密仓库的 Release 资产不能被匿名 URL 读取；不能在客户端嵌入 PAT。必须改为可供应用访问的资产分发方案并做未认证实测。
+3. 不要覆盖 GitHub `main` 或移动公开标签来“同步镜像”。只有明确授权时才改写指定目标分支；使用隔离目录、精确预期旧 SHA 的 `--force-with-lease`，推后核验远端 SHA。Gogs 镜像 `9531a8f` 与 GitHub `main` 是不同提交，不要把其 LFS 展开提交反向推回 GitHub。
+4. 不要重用或移动已失败/取消的版本标签。`v0.3.6` CI 失败，`v0.3.7` CI 取消；正式 Latest 是 `v0.3.8`。下一次发布递增版本并检查 tag、`package.json` 和 `docs/RELEASE-NOTES-<tag>.md` 一致。
+5. 不要把 Electron 根目录的 DLL/PAK 随意挪进 `resources`；其中 Chromium/Electron 必需运行文件必须在根目录。可分类的是应用自有资源；微信引擎已是独立组件 ZIP，不应内置回主安装包。
+6. 不要对用户本机执行清库、重置、清理未跟踪文件或启动/停止业务服务来做发布。CI 使用临时目录、虚构数据并拒绝打包 Sidecar `.env`；发布前显式检查 staged 文件，防止数据库、聊天记录、授权码和本地实验文件混入。
+
+#### 下一步计划
+
+1. 确认资产分发方案；优先使用不需要将私有 GitHub Token 发给客户端的静态公开资产地址或短期受控下载地址。
+2. 将自动更新清单/载荷和微信组件下载从私密 GitHub Release 解耦，保留微信 ZIP 的 SHA-256 校验和进度提示。
+3. 为下载模块做无认证请求测试；确认公开/短期下载地址可用，私有源码和版本发布仍由 GitHub 管理。
+4. 递增应用版本，更新发布说明与 `HANDOFF.md`，运行 138 项 Python 测试、前端构建和 Windows CI；验证两种安装器不含 `.env`/数据库且微信组件独立。
+5. 发布后核验 Latest、六类资产与未认证下载，再视需要用隔离快照流程更新 Gogs `main`。
+
+#### v0.3.8 已发布功能摘要
+
+恢复微信本地库提取的账号/会话/日期/类型筛选和混合来源导入。微信组件独立为 Release ZIP，首次使用提示下载、显示进度并校验 SHA-256，保存至旧用户数据目录下的 `components/wechat-engine`；覆盖升级前从旧安装目录迁移旧版组件。新安装包不内置微信引擎，Electron 根目录 DLL/PAK 保持原位。AI Sidecar API revision 为 29。相关说明见 `docs/RELEASE-NOTES-v0.3.8.md`。
 
 2026-11-09 当前源码为 ClientAtlas 0.3.5 / API28，尚未发布：客户和项目不再根据材料自动识别、关联或创建；只有用户在导入设置中明确选择的归属会写入资料，未选择时保持未关联。聊天 AI 分析不再回写模型推断的项目，仍可分析聊天内容；资料页继续提供手动关联/新建。品牌图标使用 `public/clientatlas-icon.png`，CI 与本地安装器均从该图生成 Web favicon 和 Windows/Electron/NSIS ICO。GitHub 仓库目标名为 `Dingh0208/clientatlas`；旧 App ID、数据目录、DB/备份格式和环境变量保留作升级兼容。
 
